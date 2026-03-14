@@ -1,0 +1,16 @@
+﻿Yield Flow - Top 10 from 2025-10-14-0138-scan.log
+[skip apy] uniswap-v2 � apy 9177.43% > max_apy 400.00%
+[skip category] vaultcraft � raw=None, requested='dex'
+[skip category] pendle � raw=None, requested='dex'
+[skip chain] 'optimism' not in ['base']
+[skip apy] balancer-v3 � apy 6037.32% > max_apy 400.00%
+[skip chain] 'telos' not in ['base']
+[skip chain] 'bsc' not in ['base']
+[skip category] hyperion � raw=None, requested='dex'
+[skip chain] 'sonic' not in ['base']
+[skip category] extra-finance-leverage-farming � raw=None, requested='dex'
+[skip category] full-sail � raw=None, requested='dex'
+[skip category] peapods-finance � raw=None, requested='dex'
+[skip category] steer-protocol � raw=None, requested='dex'
+[skip category] etherex-cl � raw=None, requested='dex'
+[skip chain] 'arbitrum' not in ['base']

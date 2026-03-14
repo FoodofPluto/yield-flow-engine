@@ -1,0 +1,6 @@
+﻿Yield Flow - Top 10 from 2025-10-24-2251-scan.log
+Name                                         APY% Source          TVL (USD) Chain     
+steer-protocol                           2,777.77 defillama          25,651 Polygon   
+morpho-v1                                  866.64 defillama          93,267 Ethereum  
+stake-dao                                  265.16 defillama          21,662 Ethereum  
+meme-dollar                                151.56 defillama         246,380 Ethereum  

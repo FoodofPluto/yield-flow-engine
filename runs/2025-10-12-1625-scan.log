@@ -1,0 +1,46 @@
+[2025-10-12T16:25:50] START scan
+[2025-10-12T16:25:50] PS 5.1.26100.6725
+[2025-10-12T16:25:51] Poetry: Poetry (version 2.2.1)
+[2025-10-12T16:25:51] RUN: C:\Users\andro\AppData\Roaming\Python\Scripts\poetry.exe run python -c "import sys; print(sys.executable)"
+[2025-10-12T16:25:51] PID: 23208
+[2025-10-12T16:25:52] PROC EXIT: code=0, elapsed=1s
+[2025-10-12T16:25:52] Python: C:\Users\andro\AppData\Local\Packages\PythonSoftwareFoundation.Python.3.13_qbz5n2kfra8p0\LocalCache\Local\pypoetry\Cache\virtualenvs\yield-flow-engine-aupfdG8q-py3.13\Scripts\python.exe
+[2025-10-12T16:25:52] EngineArgs: run engine --source defillama --top 100 --max-apy 400 --min-tvl 0 --chains "ethereum,arbitrum,base,optimism,polygon" --debug
+[2025-10-12T16:25:52] RUN: C:\Users\andro\AppData\Roaming\Python\Scripts\poetry.exe run engine --source defillama --top 100 --max-apy 400 --min-tvl 0 --chains "ethereum,arbitrum,base,optimism,polygon" --debug
+[2025-10-12T16:25:52] PID: 11344
+[2025-10-12T16:30:52] TIMEOUT: Exceeded 300 seconds. Killing PID 11344 and its children...
+[2025-10-12T16:30:53] PROC EXIT: code=124, elapsed=301s
+[2025-10-12T16:30:53] Engine ExitCode: 124
+[2025-10-12T16:30:53] Engine StdOut:
+
+[2025-10-12T16:30:53] Engine StdErr:
+
+[2025-10-12T16:30:53] RUN: C:\Users\andro\AppData\Roaming\Python\Scripts\poetry.exe run engine --source defillama --top 100 --max-apy 400 --min-tvl 0 --chains "ethereum,arbitrum,base,optimism,polygon" --debug
+[2025-10-12T16:30:53] PID: 3232
+[2025-10-12T16:35:53] TIMEOUT: Exceeded 300 seconds. Killing PID 3232 and its children...
+[2025-10-12T16:35:54] PROC EXIT: code=124, elapsed=301s
+[2025-10-12T16:35:54] EngineArgs: run engine --source defillama --top 100 --max-apy 400 --min-tvl 0 --chains "ethereum,arbitrum,base,optimism,polygon" --debug
+[2025-10-12T16:35:54] RUN: C:\Users\andro\AppData\Roaming\Python\Scripts\poetry.exe run engine --source defillama --top 100 --max-apy 400 --min-tvl 0 --chains "ethereum,arbitrum,base,optimism,polygon" --debug
+[2025-10-12T16:35:54] PID: 3372
+[2025-10-12T16:40:54] TIMEOUT: Exceeded 300 seconds. Killing PID 3372 and its children...
+[2025-10-12T16:40:55] PROC EXIT: code=124, elapsed=301s
+[2025-10-12T16:40:55] Engine ExitCode: 124
+[2025-10-12T16:40:55] Engine StdOut:
+
+[2025-10-12T16:40:55] Engine StdErr:
+
+[2025-10-12T16:40:55] TIMEOUT: First attempt exceeded 300 seconds. Retrying with lighter settings...
+[2025-10-12T16:40:55] Retry EngineArgs: run engine --source defillama --top 30 --max-apy 400 --min-tvl 0 --chains "ethereum,arbitrum,base,optimism,polygon" 
+[2025-10-12T16:40:55] RUN: C:\Users\andro\AppData\Roaming\Python\Scripts\poetry.exe run engine --source defillama --top 30 --max-apy 400 --min-tvl 0 --chains "ethereum,arbitrum,base,optimism,polygon" 
+[2025-10-12T16:40:55] PID: 4144
+[2025-10-12T16:40:58] PROC EXIT: code=0, elapsed=3s
+[2025-10-12T16:40:58] Retry ExitCode: 0
+[2025-10-12T16:40:58] Retry StdOut:
+Name                                         APY% Source          TVL (USD) Chain     
+--------------------------------------------------------------------------------------
+vaultcraft                               8,866.44 defillama          20,988 Arbitrum  
+
+[2025-10-12T16:40:58] Retry StdErr:
+
+[2025-10-12T16:40:58] EXIT engine: 124
+[2025-10-12T16:40:58] FATAL: Engine exited with code 124.

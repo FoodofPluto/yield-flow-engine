@@ -1,0 +1,9 @@
+[2025-10-12T00:11:02] START scan
+[2025-10-12T00:11:02] PS 5.1.26100.6725
+[2025-10-12T00:11:02] RUN: C:\Users\andro\AppData\Roaming\Python\Scripts\poetry.exe --version
+[2025-10-12T00:11:03] Poetry (version 2.2.1)
+[2025-10-12T00:11:03] Poetry: Poetry (version 2.2.1)
+[2025-10-12T00:11:03] RUN: C:\Users\andro\AppData\Roaming\Python\Scripts\poetry.exe run python -c "import sys; print(sys.executable)"
+[2025-10-12T00:11:04] C:\Users\andro\AppData\Local\Packages\PythonSoftwareFoundation.Python.3.13_qbz5n2kfra8p0\LocalCache\Local\pypoetry\Cache\virtualenvs\yield-flow-engine-aupfdG8q-py3.13\Scripts\python.exe
+[2025-10-12T00:11:04] Python: C:\Users\andro\AppData\Local\Packages\PythonSoftwareFoundation.Python.3.13_qbz5n2kfra8p0\LocalCache\Local\pypoetry\Cache\virtualenvs\yield-flow-engine-aupfdG8q-py3.13\Scripts\python.exe
+[2025-10-12T00:11:04] RUN: C:\Users\andro\AppData\Roaming\Python\Scripts\poetry.exe run engine --source defillama --top 100 --max-apy 400 --min-tvl 0 --chains "ethereum,arbitrum,base,optimism,polygon" --debug

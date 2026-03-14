@@ -1,0 +1,7 @@
+__pycache__/
+*.pyc
+.env
+.env.txt
+.venv/
+.poetry/
+.streamlit/

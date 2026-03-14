@@ -1,0 +1,212 @@
+[skip apy] uniswap-v2 ù apy 9177.43% > max_apy 400.00%
+[skip category] vaultcraft ù raw=None, requested='dex'
+[skip category] pendle ù raw=None, requested='dex'
+[skip chain] 'optimism' not in ['base']
+[skip apy] balancer-v3 ù apy 6037.32% > max_apy 400.00%
+[skip chain] 'telos' not in ['base']
+[skip chain] 'bsc' not in ['base']
+[skip category] hyperion ù raw=None, requested='dex'
+[skip chain] 'sonic' not in ['base']
+[skip category] extra-finance-leverage-farming ù raw=None, requested='dex'
+[skip category] full-sail ù raw=None, requested='dex'
+[skip category] peapods-finance ù raw=None, requested='dex'
+[skip category] steer-protocol ù raw=None, requested='dex'
+[skip category] etherex-cl ù raw=None, requested='dex'
+[skip chain] 'arbitrum' not in ['base']
+[skip category] the-standard ù raw=None, requested='dex'
+[skip chain] 'solana' not in ['base']
+[skip category] y2k-v1 ù raw=None, requested='dex'
+[skip chain] 'arbitrum' not in ['base']
+[skip category] jones-dao ù raw=None, requested='dex'
+[skip chain] 'ethereum' not in ['base']
+[skip chain] 'aptos' not in ['base']
+[skip category] spectra-v2 ù raw=None, requested='dex'
+[skip category] flowx-v3 ù raw=None, requested='dex'
+[skip category] merkl ù raw=None, requested='dex'
+[skip category] turbos ù raw=None, requested='dex'
+[skip category] tortuga ù raw=None, requested='dex'
+[skip chain] 'osmosis' not in ['base']
+[skip chain] 'polygon' not in ['base']
+[skip category] alien-base-v3 ù raw=None, requested='dex'
+[skip chain] 'arbitrum' not in ['base']
+[skip chain] 'arbitrum' not in ['base']
+[skip category] kamino-liquidity ù raw=None, requested='dex'
+[skip category] morfi ù raw=None, requested='dex'
+[skip category] vvs-standard ù raw=None, requested='dex'
+[skip chain] 'sui' not in ['base']
+[skip category] ellipsis-finance ù raw=None, requested='dex'
+[skip category] berapaw ù raw=None, requested='dex'
+[skip category] yearn-finance ù raw=None, requested='dex'
+[skip category] yuzu-finance ù raw=None, requested='dex'
+[skip chain] 'libre' not in ['base']
+[skip category] tapp-exchange ù raw=None, requested='dex'
+[skip category] wasabi ù raw=None, requested='dex'
+[skip category] francium ù raw=None, requested='dex'
+[skip chain] 'klaytn' not in ['base']
+[skip chain] 'cardano' not in ['base']
+[skip category] harvest-finance ù raw=None, requested='dex'
+[skip category] flamingo-finance ù raw=None, requested='dex'
+[skip category] metrom ù raw=None, requested='dex'
+Name                                         APY% Source          TVL (USD) Chain      Symbols            Stable Category    
+-----------------------------------------------------------------------------------------------------------------------------
+kyberswap-fairflow                         367.66 defillama          32,208 Base       ETH ZORA           none   dex         
+
+[skip chain] 'base' not in ['arbitrum']
+[skip category] vaultcraft ù raw=None, requested='dex'
+[skip category] pendle ù raw=None, requested='dex'
+[skip chain] 'optimism' not in ['arbitrum']
+[skip chain] 'base' not in ['arbitrum']
+[skip chain] 'telos' not in ['arbitrum']
+[skip chain] 'bsc' not in ['arbitrum']
+[skip category] hyperion ù raw=None, requested='dex'
+[skip chain] 'sonic' not in ['arbitrum']
+[skip category] extra-finance-leverage-farming ù raw=None, requested='dex'
+[skip category] full-sail ù raw=None, requested='dex'
+[skip category] peapods-finance ù raw=None, requested='dex'
+[skip category] steer-protocol ù raw=None, requested='dex'
+[skip category] etherex-cl ù raw=None, requested='dex'
+[skip apy] pancakeswap-amm-v3 ù apy 2144.50% > max_apy 400.00%
+[skip category] the-standard ù raw=None, requested='dex'
+[skip chain] 'solana' not in ['arbitrum']
+[skip category] y2k-v1 ù raw=None, requested='dex'
+[skip apy] camelot-v3 ù apy 1512.08% > max_apy 400.00%
+[skip category] jones-dao ù raw=None, requested='dex'
+[skip chain] 'ethereum' not in ['arbitrum']
+[skip chain] 'aptos' not in ['arbitrum']
+[skip category] spectra-v2 ù raw=None, requested='dex'
+[skip category] flowx-v3 ù raw=None, requested='dex'
+[skip category] merkl ù raw=None, requested='dex'
+[skip category] turbos ù raw=None, requested='dex'
+[skip category] tortuga ù raw=None, requested='dex'
+[skip chain] 'osmosis' not in ['arbitrum']
+[skip chain] 'polygon' not in ['arbitrum']
+[skip category] alien-base-v3 ù raw=None, requested='dex'
+[skip tvl] joe-v2.1 ù tvl 10,672 < min_tvl 20,000
+[skip category] kamino-liquidity ù raw=None, requested='dex'
+[skip category] morfi ù raw=None, requested='dex'
+[skip category] vvs-standard ù raw=None, requested='dex'
+[skip chain] 'base' not in ['arbitrum']
+[skip chain] 'sui' not in ['arbitrum']
+[skip category] ellipsis-finance ù raw=None, requested='dex'
+[skip category] berapaw ù raw=None, requested='dex'
+[skip category] yearn-finance ù raw=None, requested='dex'
+[skip category] yuzu-finance ù raw=None, requested='dex'
+[skip chain] 'libre' not in ['arbitrum']
+[skip category] tapp-exchange ù raw=None, requested='dex'
+[skip category] wasabi ù raw=None, requested='dex'
+[skip category] francium ù raw=None, requested='dex'
+[skip chain] 'klaytn' not in ['arbitrum']
+[skip chain] 'cardano' not in ['arbitrum']
+[skip category] harvest-finance ù raw=None, requested='dex'
+[skip category] flamingo-finance ù raw=None, requested='dex'
+[skip category] metrom ù raw=None, requested='dex'
+Name                                         APY% Source          TVL (USD) Chain      Symbols            Stable Category    
+-----------------------------------------------------------------------------------------------------------------------------
+ramses-cl                                  453.62 defillama          74,779 Arbitrum   WETH ARB           none   dex         
+
+[skip apy] uniswap-v2 ù apy 9177.43% > max_apy 400.00%
+[skip category] vaultcraft ù raw=None, requested='dex'
+[skip category] pendle ù raw=None, requested='dex'
+[skip chain] 'optimism' not in ['base']
+[skip apy] balancer-v3 ù apy 6037.32% > max_apy 400.00%
+[skip chain] 'telos' not in ['base']
+[skip chain] 'bsc' not in ['base']
+[skip category] hyperion ù raw=None, requested='dex'
+[skip chain] 'sonic' not in ['base']
+[skip category] extra-finance-leverage-farming ù raw=None, requested='dex'
+[skip category] full-sail ù raw=None, requested='dex'
+[skip category] peapods-finance ù raw=None, requested='dex'
+[skip category] steer-protocol ù raw=None, requested='dex'
+[skip category] etherex-cl ù raw=None, requested='dex'
+[skip chain] 'arbitrum' not in ['base']
+[skip category] the-standard ù raw=None, requested='dex'
+[skip chain] 'solana' not in ['base']
+[skip category] y2k-v1 ù raw=None, requested='dex'
+[skip chain] 'arbitrum' not in ['base']
+[skip category] jones-dao ù raw=None, requested='dex'
+[skip chain] 'ethereum' not in ['base']
+[skip chain] 'aptos' not in ['base']
+[skip category] spectra-v2 ù raw=None, requested='dex'
+[skip category] flowx-v3 ù raw=None, requested='dex'
+[skip category] merkl ù raw=None, requested='dex'
+[skip category] turbos ù raw=None, requested='dex'
+[skip category] tortuga ù raw=None, requested='dex'
+[skip chain] 'osmosis' not in ['base']
+[skip chain] 'polygon' not in ['base']
+[skip category] alien-base-v3 ù raw=None, requested='dex'
+[skip chain] 'arbitrum' not in ['base']
+[skip chain] 'arbitrum' not in ['base']
+[skip category] kamino-liquidity ù raw=None, requested='dex'
+[skip category] morfi ù raw=None, requested='dex'
+[skip category] vvs-standard ù raw=None, requested='dex'
+[skip chain] 'sui' not in ['base']
+[skip category] ellipsis-finance ù raw=None, requested='dex'
+[skip category] berapaw ù raw=None, requested='dex'
+[skip category] yearn-finance ù raw=None, requested='dex'
+[skip category] yuzu-finance ù raw=None, requested='dex'
+[skip chain] 'libre' not in ['base']
+[skip category] tapp-exchange ù raw=None, requested='dex'
+[skip category] wasabi ù raw=None, requested='dex'
+[skip category] francium ù raw=None, requested='dex'
+[skip chain] 'klaytn' not in ['base']
+[skip chain] 'cardano' not in ['base']
+[skip category] harvest-finance ù raw=None, requested='dex'
+[skip category] flamingo-finance ù raw=None, requested='dex'
+[skip category] metrom ù raw=None, requested='dex'
+Name                                         APY% Source          TVL (USD) Chain      Symbols            Stable Category    
+-----------------------------------------------------------------------------------------------------------------------------
+kyberswap-fairflow                         367.66 defillama          32,208 Base       ETH ZORA           none   dex         
+
+[skip chain] 'base' not in ['arbitrum']
+[skip category] vaultcraft ù raw=None, requested='dex'
+[skip category] pendle ù raw=None, requested='dex'
+[skip chain] 'optimism' not in ['arbitrum']
+[skip chain] 'base' not in ['arbitrum']
+[skip chain] 'telos' not in ['arbitrum']
+[skip chain] 'bsc' not in ['arbitrum']
+[skip category] hyperion ù raw=None, requested='dex'
+[skip chain] 'sonic' not in ['arbitrum']
+[skip category] extra-finance-leverage-farming ù raw=None, requested='dex'
+[skip category] full-sail ù raw=None, requested='dex'
+[skip category] peapods-finance ù raw=None, requested='dex'
+[skip category] steer-protocol ù raw=None, requested='dex'
+[skip category] etherex-cl ù raw=None, requested='dex'
+[skip apy] pancakeswap-amm-v3 ù apy 2144.50% > max_apy 400.00%
+[skip category] the-standard ù raw=None, requested='dex'
+[skip chain] 'solana' not in ['arbitrum']
+[skip category] y2k-v1 ù raw=None, requested='dex'
+[skip apy] camelot-v3 ù apy 1512.08% > max_apy 400.00%
+[skip category] jones-dao ù raw=None, requested='dex'
+[skip chain] 'ethereum' not in ['arbitrum']
+[skip chain] 'aptos' not in ['arbitrum']
+[skip category] spectra-v2 ù raw=None, requested='dex'
+[skip category] flowx-v3 ù raw=None, requested='dex'
+[skip category] merkl ù raw=None, requested='dex'
+[skip category] turbos ù raw=None, requested='dex'
+[skip category] tortuga ù raw=None, requested='dex'
+[skip chain] 'osmosis' not in ['arbitrum']
+[skip chain] 'polygon' not in ['arbitrum']
+[skip category] alien-base-v3 ù raw=None, requested='dex'
+[skip tvl] joe-v2.1 ù tvl 10,672 < min_tvl 20,000
+[skip category] kamino-liquidity ù raw=None, requested='dex'
+[skip category] morfi ù raw=None, requested='dex'
+[skip category] vvs-standard ù raw=None, requested='dex'
+[skip chain] 'base' not in ['arbitrum']
+[skip chain] 'sui' not in ['arbitrum']
+[skip category] ellipsis-finance ù raw=None, requested='dex'
+[skip category] berapaw ù raw=None, requested='dex'
+[skip category] yearn-finance ù raw=None, requested='dex'
+[skip category] yuzu-finance ù raw=None, requested='dex'
+[skip chain] 'libre' not in ['arbitrum']
+[skip category] tapp-exchange ù raw=None, requested='dex'
+[skip category] wasabi ù raw=None, requested='dex'
+[skip category] francium ù raw=None, requested='dex'
+[skip chain] 'klaytn' not in ['arbitrum']
+[skip chain] 'cardano' not in ['arbitrum']
+[skip category] harvest-finance ù raw=None, requested='dex'
+[skip category] flamingo-finance ù raw=None, requested='dex'
+[skip category] metrom ù raw=None, requested='dex'
+Name                                         APY% Source          TVL (USD) Chain      Symbols            Stable Category    
+-----------------------------------------------------------------------------------------------------------------------------
+ramses-cl                                  453.62 defillama          74,779 Arbitrum   WETH ARB           none   dex         
+

@@ -1,0 +1,9 @@
+[2025-10-12T14:57:22] START scan
+[2025-10-12T14:57:22] PS 5.1.26100.6725
+[2025-10-12T14:57:22] RUN: C:\Users\andro\AppData\Roaming\Python\Scripts\poetry.exe --version
+[2025-10-12T14:57:22] PID: 16428
+[2025-10-12T14:57:22] HEARTBEAT: 0s elapsed
+[2025-10-12T14:57:27] HEARTBEAT: 5s elapsed
+[2025-10-12T14:57:32] HEARTBEAT: 10s elapsed
+[2025-10-12T14:57:33] PROC EXIT: code=0, elapsed=11s
+[2025-10-12T14:57:33] FATAL: The property 'StdOut' cannot be found on this object. Verify that the property exists.

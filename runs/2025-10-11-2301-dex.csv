@@ -1,0 +1,9 @@
+name,apy_pct,source,tvl_usd,chain,symbols,stable,category
+curve-dex,1115.14014,defillama,825410.0,Ethereum,FXUSD USDC USDAF BOLD,any,dex
+balancer-v2,360.40177,defillama,65736.0,Ethereum,RETH RPL,none,dex
+ramses-cl,259.74996,defillama,124269.0,Arbitrum,WETH ARB,none,dex
+sushiswap,155.90393,defillama,66341.0,Ethereum,CREAM WETH,none,dex
+fluid-dex,97.73365,defillama,15708875.0,Ethereum,USDC ETH,any,dex
+index-coop,71.78663,defillama,533195.0,Base,WSTETH15X,none,dex
+gammaswap,46.85697,defillama,2941303.0,Base,WETH USDC,any,dex
+smardex-amm,46.16247,defillama,91319.0,Base,WETH SDEX,none,dex

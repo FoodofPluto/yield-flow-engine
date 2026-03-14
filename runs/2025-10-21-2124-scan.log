@@ -1,0 +1,9 @@
+﻿poetry.exe : +- Error ---------------------------------------------------------------------+
+At C:\Users\andro\Projects\yield-flow-engine\scan-watch-adaptive.patched.ps1:21 char:14
++ $engineOut = & $engineExe @engineParams 2>&1
++              ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    + CategoryInfo          : NotSpecified: (+- Error ------...--------------+:String) [], RemoteException
+    + FullyQualifiedErrorId : NativeCommandError
+ 
+| Option '--stable-mode' requires an argument.                                |
++-----------------------------------------------------------------------------+

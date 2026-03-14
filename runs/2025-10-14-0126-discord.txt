@@ -1,0 +1,16 @@
+﻿Yield Flow - Top 10 from 2025-10-12-1630-scan.log
+[2025-10-12T16:30:42] START scan
+[2025-10-12T16:30:42] PS 5.1.26100.6725
+[2025-10-12T16:30:43] Poetry: Poetry (version 2.2.1)
+[2025-10-12T16:30:43] RUN: C:\Users\andro\AppData\Roaming\Python\Scripts\poetry.exe run python -c "import sys; print(sys.executable)"
+[2025-10-12T16:30:43] PID: 1552
+[2025-10-12T16:30:44] PROC EXIT: code=0, elapsed=1s
+[2025-10-12T16:30:44] Python: C:\Users\andro\AppData\Local\Packages\PythonSoftwareFoundation.Python.3.13_qbz5n2kfra8p0\LocalCache\Local\pypoetry\Cache\virtualenvs\yield-flow-engine-aupfdG8q-py3.13\Scripts\python.exe
+[2025-10-12T16:30:44] EngineArgs: run engine --source defillama --top 100 --max-apy 400 --min-tvl 0 --chains "ethereum,arbitrum,base,optimism,polygon" --debug
+[2025-10-12T16:30:44] RUN: C:\Users\andro\AppData\Roaming\Python\Scripts\poetry.exe run engine --source defillama --top 100 --max-apy 400 --min-tvl 0 --chains "ethereum,arbitrum,base,optimism,polygon" --debug
+[2025-10-12T16:30:44] PID: 8344
+[2025-10-12T16:35:44] TIMEOUT: Exceeded 300 seconds. Killing PID 8344 and its children...
+[2025-10-12T16:35:45] PROC EXIT: code=124, elapsed=301s
+[2025-10-12T16:35:45] Engine ExitCode: 124
+[2025-10-12T16:35:45] Engine StdOut:
+[2025-10-12T16:35:45] Engine StdErr:

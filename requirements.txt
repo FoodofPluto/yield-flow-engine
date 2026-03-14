@@ -1,0 +1,12 @@
+streamlit
+pandas
+pydantic
+requests
+httpx
+rich
+typer
+python-dotenv
+tzdata
+openpyxl
+web3
+altair

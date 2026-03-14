@@ -1,0 +1,6 @@
+﻿Name                                         APY% Source          TVL (USD) Chain     
+--------------------------------------------------------------------------------------
+pancakeswap-amm-v3                       6,905.28 defillama          11,795 Arbitrum  
+balancer-v3                              3,137.50 defillama          25,243 Base      
+steer-protocol                           2,777.77 defillama          26,290 Polygon   
+harvest-finance                            441.41 defillama          30,849 Polygon   

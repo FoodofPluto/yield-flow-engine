@@ -1,0 +1,12 @@
+﻿Name                                         APY% Source          TVL (USD) Chain     
+--------------------------------------------------------------------------------------
+vaultcraft                               9,229.01 defillama          19,559 Arbitrum  
+curve-dex                                1,204.39 defillama         636,743 Ethereum  
+y2k-v1                                     639.58 defillama          22,087 Arbitrum  
+extra-finance-leverage-farming             537.16 defillama          45,982 Base      
+camelot-v3                                 508.17 defillama          67,190 Arbitrum  
+alien-base-v3                              481.97 defillama          14,170 Base      
+harvest-finance                            441.41 defillama          30,849 Polygon   
+balancer-v2                                333.05 defillama          69,461 Ethereum  
+sushiswap-v3                               298.98 defillama          25,306 Base      
+wasabi                                     259.68 defillama          11,207 Base      

@@ -1,0 +1,2 @@
+﻿[2025-10-21T18:26:15.292561] Provider 'defillama' failed: HTTPSConnectionPool(host='yields.llama.fi', port=443): Max retries exceeded with url: /pools (Caused by NameResolutionError("<urllib3.connection.HTTPSConnection object at 0x000001AA10C6E2D0>: Failed to resolve 'yields.llama.fi' ([Errno 11001] getaddrinfo failed)"))
+No results after filters. Try lowering --min-tvl or raising --max-apy, or relax --category / --stable-mode.

@@ -1,0 +1,7 @@
+﻿Usage: engine.cmd [OPTIONS]
+Try 'engine.cmd --help' for help.
++- Error ---------------------------------------------------------------------+
+| No such option: --source defillama --chains                                 |
+| arbitrum,base,optimism,polygon,ethereum --min-tvl 8500 --max-apy 6250 --top |
+| 50 --stable-mode any                                                        |
++-----------------------------------------------------------------------------+

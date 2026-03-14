@@ -1,0 +1,5 @@
+﻿Yield Flow - Top 10 from 2025-10-22-0528-scan.log
+Name                                         APY% Source          TVL (USD) Chain     
+balancer-v3                              2,937.81 defillama          24,945 Base      
+steer-protocol                           2,777.77 defillama          26,293 Polygon   
+balancer-v2                                268.98 defillama         118,078 Ethereum  

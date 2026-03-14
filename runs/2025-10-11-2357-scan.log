@@ -1,0 +1,7 @@
+[2025-10-11T23:57:59] START scan
+Repo: C:\Users\andro\Projects\yield-flow-engine
+PS: 5.1.26100.6725
+Poetry: Poetry (version 2.2.1)
+Python via poetry: C:\Users\andro\AppData\Local\Packages\PythonSoftwareFoundation.Python.3.13_qbz5n2kfra8p0\LocalCache\Local\pypoetry\Cache\virtualenvs\yield-flow-engine-aupfdG8q-py3.13\Scripts\python.exe
+Engine probe: engine OK 3.13.8 (tags/v3.13.8:a15ae61, Oct  7 2025, 12:34:25) [MSC v.1944 64 bit (AMD64)]
+Command: C:\Users\andro\AppData\Roaming\Python\Scripts\poetry.exe run engine --source defillama --category dex --chains ethereum,arbitrum,base,optimism,polygon --min-tvl 50000 --max-apy 1200 --top 150 --out C:\Users\andro\Projects\yield-flow-engine\runs\2025-10-11-2357-dex.csv --out-format csv

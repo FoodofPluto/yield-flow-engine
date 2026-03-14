@@ -1,0 +1,9 @@
+[2025-10-12T15:46:28] START scan
+[2025-10-12T15:46:28] PS 5.1.26100.6725
+[2025-10-12T15:46:28] Poetry: Poetry (version 2.2.1)
+[2025-10-12T15:46:28] RUN: C:\Users\andro\AppData\Roaming\Python\Scripts\poetry.exe run python -c "import sys; print(sys.executable)"
+[2025-10-12T15:46:28] PID: 13532
+[2025-10-12T15:46:30] PROC EXIT: code=0, elapsed=1s
+[2025-10-12T15:46:30] Python: C:\Users\andro\AppData\Local\Packages\PythonSoftwareFoundation.Python.3.13_qbz5n2kfra8p0\LocalCache\Local\pypoetry\Cache\virtualenvs\yield-flow-engine-aupfdG8q-py3.13\Scripts\python.exe
+[2025-10-12T15:46:30] EngineArgs: run engine --source defillama --top 100 --max-apy 400 --min-tvl 0 --chains "ethereum,arbitrum,base,optimism,polygon" --debug
+[2025-10-12T15:46:30] FATAL: The variable '$SCAN_TIMEOUT_SEC' cannot be retrieved because it has not been set.

@@ -1,0 +1,16 @@
+﻿Yield Flow - Top 10 from 2025-10-15-1747-scan.log
+[skip category] vaultcraft � raw=None, requested='dex'
+[skip category] pendle � raw=None, requested='dex'
+[skip apy] balancer-v3 � apy 8481.66% > max_apy 400.00%
+[skip chain] 'optimism' not in ['base']
+[skip category] yield-yak-aggregator � raw=None, requested='dex'
+[skip chain] 'bsc' not in ['base']
+[skip category] hyperion � raw=None, requested='dex'
+[skip apy] kyberswap-fairflow � apy 2983.83% > max_apy 400.00%
+[skip category] peapods-finance � raw=None, requested='dex'
+[skip category] extra-finance-leverage-farming � raw=None, requested='dex'
+[skip category] steer-protocol � raw=None, requested='dex'
+[skip category] morfi � raw=None, requested='dex'
+[skip category] the-standard � raw=None, requested='dex'
+[skip chain] 'arbitrum' not in ['base']
+[skip chain] 'solana' not in ['base']

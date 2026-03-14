@@ -1,0 +1,7 @@
+﻿Yield Flow - Top 10 from 2025-10-23-2345-scan.log
+Name                                         APY% Source          TVL (USD) Chain     
+uniswap-v3                               3,555.49 defillama          42,685 Arbitrum  
+steer-protocol                           2,777.77 defillama          26,359 Polygon   
+balancer-v3                              2,712.78 defillama          20,913 Base      
+stake-dao                                  203.98 defillama          12,532 Ethereum  
+meme-dollar                                151.56 defillama         246,380 Ethereum  

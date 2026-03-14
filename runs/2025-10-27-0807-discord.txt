@@ -1,0 +1,4 @@
+﻿Yield Flow - Top 10 from 2025-10-27-0807-scan.log
+Name                                         APY% Source          TVL (USD) Chain     
+steer-protocol                           2,777.77 defillama          25,978 Polygon   
+camelot-v3                                 538.32 defillama          27,776 Arbitrum  

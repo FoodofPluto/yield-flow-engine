@@ -1,0 +1,135 @@
+﻿**********************
+Windows PowerShell transcript start
+Start time: 20251017211129
+Username: LEGION\andro
+RunAs User: LEGION\andro
+Configuration Name: 
+Machine: LEGION (Microsoft Windows NT 10.0.26200.0)
+Host Application: C:\WINDOWS\System32\WindowsPowerShell\v1.0\powershell.exe
+Process ID: 5856
+PSVersion: 5.1.26100.6899
+PSEdition: Desktop
+PSCompatibleVersions: 1.0, 2.0, 3.0, 4.0, 5.0, 5.1.26100.6899
+BuildVersion: 10.0.26100.6899
+CLRVersion: 4.0.30319.42000
+WSManStackVersion: 3.0
+PSRemotingProtocolVersion: 2.3
+SerializationVersion: 1.1.0.1
+**********************
+Transcript started, output file is .\runs\watch-log.txt
+PS C:\Users\andro\Projects\yield-flow-engine> powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\scan-watch.ps1 `
+  -IntervalSec 120 -MinAPY 75 -MinTVL 50000 -PostToDiscord -WriteToExcel
+[2025-10-19T18:48:36] no hits this round (0 rows scanned)
+[2025-10-19T18:50:39] no hits this round (0 rows scanned)
+[2025-10-19T18:52:42] no hits this round (0 rows scanned)
+[2025-10-19T18:54:45] no hits this round (0 rows scanned)
+[2025-10-19T18:56:48] no hits this round (0 rows scanned)
+[2025-10-19T18:58:51] no hits this round (0 rows scanned)
+[2025-10-19T19:00:54] no hits this round (0 rows scanned)
+[2025-10-19T19:02:57] no hits this round (0 rows scanned)
+[2025-10-19T19:05:00] no hits this round (0 rows scanned)
+[2025-10-19T19:07:04] no hits this round (0 rows scanned)
+[2025-10-19T19:09:07] no hits this round (0 rows scanned)
+[2025-10-19T19:11:10] no hits this round (0 rows scanned)
+[2025-10-19T19:13:14] no hits this round (0 rows scanned)
+[2025-10-19T19:15:17] no hits this round (0 rows scanned)
+[2025-10-19T19:17:20] no hits this round (0 rows scanned)
+[2025-10-19T19:19:24] no hits this round (0 rows scanned)
+[2025-10-19T19:21:27] no hits this round (0 rows scanned)
+[2025-10-19T19:23:30] no hits this round (0 rows scanned)
+[2025-10-19T19:25:34] no hits this round (0 rows scanned)
+[2025-10-19T19:27:37] no hits this round (0 rows scanned)
+[2025-10-19T19:29:40] no hits this round (0 rows scanned)
+[2025-10-19T19:31:43] no hits this round (0 rows scanned)
+[2025-10-19T19:33:47] no hits this round (0 rows scanned)
+[2025-10-19T19:35:50] no hits this round (0 rows scanned)
+[2025-10-19T19:37:53] no hits this round (0 rows scanned)
+[2025-10-19T19:39:57] no hits this round (0 rows scanned)
+[2025-10-19T19:42:00] no hits this round (0 rows scanned)
+[2025-10-19T19:44:04] no hits this round (0 rows scanned)
+[2025-10-19T19:46:07] no hits this round (0 rows scanned)
+PS C:\Users\andro\Projects\yield-flow-engine> TerminatingError(): "The pipeline has been stopped."
+>> TerminatingError(): "The pipeline has been stopped."
+PS C:\Users\andro\Projects\yield-flow-engine> poetry run engine --source defillama --chains "arbitrum,base,optimism,ethereum" --min-tvl 10000 --max-apy 5000 --top 20
+
+PS C:\Users\andro\Projects\yield-flow-engine> poetry run engine --show-config
+
+PS C:\Users\andro\Projects\yield-flow-engine> # Loosen the window and widen chains
+PS C:\Users\andro\Projects\yield-flow-engine> poetry run engine `
+  --source defillama `
+  --chains "arbitrum,base,optimism,polygon,ethereum" `
+  --min-tvl 10000 `
+  --max-apy 5000 `
+  --top 50 `
+  --stable-mode any
+
+PS C:\Users\andro\Projects\yield-flow-engine> powershell -NoProfile -ExecutionPolicy Bypass -File .\scan-watch-adaptive.ps1 -PostToDiscord -WriteToExcel
+
+PS C:\Users\andro\Projects\yield-flow-engine> # Put it in your repo root
+PS C:\Users\andro\Projects\yield-flow-engine> Copy-Item .\scan-watch-adaptive.ps1 .\scan-watch-adaptive.ps1
+Copy-Item : Cannot overwrite the item C:\Users\andro\Projects\yield-flow-engine\scan-watch-adaptive.ps1 with itself.
+At line:1 char:1
++ Copy-Item .\scan-watch-adaptive.ps1 .\scan-watch-adaptive.ps1
++ ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    + CategoryInfo          : WriteError: (C:\Users\andro\...ch-adaptive.ps1:String) [Copy-Item], IOException
+    + FullyQualifiedErrorId : CopyError,Microsoft.PowerShell.Commands.CopyItemCommand
+Copy-Item : Cannot overwrite the item C:\Users\andro\Projects\yield-flow-engine\scan-watch-adaptive.ps1 with itself.
+At line:1 char:1
++ Copy-Item .\scan-watch-adaptive.ps1 .\scan-watch-adaptive.ps1
++ ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    + CategoryInfo          : WriteError: (C:\Users\andro\...ch-adaptive.ps1:String) [Copy-Item], IOException
+    + FullyQualifiedErrorId : CopyError,Microsoft.PowerShell.Commands.CopyItemCommand
+
+PS C:\Users\andro\Projects\yield-flow-engine> # Then run (example with Discord + CSV logging)
+PS C:\Users\andro\Projects\yield-flow-engine> powershell -NoProfile -ExecutionPolicy Bypass -File .\scan-watch-adaptive.ps1 -PostToDiscord -WriteToExcel
+
+PS C:\Users\andro\Projects\yield-flow-engine> TerminatingError(): "The pipeline has been stopped."
+>> TerminatingError(): "The pipeline has been stopped."
+PS C:\Users\andro\Projects\yield-flow-engine> powershell -NoProfile -ExecutionPolicy Bypass -File .\scan-watch-adaptive.ps1 -PostToDiscord -WriteToExcel
+
+PS C:\Users\andro\Projects\yield-flow-engine> TerminatingError(): "The pipeline has been stopped."
+>> TerminatingError(): "The pipeline has been stopped."
+PS C:\Users\andro\Projects\yield-flow-engine> powershell -NoProfile -ExecutionPolicy Bypass -File .\scan-watch-adaptive.ps1 -PostToDiscord -WriteToExcel
+
+PS C:\Users\andro\Projects\yield-flow-engine> TerminatingError(): "The pipeline has been stopped."
+>> TerminatingError(): "The pipeline has been stopped."
+PS C:\Users\andro\Projects\yield-flow-engine> $env:DISCORD_WEBHOOK = "https://discord.com/api/webhooks/1427027386012274708/6AQEoxWSqjcPnXLIm9KnxZPUoc2Y_e_cbV1a4wINjMPKoTnryMM0guzRJoWAGcrpR4L5"
+PS C:\Users\andro\Projects\yield-flow-engine> pip install openpyxl tzdata
+
+PS C:\Users\andro\Projects\yield-flow-engine> poetry env use 3.12
+
+PS C:\Users\andro\Projects\yield-flow-engine> poetry install
+
+PS C:\Users\andro\Projects\yield-flow-engine> powershell -NoProfile -ExecutionPolicy Bypass -File .\scan-watch-adaptive.ps1 -PostToDiscord -WriteToExcel -Verbose
+
+PS C:\Users\andro\Projects\yield-flow-engine> TerminatingError(): "The pipeline has been stopped."
+>> TerminatingError(): "The pipeline has been stopped."
+PS C:\Users\andro\Projects\yield-flow-engine> cd "C:\Users\andro\Projects\yield-flow-engine"
+PS C:\Users\andro\Projects\yield-flow-engine> powershell -NoProfile -ExecutionPolicy Bypass -File .\scan-watch-adaptive.ps1 -PostToDiscord -WriteToExcel -Verbose
+
+PS C:\Users\andro\Projects\yield-flow-engine> TerminatingError(): "The pipeline has been stopped."
+>> TerminatingError(): "The pipeline has been stopped."
+PS C:\Users\andro\Projects\yield-flow-engine> cd "C:\Users\andro\Projects\yield-flow-engine"
+PS C:\Users\andro\Projects\yield-flow-engine> powershell -NoProfile -ExecutionPolicy Bypass -File .\scan-watch-adaptive.ps1 -PostToDiscord -WriteToExcel -Verbose
+
+PS C:\Users\andro\Projects\yield-flow-engine> TerminatingError(): "The pipeline has been stopped."
+>> TerminatingError(): "The pipeline has been stopped."
+PS C:\Users\andro\Projects\yield-flow-engine> cd "C:\Users\andro\Projects\yield-flow-engine"
+PS C:\Users\andro\Projects\yield-flow-engine> powershell -NoProfile -ExecutionPolicy Bypass -File .\scan-watch-adaptive.ps1 -PostToDiscord -WriteToExcel -Verbose
+
+PS C:\Users\andro\Projects\yield-flow-engine> TerminatingError(): "The pipeline has been stopped."
+>> TerminatingError(): "The pipeline has been stopped."
+PS C:\Users\andro\Projects\yield-flow-engine> cd "C:\Users\andro\Projects\yield-flow-engine"
+PS C:\Users\andro\Projects\yield-flow-engine> powershell -NoProfile -ExecutionPolicy Bypass -File .\scan-watch-adaptive.ps1 -PostToDiscord -WriteToExcel -Verbose
+
+PS C:\Users\andro\Projects\yield-flow-engine> TerminatingError(): "The pipeline has been stopped."
+>> TerminatingError(): "The pipeline has been stopped."
+PS C:\Users\andro\Projects\yield-flow-engine> powershell -NoProfile -ExecutionPolicy Bypass -File .\scan-watch-adaptive.ps1 -PostToDiscord -WriteToExcel -Verbose
+
+PS C:\Users\andro\Projects\yield-flow-engine> dir .\scripts\parse-engine*.ps1, .\parse-engine*.ps1
+PS C:\Users\andro\Projects\yield-flow-engine> powershell -NoProfile -ExecutionPolicy Bypass -File .\scan-watch-adaptive.ps1 -PostToDiscord -WriteToExcel -Verbose
+
+PS C:\Users\andro\Projects\yield-flow-engine> powershell -NoProfile -ExecutionPolicy Bypass -File .\scan-watch-adaptive.ps1 -PostToDiscord -WriteToExcel -Verbose
+
+PS C:\Users\andro\Projects\yield-flow-engine> TerminatingError(): "The pipeline has been stopped."
+>> TerminatingError(): "The pipeline has been stopped."
