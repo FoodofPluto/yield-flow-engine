@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import json
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from pathlib import Path
 from typing import Any
 
 import pandas as pd
@@ -10,13 +12,15 @@ import requests
 import streamlit as st
 
 APP_NAME = "FuruFlow"
-APP_TAGLINE = "DeFi yield intelligence with scanner, signals, arbitrage, and watchlist workflows"
-POOL_LIMIT = 350
+APP_VERSION = "v8"
+APP_TAGLINE = "DeFi yield intelligence for scanning, signaling, arbitrage, and watchlist workflows"
+POOL_LIMIT = 400
 TIMEOUT = 18
-SIGNAL_SAMPLE = 14
+SIGNAL_SAMPLE = 16
+WATCHLIST_FILE = Path(__file__).with_name("watchlist.json")
 
 st.set_page_config(
-    page_title=f"{APP_NAME} v6",
+    page_title=f"{APP_NAME} {APP_VERSION}",
     page_icon="🐸",
     layout="wide",
     initial_sidebar_state="expanded",
@@ -47,53 +51,49 @@ def inject_css() -> None:
         """
         <style>
             :root {
-                --bg: #07111f;
-                --bg-2: #0a1628;
-                --panel: #0f1d33;
-                --panel-2: #12243e;
-                --panel-3: #162c49;
+                --bg: #06101d;
+                --bg-2: #0a1527;
+                --panel: rgba(13, 26, 45, 0.96);
+                --panel-2: rgba(15, 30, 50, 0.98);
                 --border: rgba(255,255,255,0.08);
                 --text: #eef4ff;
-                --muted: #a7b7d4;
-                --muted-2: #8ea2c6;
+                --muted: #aab8d4;
                 --accent: #7ce2ff;
-                --accent-2: #5ec7ff;
+                --accent-2: #66d5ff;
                 --good: #35d49a;
-                --warn: #f3c15f;
-                --bad: #ff7b86;
-                --surface-light: #f4f8ff;
-                --surface-light-2: #e8f0ff;
-                --surface-dark-text: #07111f;
-                --surface-dark-text-2: #22324d;
+                --warn: #f1c96a;
+                --bad: #ff7f8e;
+                --surface-light: #f5f8ff;
+                --surface-light-2: #e7f0ff;
+                --surface-dark-text: #0d1a2b;
+                --surface-dark-text-2: #23344a;
             }
 
             html, body, [class*="css"] {
                 font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
             }
-
             .stApp {
                 color: var(--text);
                 background:
-                    radial-gradient(circle at top right, rgba(124,226,255,0.12), transparent 24%),
-                    radial-gradient(circle at top left, rgba(50,120,255,0.08), transparent 28%),
-                    linear-gradient(180deg, var(--bg) 0%, #081321 100%);
+                    radial-gradient(circle at 10% 0%, rgba(124,226,255,0.08), transparent 22%),
+                    radial-gradient(circle at 90% 5%, rgba(78,137,255,0.08), transparent 24%),
+                    linear-gradient(180deg, var(--bg) 0%, var(--bg-2) 100%);
             }
-
             .block-container {
-                max-width: 1650px;
+                max-width: 1680px;
                 padding-top: 1rem;
-                padding-bottom: 2rem;
+                padding-bottom: 2.2rem;
                 padding-left: 1.35rem;
                 padding-right: 1.35rem;
             }
-
-            h1, h2, h3, h4, h5, h6, p, span, label, div { color: var(--text); }
-
+            h1, h2, h3, h4, h5, h6, p, span, label, div {
+                color: var(--text);
+            }
             .hero-shell {
                 border: 1px solid var(--border);
                 border-radius: 30px;
                 overflow: hidden;
-                background: linear-gradient(150deg, rgba(17,32,54,0.98), rgba(9,18,31,0.98));
+                background: linear-gradient(150deg, rgba(17,32,54,0.98), rgba(8,15,26,0.98));
                 box-shadow: 0 30px 80px rgba(0,0,0,0.28);
                 margin-bottom: 1rem;
             }
@@ -110,8 +110,8 @@ def inject_css() -> None:
                 color: var(--accent); font-size: 0.78rem; font-weight: 800;
                 letter-spacing: 0.08em; text-transform: uppercase; margin-bottom: 0.8rem;
             }
-            .hero-title { font-size: 2.6rem; line-height: 1; font-weight: 900; margin-bottom: 0.38rem; letter-spacing: -0.03em; }
-            .hero-subtitle { max-width: 960px; font-size: 0.98rem; line-height: 1.6; color: var(--muted); }
+            .hero-title { font-size: 2.65rem; line-height: 1; font-weight: 900; margin-bottom: 0.38rem; letter-spacing: -0.03em; }
+            .hero-subtitle { max-width: 1060px; font-size: 0.98rem; line-height: 1.6; color: var(--muted); }
 
             .top-band { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 0.85rem; margin-top: 1rem; }
             .stat-card {
@@ -141,27 +141,39 @@ def inject_css() -> None:
             [data-testid="stSidebar"] .stMarkdown p { color: var(--muted) !important; }
             [data-testid="stDataFrame"] { border: 1px solid var(--border); border-radius: 18px; overflow: hidden; }
 
-            /* Fix all dropdown/select contrast, including opened menus */
+            /* Fix all title boxes / dropdowns / tags */
+            label, .stSelectbox label, .stMultiSelect label, .stSlider label, .stRadio label, .stCheckbox label, .stToggle label {
+                color: var(--text) !important;
+                font-weight: 800 !important;
+            }
             div[data-baseweb="select"] > div,
             .stSelectbox div[data-baseweb="select"] > div,
             .stMultiSelect div[data-baseweb="select"] > div,
+            .stSelectbox [data-baseweb="select"] div,
+            .stMultiSelect [data-baseweb="select"] div,
             div[data-baseweb="input"] > div,
             div[data-baseweb="input"] input,
             div[data-baseweb="select"] input,
             div[data-baseweb="tag"],
             div[data-baseweb="tag"] span,
-            div[data-baseweb="tag"] svg,
             .stNumberInput div[data-baseweb="input"] > div,
             .stTextInput div[data-baseweb="input"] > div,
             .stTextInput input,
             .stMultiSelect span,
-            .stSelectbox span {
+            .stSelectbox span,
+            .stMultiSelect p,
+            .stSelectbox p,
+            [data-baseweb="select"] svg {
                 background: var(--surface-light) !important;
                 color: var(--surface-dark-text) !important;
+                fill: var(--surface-dark-text) !important;
                 border-color: rgba(0,0,0,0.08) !important;
-                font-weight: 700 !important;
+                font-weight: 800 !important;
             }
-            div[data-baseweb="select"] * {
+            div[data-baseweb="select"] *,
+            div[data-baseweb="tag"] *,
+            .stMultiSelect [data-baseweb="tag"] *,
+            .stSelectbox [data-baseweb="select"] * {
                 color: var(--surface-dark-text) !important;
             }
             div[data-baseweb="popover"],
@@ -174,7 +186,7 @@ def inject_css() -> None:
             div[role="option"] {
                 background: #f7fbff !important;
                 color: var(--surface-dark-text) !important;
-                font-weight: 700 !important;
+                font-weight: 800 !important;
             }
             li[role="option"]:hover,
             div[role="option"]:hover,
@@ -183,16 +195,6 @@ def inject_css() -> None:
                 background: #d8ebff !important;
                 color: var(--surface-dark-text) !important;
             }
-            .stMultiSelect label,
-            .stSelectbox label,
-            .stNumberInput label,
-            .stSlider label,
-            .stToggle label,
-            .stRadio label,
-            .stCheckbox label {
-                color: var(--text) !important;
-                font-weight: 700 !important;
-            }
 
             .stSlider [data-baseweb="slider"] > div > div > div { background: var(--accent-2) !important; }
             .stSlider [role="slider"] {
@@ -200,10 +202,7 @@ def inject_css() -> None:
                 border: 2px solid #c8f7ff !important;
                 box-shadow: 0 0 0 4px rgba(124,226,255,0.15);
             }
-            .stSlider [data-testid="stTickBarMin"],
-            .stSlider [data-testid="stTickBarMax"],
-            .stSlider [data-testid="stWidgetLabel"] + div,
-            .stSlider span { color: var(--surface-dark-text-2) !important; }
+            .stSlider span, .stSlider p { color: var(--surface-dark-text-2) !important; }
 
             .stDownloadButton button,
             .stButton button,
@@ -213,7 +212,7 @@ def inject_css() -> None:
                 border-radius: 12px !important;
                 padding: 0.58rem 0.9rem !important;
                 color: #07111f !important;
-                font-weight: 800 !important;
+                font-weight: 900 !important;
                 text-decoration: none !important;
                 text-align: center !important;
                 box-shadow: none !important;
@@ -225,6 +224,10 @@ def inject_css() -> None:
             .pool-wrap .stLinkButton a {
                 background: linear-gradient(180deg, #ffe9a8, #ffd366) !important;
                 color: #332100 !important;
+            }
+            .danger-wrap .stButton button {
+                background: linear-gradient(180deg, #ffd6dc, #ff9aa8) !important;
+                color: #3c0d16 !important;
             }
 
             .stTabs [data-baseweb="tab-list"] {
@@ -249,13 +252,13 @@ def inject_css() -> None:
             .opp-card {
                 border: 1px solid var(--border); border-radius: 22px; padding: 1rem;
                 background: linear-gradient(180deg, rgba(17,34,57,0.98), rgba(9,18,31,0.98));
-                box-shadow: 0 12px 28px rgba(0,0,0,0.16); min-height: 265px;
+                box-shadow: 0 12px 28px rgba(0,0,0,0.16); min-height: 295px;
             }
             .opp-top { display: flex; justify-content: space-between; align-items: flex-start; gap: 0.75rem; margin-bottom: 0.75rem; }
             .opp-name { font-size: 1.05rem; font-weight: 900; line-height: 1.15; }
             .opp-sub { color: var(--muted); font-size: 0.84rem; margin-top: 0.18rem; }
             .protocol-dot {
-                width: 44px; height: 44px; border-radius: 14px; display: inline-flex; align-items: center; justify-content: center;
+                width: 46px; height: 46px; border-radius: 14px; display: inline-flex; align-items: center; justify-content: center;
                 background: linear-gradient(180deg, rgba(124,226,255,0.24), rgba(94,199,255,0.14));
                 border: 1px solid rgba(124,226,255,0.16); font-weight: 900; color: white; font-size: 1rem;
             }
@@ -270,7 +273,7 @@ def inject_css() -> None:
                 background: rgba(53,212,154,0.12); color: #caffec; font-size: 0.74rem; font-weight: 800;
                 border: 1px solid rgba(53,212,154,0.18);
             }
-            .signal-card, .watch-card {
+            .signal-card, .watch-card, .mini-card {
                 border-radius: 20px; border: 1px solid var(--border); background: rgba(255,255,255,0.03); padding: 0.9rem;
                 margin-bottom: 0.7rem;
             }
@@ -278,6 +281,7 @@ def inject_css() -> None:
             .signal-copy { color: var(--muted); font-size: 0.84rem; line-height: 1.48; }
             .arb-pill { display: inline-flex; align-items: center; border-radius: 999px; padding: 0.22rem 0.55rem; font-size: 0.72rem; font-weight: 800; background: rgba(243,193,95,0.14); color: #ffe08f; border: 1px solid rgba(243,193,95,0.2); }
             .tiny { color: var(--muted); font-size: 0.76rem; }
+            .divider { height: 1px; background: var(--border); margin: 0.8rem 0; }
 
             @media (max-width: 1180px) { .top-band { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
             @media (max-width: 760px) { .top-band { grid-template-columns: repeat(1, minmax(0, 1fr)); } .hero-title { font-size: 2.05rem; } }
@@ -619,14 +623,12 @@ def find_arbitrage_candidates(df: pd.DataFrame) -> pd.DataFrame:
         return pd.DataFrame()
     clean = df.copy()
     clean["asset_key"] = clean["symbol"].str.upper().str.replace(" ", "", regex=False)
-    grouped = clean.groupby("asset_key")
     rows = []
-    for asset, sub in grouped:
-        chains = sub["chain"].nunique()
-        if chains < 2 or len(sub) < 2:
+    for asset, sub in clean.groupby("asset_key"):
+        if sub["chain"].nunique() < 2 or len(sub) < 2:
             continue
-        top = sub.sort_values("apy", ascending=False).head(1).iloc[0]
-        low = sub.sort_values("apy", ascending=True).head(1).iloc[0]
+        top = sub.sort_values("apy", ascending=False).iloc[0]
+        low = sub.sort_values("apy", ascending=True).iloc[0]
         diff = float(top["apy"] - low["apy"])
         if diff >= 3:
             rows.append({
@@ -634,12 +636,55 @@ def find_arbitrage_candidates(df: pd.DataFrame) -> pd.DataFrame:
                 "Best chain": top["chain"],
                 "Best protocol": top["project"],
                 "Best APY": float(top["apy"]),
-                "Cheaper chain": low["chain"],
-                "Cheaper protocol": low["project"],
+                "Lower chain": low["chain"],
+                "Lower protocol": low["project"],
                 "Lower APY": float(low["apy"]),
                 "APY difference": diff,
             })
-    return pd.DataFrame(rows).sort_values("APY difference", ascending=False).head(25) if rows else pd.DataFrame()
+    return pd.DataFrame(rows).sort_values("APY difference", ascending=False).head(30) if rows else pd.DataFrame()
+
+
+def save_watchlist(items: list[str]) -> None:
+    try:
+        WATCHLIST_FILE.write_text(json.dumps(items, indent=2), encoding="utf-8")
+    except Exception:
+        pass
+
+
+def load_watchlist() -> list[str]:
+    try:
+        if WATCHLIST_FILE.exists():
+            data = json.loads(WATCHLIST_FILE.read_text(encoding="utf-8"))
+            if isinstance(data, list):
+                return [str(x) for x in data]
+    except Exception:
+        pass
+    return []
+
+
+def set_watchlist(items: list[str]) -> None:
+    deduped = list(dict.fromkeys([str(i) for i in items]))
+    st.session_state.watchlist = deduped
+    save_watchlist(deduped)
+
+
+def watch_toggle(pool_id: str) -> None:
+    current = list(st.session_state.watchlist)
+    if pool_id in current:
+        current = [p for p in current if p != pool_id]
+    else:
+        current.append(pool_id)
+    set_watchlist(current)
+
+
+def strategy_builder_filter(df: pd.DataFrame, stable_only: bool, min_apy: float, min_tvl: float, max_risk: int, signal_pref: str) -> pd.DataFrame:
+    out = df.copy()
+    if stable_only:
+        out = out[out["stablecoin"] == True]
+    out = out[(out["apy"] >= min_apy) & (out["tvlUsd"] >= min_tvl) & (out["risk_score"] <= max_risk)]
+    if signal_pref != "Any":
+        out = out[out["signal"] == signal_pref]
+    return out.sort_values(["rank_score", "apy", "tvlUsd"], ascending=[False, False, False]).head(25)
 
 
 def render_opportunity_card(row: pd.Series, idx: int, watched: bool) -> None:
@@ -650,7 +695,7 @@ def render_opportunity_card(row: pd.Series, idx: int, watched: bool) -> None:
             <div class="opp-top">
                 <div>
                     <div class="opp-name">{row['project']}</div>
-                    <div class="opp-sub">{row['symbol']} • {row['chain']}</div>
+                    <div class="opp-sub">{row['symbol']} • {row['chain']} • {row['protocol_tier']}</div>
                 </div>
                 <div class="protocol-dot">{row['protocol_badge']}</div>
             </div>
@@ -675,10 +720,7 @@ def render_opportunity_card(row: pd.Series, idx: int, watched: bool) -> None:
         st.markdown("<div class='watch-wrap'>", unsafe_allow_html=True)
         label = "Remove" if watched else "Watch"
         if st.button(label, key=f"watch_{idx}", use_container_width=True):
-            if watched:
-                st.session_state.watchlist = [p for p in st.session_state.watchlist if p != row["pool"]]
-            else:
-                st.session_state.watchlist = list(dict.fromkeys(st.session_state.watchlist + [row["pool"]]))
+            watch_toggle(str(row["pool"]))
             st.rerun()
         st.markdown("</div>", unsafe_allow_html=True)
     with c2:
@@ -687,15 +729,35 @@ def render_opportunity_card(row: pd.Series, idx: int, watched: bool) -> None:
         st.markdown("</div>", unsafe_allow_html=True)
 
 
+def render_protocol_dashboard(df: pd.DataFrame) -> None:
+    st.markdown("<div class='panel'>", unsafe_allow_html=True)
+    section_header("Protocol dashboard", "Depth by venue", "Compare the strongest visible protocols by capital depth, median yield, and average risk.")
+    if df.empty:
+        st.info("No protocol data available for the current filters.")
+        st.markdown("</div>", unsafe_allow_html=True)
+        return
+    top_protocols = top_n_summary(df, "project", 12)
+    top_protocols = top_protocols.rename(columns={"project": "Protocol", "total_tvl": "TVL (USD)", "median_apy": "Median APY", "pools": "Pools", "avg_risk": "Avg Risk"})
+    left, right = st.columns([1.15, 1], gap="large")
+    with left:
+        st.dataframe(top_protocols, use_container_width=True, hide_index=True, height=420, column_config={"TVL (USD)": st.column_config.NumberColumn(format="$%.0f"), "Median APY": st.column_config.NumberColumn(format="%.2f%%"), "Avg Risk": st.column_config.NumberColumn(format="%.0f")})
+    with right:
+        bar = px.bar(top_protocols.head(10), x="Protocol", y="TVL (USD)", color="Median APY", hover_data={"Pools": True, "Avg Risk": ':.1f'})
+        bar.update_xaxes(title="Protocol")
+        bar.update_yaxes(title="TVL")
+        st.plotly_chart(plotly_theme(bar, 420), use_container_width=True)
+    st.markdown("</div>", unsafe_allow_html=True)
+
+
 inject_css()
 raw_df = fetch_pools()
 df = enrich(raw_df)
 
 if "watchlist" not in st.session_state:
-    st.session_state.watchlist = []
+    st.session_state.watchlist = load_watchlist()
 
-signal_source = filtered_signal_pool_ids = tuple(df.head(SIGNAL_SAMPLE)["pool"].tolist())
-signal_df = fetch_signal_snapshots(filtered_signal_pool_ids)
+signal_source = tuple(df.head(SIGNAL_SAMPLE)["pool"].tolist())
+signal_df = fetch_signal_snapshots(signal_source)
 if not signal_df.empty:
     df = df.merge(signal_df, on="pool", how="left")
 for col, default in [("signal", "Steady"), ("apy_delta_7", 0.0), ("tvl_delta_7_pct", 0.0), ("apy_volatility", 0.0)]:
@@ -703,36 +765,45 @@ for col, default in [("signal", "Steady"), ("apy_delta_7", 0.0), ("tvl_delta_7_p
         df[col] = default
     df[col] = df[col].fillna(default)
 
+watchlist_df = df[df["pool"].isin(st.session_state.watchlist)].copy()
+
 st.markdown(
     f"""
     <section class="hero-shell"><div class="hero-inner">
-        <div class="eyebrow">DeFi yield workstation • v6</div>
+        <div class="eyebrow">DeFi yield workstation • {APP_VERSION}</div>
         <div class="hero-title">{APP_NAME}</div>
-        <div class="hero-subtitle">{APP_TAGLINE}. This build adds fully readable dropdowns and action buttons, cleaner pool bubbles, richer scanner cards, a stronger watchlist layer, same-asset cross-chain arbitrage detection, smarter risk scoring, and a first-pass signal engine for APY spikes, farm rotations, emerging pools, and whale inflows.</div>
+        <div class="hero-subtitle">{APP_TAGLINE}. This build rolls the prior v7 productization pass into a fuller v8 terminal: readable dropdown title boxes, darker dropdown selections, readable Watch and Open Pool actions, cleaner pool bubbles, persistent watchlists, arbitrage discovery, smarter risk scoring, richer charts, a strategy builder, and dedicated pages for scanner, signals, market map, pool explorer, protocol analysis, and tracked pools.</div>
     </div></section>
     """,
     unsafe_allow_html=True,
 )
 
 with st.sidebar:
-    st.markdown(f"## {APP_NAME} v6")
-    st.markdown("Shape the scanner, then inspect the signal and arbitrage layers.")
+    st.markdown(f"## {APP_NAME} {APP_VERSION}")
+    st.markdown("Set the market slice, then move through the app pages like a lightweight DeFi terminal.")
+
+    page = st.radio(
+        "Navigation",
+        ["Scanner", "Signals", "Arbitrage", "Market Map", "Pool Explorer", "Protocol Dashboard", "Strategy Builder", "Watchlist"],
+        index=0,
+    )
 
     chains = sorted(df["chain"].dropna().unique().tolist())
     projects = sorted(df["project"].dropna().unique().tolist())
     strategies = sorted(df["strategy_type"].dropna().unique().tolist())
     signals = sorted(df["signal"].dropna().unique().tolist())
 
-    selected_chains = st.multiselect("Chains", chains, default=chains[: min(len(chains), 8)])
+    default_chains = chains[: min(len(chains), 10)] if chains else []
+    selected_chains = st.multiselect("Chains", chains, default=default_chains)
     selected_projects = st.multiselect("Protocols", projects)
-    selected_strategies = st.multiselect("Strategy type", strategies)
-    selected_signals = st.multiselect("Signal filter", signals)
+    selected_strategies = st.multiselect("Strategy Type", strategies)
+    selected_signals = st.multiselect("Signal Filter", signals)
     stable_only = st.toggle("Stablecoin pools only", value=False)
     min_tvl = st.slider("Minimum TVL", min_value=0, max_value=500_000_000, value=5_000_000, step=1_000_000)
     max_risk = st.slider("Maximum risk score", min_value=1, max_value=100, value=70)
     min_apy = st.slider("Minimum APY", min_value=0.0, max_value=250.0, value=0.0, step=0.5)
     sort_by = st.selectbox("Sort by", ["FuruFlow rank", "Highest APY", "Largest TVL", "Lowest risk", "Highest 24h volume", "Largest signal move"], index=0)
-    st.markdown("<div class='note'>Risk score is heuristic. It blends protocol age, TVL stability, audit confidence, reward dependence, and inferred pool volatility. Signal labels come from recent pool-chart moves when chart data is available.</div>", unsafe_allow_html=True)
+    st.markdown("<div class='note'>Risk score is heuristic. It blends protocol age, TVL stability, audit confidence, reward dependence, and inferred pool volatility. Signals come from recent chart movement when chart data is available.</div>", unsafe_allow_html=True)
 
 filtered = df.copy()
 if selected_chains:
@@ -763,40 +834,43 @@ else:
 
 filtered = filtered.head(POOL_LIMIT)
 watchlist_df = df[df["pool"].isin(st.session_state.watchlist)].copy()
+arb_df = find_arbitrage_candidates(filtered)
 
 visible = len(filtered)
 median_apy = filtered["apy"].median() if visible else 0.0
 total_tvl = filtered["tvlUsd"].sum() if visible else 0.0
 signal_share = (filtered["signal"].ne("Steady").mean() * 100) if visible else 0.0
-arb_df = find_arbitrage_candidates(filtered)
 
 metric_cols = st.columns(5)
-with metric_cols[0]: stat_card("Visible opportunities", f"{visible:,}", "Pools left after your current filters")
-with metric_cols[1]: stat_card("Median APY", f"{median_apy:,.2f}%", "A steadier center of the current market slice")
-with metric_cols[2]: stat_card("Aggregate TVL", format_money(total_tvl), "Combined depth across visible pools")
-with metric_cols[3]: stat_card("Signal density", f"{signal_share:,.0f}%", "Pools with non-steady signal labels")
-with metric_cols[4]: stat_card("Watchlist", f"{len(watchlist_df):,}", "Pools you marked for repeat tracking")
+with metric_cols[0]:
+    stat_card("Visible opportunities", f"{visible:,}", "Pools left after your current filters")
+with metric_cols[1]:
+    stat_card("Median APY", f"{median_apy:,.2f}%", "A steadier center of the current market slice")
+with metric_cols[2]:
+    stat_card("Aggregate TVL", format_money(total_tvl), "Combined depth across visible pools")
+with metric_cols[3]:
+    stat_card("Signal density", f"{signal_share:,.0f}%", "Pools with non-steady signal labels")
+with metric_cols[4]:
+    stat_card("Watchlist", f"{len(watchlist_df):,}", "Pools saved to your persistent tracker")
 
-main_tab, signal_tab, market_tab, drill_tab, watch_tab = st.tabs(["Scanner", "Signals", "Market map", "Pool drilldown", "Watchlist"])
-
-with main_tab:
+if page == "Scanner":
     left, right = st.columns([1.6, 1], gap="large")
     with left:
         st.markdown("<div class='panel'>", unsafe_allow_html=True)
-        section_header("Scanner", "Custom scan view", "The scanner now behaves more like a product surface: richer cards up top, cleaner table below, and stronger controls that stay readable.")
+        section_header("Scanner", "Custom scan view", "A more product-like scanner surface with richer cards, cleaner table layout, and strong control readability.")
         top_cards = filtered.head(6)
         for start in range(0, len(top_cards), 3):
             cols = st.columns(3, gap="medium")
-            for i, (_, row) in enumerate(top_cards.iloc[start:start+3].iterrows()):
+            for i, (_, row) in enumerate(top_cards.iloc[start : start + 3].iterrows()):
                 with cols[i]:
                     render_opportunity_card(row, start + i, row["pool"] in st.session_state.watchlist)
-        st.markdown("<div style='height:0.4rem;'></div>", unsafe_allow_html=True)
+        st.markdown("<div style='height:0.5rem;'></div>", unsafe_allow_html=True)
         table_df = compact_table(filtered)
         st.dataframe(
             table_df,
             use_container_width=True,
             hide_index=True,
-            height=520,
+            height=540,
             column_config={
                 "APY": st.column_config.NumberColumn(format="%.2f%%", width="small"),
                 "Base": st.column_config.NumberColumn(format="%.2f%%", width="small"),
@@ -807,45 +881,40 @@ with main_tab:
             },
         )
         csv = make_download_df(filtered).to_csv(index=False).encode("utf-8")
-        st.download_button("Download current table as CSV", csv, file_name="furuflow_scanner_v6.csv", mime="text/csv")
+        st.download_button("Download current table as CSV", csv, file_name="furuflow_scanner.csv", mime="text/csv")
         st.markdown("</div>", unsafe_allow_html=True)
-
     with right:
         st.markdown("<div class='panel'>", unsafe_allow_html=True)
-        section_header("Cross-chain edge", "Live arbitrage detection", "This compares the same asset across different chains and highlights APY spreads that may be worth routing into deeper research.")
-        if arb_df.empty:
-            st.info("No strong same-asset cross-chain APY spreads were found in the current filtered set.")
-        else:
-            st.dataframe(
-                arb_df,
-                use_container_width=True,
-                hide_index=True,
-                height=255,
-                column_config={"Best APY": st.column_config.NumberColumn(format="%.2f%%"), "Lower APY": st.column_config.NumberColumn(format="%.2f%%"), "APY difference": st.column_config.NumberColumn(format="%.2f%%")},
-            )
-        signal_counts = filtered["signal"].value_counts().reset_index()
-        signal_counts.columns = ["Signal", "Count"]
-        if not signal_counts.empty:
-            bar = px.bar(signal_counts, x="Signal", y="Count")
-            st.plotly_chart(plotly_theme(bar, 250), use_container_width=True)
+        section_header("Scanner guidance", "How to read the cards", "The card layer helps you triage quickly before you dig into individual pool detail.")
+        bullets = [
+            ("Risk", "Heuristic score from protocol age, audit confidence, TVL stability, reward dependence, and pool volatility."),
+            ("Signal", "Labels such as APY spike, Emerging pool, Farm rotation, and Whale inflow come from recent chart movement."),
+            ("Watchlist", "Click Watch to persist a pool to your tracked list inside this project zip."),
+        ]
+        for title, copy in bullets:
+            st.markdown(f"<div class='signal-card'><div class='signal-title'>{title}</div><div class='signal-copy'>{copy}</div></div>", unsafe_allow_html=True)
+        mini = filtered.head(12).groupby("risk_band", as_index=False).agg(pools=("pool", "count")) if not filtered.empty else pd.DataFrame()
+        if not mini.empty:
+            pie = px.pie(mini, values="pools", names="risk_band", hole=0.45)
+            st.plotly_chart(plotly_theme(pie, 260), use_container_width=True)
         st.markdown("</div>", unsafe_allow_html=True)
 
-with signal_tab:
-    left, right = st.columns([1.15, 1], gap="large")
+elif page == "Signals":
+    left, right = st.columns([1.2, 1], gap="large")
     with left:
         st.markdown("<div class='panel'>", unsafe_allow_html=True)
-        section_header("Signal engine", "Yield trend AI layer", "These labels are rules-based signals drawn from recent APY and TVL movement on the pool chart endpoint, meant to surface where to look next.")
-        sig_view = filtered[["project", "chain", "symbol", "signal", "apy_delta_7", "tvl_delta_7_pct", "apy_volatility"]].copy().head(18)
+        section_header("Signal engine", "Yield trend AI layer", "Rules-based labels surface APY spikes, farm rotations, emerging pools, and whale inflows from recent pool chart movement.")
+        sig_view = filtered[["project", "chain", "symbol", "signal", "apy_delta_7", "tvl_delta_7_pct", "apy_volatility"]].copy().head(20)
         sig_view.columns = ["Protocol", "Chain", "Asset", "Signal", "7d APY Δ", "7d TVL Δ %", "APY volatility"]
-        st.dataframe(sig_view, use_container_width=True, hide_index=True, height=520, column_config={"7d APY Δ": st.column_config.NumberColumn(format="%.2f"), "7d TVL Δ %": st.column_config.NumberColumn(format="%.2f"), "APY volatility": st.column_config.NumberColumn(format="%.2f")})
+        st.dataframe(sig_view, use_container_width=True, hide_index=True, height=560, column_config={"7d APY Δ": st.column_config.NumberColumn(format="%.2f"), "7d TVL Δ %": st.column_config.NumberColumn(format="%.2f"), "APY volatility": st.column_config.NumberColumn(format="%.2f")})
         st.markdown("</div>", unsafe_allow_html=True)
     with right:
         st.markdown("<div class='panel'>", unsafe_allow_html=True)
-        section_header("What the signal labels mean", "Operator guidance", "Use these labels as triage, not certainty.")
+        section_header("Interpretation", "Operator notes", "These are decision-support signals, not guarantees.")
         guides = [
-            ("APY spike", "Yield jumped quickly. Check whether rewards, temporary emissions, or incentive campaigns are driving the move."),
-            ("Farm rotation", "Yield and TVL both rolled over. Capital may be rotating out after emissions decayed or a newer farm launched."),
-            ("Emerging pool", "APY is rising and TVL is arriving. This can be the sweet spot before a pool becomes crowded."),
+            ("APY spike", "Yield jumped quickly. Check whether emissions, rewards, or a short-term campaign are driving the move."),
+            ("Farm rotation", "Yield and TVL rolled over together. Capital may be leaving after incentives decayed or a newer farm launched."),
+            ("Emerging pool", "APY is climbing while TVL is arriving. This can be the sweet spot before a pool becomes crowded."),
             ("Whale inflow", "TVL jumped sharply in a short period. Larger deposits may be validating the venue or crowding the trade."),
         ]
         for title, copy in guides:
@@ -855,36 +924,59 @@ with signal_tab:
             fig = px.scatter(sig_plot_df, x="avg_tvl", y="avg_apy", size="avg_tvl", color="signal", hover_name="signal", size_max=42, log_x=True)
             fig.update_xaxes(title="Average TVL")
             fig.update_yaxes(title="Average APY %")
-            st.plotly_chart(plotly_theme(fig, 290), use_container_width=True)
+            st.plotly_chart(plotly_theme(fig, 320), use_container_width=True)
         st.markdown("</div>", unsafe_allow_html=True)
 
-with market_tab:
-    left, right = st.columns([1, 1], gap="large")
+elif page == "Arbitrage":
+    left, right = st.columns([1.15, 1], gap="large")
     with left:
         st.markdown("<div class='panel'>", unsafe_allow_html=True)
-        section_header("Market map", "Risk vs yield field", "A compact view of where the current opportunity set sits across APY, risk, and capital depth.")
-        if not filtered.empty:
-            bubble = px.scatter(filtered.head(85), x="risk_score", y="apy", size="tvlUsd", color="chain", hover_name="project", hover_data={"symbol": True, "tvlUsd": ':$,.0f', "risk_score": True, "apy": ':.2f'}, size_max=34)
-            bubble.update_traces(marker=dict(line=dict(width=1, color="rgba(255,255,255,0.22)"), opacity=0.8))
-            bubble.update_xaxes(title="Risk score")
-            bubble.update_yaxes(title="APY %")
-            st.plotly_chart(plotly_theme(bubble, 390), use_container_width=True)
+        section_header("Arbitrage", "Same asset, different chain", "This view hunts for APY gaps across chains for the same displayed asset symbol.")
+        if arb_df.empty:
+            st.info("No meaningful cross-chain APY gaps are visible for the current filters.")
+        else:
+            st.dataframe(arb_df, use_container_width=True, hide_index=True, height=560, column_config={"Best APY": st.column_config.NumberColumn(format="%.2f%%"), "Lower APY": st.column_config.NumberColumn(format="%.2f%%"), "APY difference": st.column_config.NumberColumn(format="%.2f")})
         st.markdown("</div>", unsafe_allow_html=True)
     with right:
         st.markdown("<div class='panel'>", unsafe_allow_html=True)
-        section_header("Protocol map", "Badges and leaders", "A cleaner side view of protocol depth, median APY, and risk profile.")
-        top_protocols = top_n_summary(filtered, "project", 10)
-        if not top_protocols.empty:
-            top_protocols = top_protocols.rename(columns={"project": "Protocol", "total_tvl": "TVL (USD)", "median_apy": "Median APY", "pools": "Pools", "avg_risk": "Avg Risk"})
-            st.dataframe(top_protocols, use_container_width=True, hide_index=True, height=245, column_config={"TVL (USD)": st.column_config.NumberColumn(format="$%.0f"), "Median APY": st.column_config.NumberColumn(format="%.2f%%"), "Avg Risk": st.column_config.NumberColumn(format="%.0f")})
-            chain_df = filtered.groupby("chain", as_index=False).agg(total_tvl=("tvlUsd", "sum"), median_apy=("apy", "median"), pools=("pool", "count"))
-            sun = px.treemap(chain_df, path=[px.Constant("Chains"), "chain"], values="total_tvl", color="median_apy", hover_data={"pools": True, "median_apy": ':.2f'})
-            st.plotly_chart(plotly_theme(sun, 290), use_container_width=True)
+        section_header("Arb triage", "What to check next", "A spread is only interesting if the execution path and risk justify it.")
+        checks = [
+            ("Bridge friction", "Estimate the cost and time to move capital between the chains involved."),
+            ("Protocol risk mismatch", "Higher APY often comes with lower audit confidence or a weaker TVL base."),
+            ("Signal support", "A Whale inflow or Emerging pool label can mean a spread is being discovered by others."),
+        ]
+        for title, copy in checks:
+            st.markdown(f"<div class='signal-card'><div class='signal-title'>{title}</div><div class='signal-copy'>{copy}</div></div>", unsafe_allow_html=True)
+        if not arb_df.empty:
+            fig = px.bar(arb_df.head(12), x="Asset", y="APY difference", color="Best chain", hover_data={"Best protocol": True, "Lower chain": True, "Lower protocol": True})
+            fig.update_yaxes(title="APY difference")
+            st.plotly_chart(plotly_theme(fig, 330), use_container_width=True)
         st.markdown("</div>", unsafe_allow_html=True)
 
-with drill_tab:
+elif page == "Market Map":
+    left, right = st.columns([1, 1], gap="large")
+    with left:
+        st.markdown("<div class='panel'>", unsafe_allow_html=True)
+        section_header("Market map", "Risk vs yield field", "A compact look at where the visible opportunity set sits across APY, risk, and capital depth.")
+        if not filtered.empty:
+            bubble = px.scatter(filtered.head(90), x="risk_score", y="apy", size="tvlUsd", color="chain", hover_name="project", hover_data={"symbol": True, "tvlUsd": ':$,.0f', "risk_score": True, "apy": ':.2f'}, size_max=34)
+            bubble.update_traces(marker=dict(line=dict(width=1, color="rgba(255,255,255,0.22)"), opacity=0.8))
+            bubble.update_xaxes(title="Risk score")
+            bubble.update_yaxes(title="APY %")
+            st.plotly_chart(plotly_theme(bubble, 420), use_container_width=True)
+        st.markdown("</div>", unsafe_allow_html=True)
+    with right:
+        st.markdown("<div class='panel'>", unsafe_allow_html=True)
+        section_header("Chain map", "Capital and yield concentration", "Treemap sizing is based on aggregate TVL across the currently visible pools.")
+        if not filtered.empty:
+            chain_df = filtered.groupby("chain", as_index=False).agg(total_tvl=("tvlUsd", "sum"), median_apy=("apy", "median"), pools=("pool", "count"))
+            sun = px.treemap(chain_df, path=[px.Constant("Chains"), "chain"], values="total_tvl", color="median_apy", hover_data={"pools": True, "median_apy": ':.2f'})
+            st.plotly_chart(plotly_theme(sun, 420), use_container_width=True)
+        st.markdown("</div>", unsafe_allow_html=True)
+
+elif page == "Pool Explorer":
     st.markdown("<div class='panel'>", unsafe_allow_html=True)
-    section_header("Pool drilldown", "Open a single venue", "Inspect chart shape, risk factors, and watchlist actions without leaving the app.")
+    section_header("Pool explorer", "Open a single venue", "Inspect chart shape, risk factors, and watchlist actions without leaving the app.")
     pool_options = filtered.copy()
     pool_options["pool_pick"] = pool_options.apply(lambda r: f"{r['project']} • {r['symbol']} • {r['chain']}", axis=1)
     if pool_options.empty:
@@ -903,7 +995,7 @@ with drill_tab:
                     fig.update_layout(yaxis2=dict(overlaying="y", side="right", showgrid=False, title="TVL"))
                 fig.update_xaxes(title="Time")
                 fig.update_yaxes(title="APY %")
-                st.plotly_chart(plotly_theme(fig, 420), use_container_width=True)
+                st.plotly_chart(plotly_theme(fig, 430), use_container_width=True)
             else:
                 st.info("Chart history is unavailable for this pool right now.")
         with cols[1]:
@@ -919,16 +1011,13 @@ with drill_tab:
                 ["7d APY change", f"{float(row['apy_delta_7']):.2f}"],
                 ["7d TVL change", f"{float(row['tvl_delta_7_pct']):.2f}%"],
             ], columns=["Metric", "Value"])
-            st.dataframe(stats, use_container_width=True, hide_index=True, height=350)
+            st.dataframe(stats, use_container_width=True, hide_index=True, height=360)
             c1, c2 = st.columns(2)
             with c1:
                 watched = row["pool"] in st.session_state.watchlist
                 st.markdown("<div class='watch-wrap'>", unsafe_allow_html=True)
                 if st.button("Remove from watchlist" if watched else "Add to watchlist", key="drill_watch", use_container_width=True):
-                    if watched:
-                        st.session_state.watchlist = [p for p in st.session_state.watchlist if p != row["pool"]]
-                    else:
-                        st.session_state.watchlist = list(dict.fromkeys(st.session_state.watchlist + [row["pool"]]))
+                    watch_toggle(str(row["pool"]))
                     st.rerun()
                 st.markdown("</div>", unsafe_allow_html=True)
             with c2:
@@ -937,21 +1026,54 @@ with drill_tab:
                 st.markdown("</div>", unsafe_allow_html=True)
     st.markdown("</div>", unsafe_allow_html=True)
 
-with watch_tab:
+elif page == "Protocol Dashboard":
+    render_protocol_dashboard(filtered)
+
+elif page == "Strategy Builder":
+    left, right = st.columns([1, 1.1], gap="large")
+    with left:
+        st.markdown("<div class='panel'>", unsafe_allow_html=True)
+        section_header("Strategy builder", "Compose a target slice", "Build a reusable market slice like 'stablecoin pools, TVL above 10M, risk below 40, APY above 8'.")
+        builder_stable = st.toggle("Stablecoin only strategy", value=True, key="builder_stable")
+        builder_min_apy = st.slider("Strategy minimum APY", min_value=0.0, max_value=80.0, value=8.0, step=0.5)
+        builder_min_tvl = st.slider("Strategy minimum TVL", min_value=0, max_value=250_000_000, value=10_000_000, step=1_000_000)
+        builder_max_risk = st.slider("Strategy maximum risk", min_value=1, max_value=100, value=40)
+        signal_pref = st.selectbox("Preferred signal", ["Any"] + signals, index=0 if "Any" else 0)
+        strategy_df = strategy_builder_filter(df, builder_stable, builder_min_apy, float(builder_min_tvl), builder_max_risk, signal_pref)
+        summary_text = f"{len(strategy_df)} pools match this strategy slice."
+        st.markdown(f"<div class='signal-card'><div class='signal-title'>Builder summary</div><div class='signal-copy'>{summary_text}</div></div>", unsafe_allow_html=True)
+        st.markdown("</div>", unsafe_allow_html=True)
+    with right:
+        st.markdown("<div class='panel'>", unsafe_allow_html=True)
+        section_header("Strategy results", "Top matching pools", "Use this as a shortlist generator, then move candidates to the watchlist or pool explorer.")
+        if strategy_df.empty:
+            st.info("No pools match the current strategy builder settings.")
+        else:
+            view = strategy_df[["project", "chain", "symbol", "apy", "tvlUsd", "risk_score", "signal", "pool_url"]].copy()
+            view.columns = ["Protocol", "Chain", "Asset", "APY", "TVL (USD)", "Risk", "Signal", "Open"]
+            st.dataframe(view, use_container_width=True, hide_index=True, height=520, column_config={"APY": st.column_config.NumberColumn(format="%.2f%%"), "TVL (USD)": st.column_config.NumberColumn(format="$%.0f"), "Open": st.column_config.LinkColumn("Pool link", display_text="Open")})
+        st.markdown("</div>", unsafe_allow_html=True)
+
+elif page == "Watchlist":
     left, right = st.columns([1.2, 1], gap="large")
     with left:
         st.markdown("<div class='panel'>", unsafe_allow_html=True)
-        section_header("Watchlist", "Tracked pools", "This is your lightweight conviction layer inside the scanner.")
+        section_header("Watchlist", "Tracked pools", "This is your lightweight conviction layer. Items persist in watchlist.json inside the project folder.")
         if watchlist_df.empty:
-            st.info("Your watchlist is empty. Use Watch on any scanner card or pool drilldown panel.")
+            st.info("Your watchlist is empty. Use Watch on any scanner card or pool explorer panel.")
         else:
             view = watchlist_df[["project", "chain", "symbol", "apy", "tvlUsd", "risk_score", "signal"]].copy()
             view.columns = ["Protocol", "Chain", "Asset", "APY", "TVL (USD)", "Risk", "Signal"]
             st.dataframe(view, use_container_width=True, hide_index=True, height=440, column_config={"APY": st.column_config.NumberColumn(format="%.2f%%"), "TVL (USD)": st.column_config.NumberColumn(format="$%.0f")})
+            st.markdown("<div class='danger-wrap'>", unsafe_allow_html=True)
+            if st.button("Clear watchlist", use_container_width=True):
+                set_watchlist([])
+                st.rerun()
+            st.markdown("</div>", unsafe_allow_html=True)
         st.markdown("</div>", unsafe_allow_html=True)
     with right:
         st.markdown("<div class='panel'>", unsafe_allow_html=True)
-        section_header("Watchlist chart", "Where attention is concentrated", "The watchlist stays simple for now, but it already supports quick visual comparison.")
+        section_header("Watchlist chart", "Where your attention sits", "Quick visual comparison of tracked yield and signal distribution.")
         if not watchlist_df.empty:
             fig = px.bar(watchlist_df.sort_values("apy", ascending=False), x="project", y="apy", color="risk_band", hover_data={"chain": True, "symbol": True, "tvlUsd": ':$,.0f'})
             fig.update_xaxes(title="Protocol")

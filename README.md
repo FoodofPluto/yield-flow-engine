@@ -1,25 +1,30 @@
-# FuruFlow v6
+# FuruFlow v8
 
-This pack upgrades the Yield Flow app into a more product-like DeFi scanner with:
+FuruFlow is a DeFi yield intelligence dashboard built in Streamlit.
 
-- fixed dropdown readability for all select menus
-- improved Watch / Open Pool button contrast
-- readable pool-card badges and metric boxes
-- richer scanner cards and a tighter table layout
-- same-asset cross-chain arbitrage detection
-- smarter heuristic risk scoring using protocol age, TVL stability, audit confidence, and inferred pool volatility
-- a rules-based signal layer for APY spikes, farm rotations, emerging pools, and whale inflows
-- watchlist workflow and pool drilldown charts
+## What's in v8
+
+- upgraded from the prior v7 productization pass to a fuller multi-page interface
+- fixed low-contrast dropdown and title-box text for Chains, Protocols, Strategy Type, Signal Filter, Sort by, and Choose a Pool
+- fixed Watch and Open Pool button readability
+- fixed pool-card badge and metric readability
+- scanner cards with cleaner visual hierarchy
+- richer Plotly charting
+- signal engine for APY spikes, farm rotations, emerging pools, and whale inflows
+- heuristic risk scoring using protocol age, TVL stability, audit confidence, and pool volatility
+- same-asset, cross-chain arbitrage surface
+- pool explorer page with chart + score breakdown
+- protocol dashboard page
+- strategy builder page
+- persistent watchlist saved to `watchlist.json`
+
+## Run locally
+
+```bash
+pip install -r requirements.txt
+streamlit run app.py
+```
 
 ## Deploy
 
-Replace your repo `app.py` and `requirements.txt`, then run:
-
-```powershell
-cd C:\Users\andro\Projects\yield-flow-engine
-git add app.py requirements.txt README.md
-git commit -m "Upgrade FuruFlow to v6 with signal engine, arbitrage detection, and improved UI contrast"
-git push origin main
-```
-
-Then hard refresh the Streamlit app with `Ctrl + F5`.
+Push the updated repo to the branch connected to Streamlit Cloud. The app should auto-redeploy.
