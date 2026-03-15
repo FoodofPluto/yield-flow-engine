@@ -1,41 +1,32 @@
-# Yield Flow Engine
+# FuruFlow Streamlit Upgrade Pack
 
-This project now includes both:
-- the original CLI scanner
-- a Streamlit app for non-technical users
+This pack is a cleaned-up, deploy-ready replacement for the earlier Yield Flow Engine dashboard.
 
-## Install
+## What changed
+- Higher-contrast typography for dark backgrounds
+- Wider layout and more breathing room
+- Compact, professional dashboard sections
+- Fewer columns in the primary table to reduce sideways scrolling
+- Live DeFiLlama-backed pool data with fallback demo data
+- Pool links and a pool drilldown view
+- Simple risk heuristic for fast sorting
+- Rebrand-ready structure
 
-Using Poetry:
+## Files
+- `app.py` — upgraded Streamlit dashboard
+- `requirements.txt` — Python dependencies
+- `revised_prompt.md` — stronger master prompt for future iterations
 
+## Run locally
 ```bash
-poetry install
+pip install -r requirements.txt
+streamlit run app.py
 ```
 
-## Run the Streamlit app
-
-```bash
-poetry run streamlit run app.py
-```
-
-## Run the CLI
-
-```bash
-poetry run engine scan --help
-```
+## Deploy to the same Streamlit app
+Replace your repo's existing `app.py` and `requirements.txt` with these versions, commit, and push to the branch connected to Streamlit Cloud.
 
 ## Notes
-
-- The Streamlit app uses the existing scanner and provider logic.
-- Environment secrets were not included in the packaged zip.
-- Cached Python bytecode folders were removed from the package.
-
-
-## V3 dashboard upgrades
-
-- watchlist tab with session-based favorites
-- CSV and Excel export
-- protocol drilldown panel
-- ranking modes for APY, risk-adjusted, TVL, low-risk, stable income, and 7D momentum
-- search and asset filters
-- richer charts for protocol, chain, risk, and stable/volatile mix
+- The app tries live yield endpoints first and falls back to demo data if the endpoint is unavailable.
+- The risk score is heuristic-only and should be presented as a sorting aid, not a safety claim.
+- The default product name in code is `FuruFlow`. You can rename it by changing `APP_NAME` and `APP_TAGLINE` near the top of `app.py`.

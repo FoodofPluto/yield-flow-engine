@@ -1,788 +1,657 @@
-from __future__ import annotations
-
+import math
 from datetime import datetime, timezone
-from io import BytesIO
-import json
-from pathlib import Path
+from typing import Optional
 
-import altair as alt
 import pandas as pd
+import requests
 import streamlit as st
 
-from engine.scanner import as_rows, list_market_snapshot, rank_top_yields
+APP_NAME = "FuruFlow"
+APP_TAGLINE = "Yield intelligence for DeFi hunters"
+POOL_LIMIT = 250
+TIMEOUT = 20
 
-st.set_page_config(page_title="Yield Flow Engine v3", page_icon="📈", layout="wide")
-
-APP_DIR = Path(__file__).parent
-DATA_DIR = APP_DIR / ".streamlit_state"
-WATCHLIST_FILE = DATA_DIR / "watchlist.json"
-ALERTS_FILE = DATA_DIR / "alerts.json"
-DATA_DIR.mkdir(exist_ok=True)
+st.set_page_config(
+    page_title=APP_NAME,
+    page_icon="🐸",
+    layout="wide",
+    initial_sidebar_state="expanded",
+)
 
 
 def inject_css() -> None:
     st.markdown(
         """
         <style>
+            :root {
+                --bg: #07111f;
+                --panel: #0d1b2f;
+                --panel-2: #12243d;
+                --border: rgba(255,255,255,0.08);
+                --text: #f5f7fb;
+                --muted: #c8d2e6;
+                --accent: #63d2ff;
+                --good: #2ed29c;
+                --warn: #f1b84b;
+                --bad: #ff6d7a;
+            }
+
             .stApp {
                 background:
-                    radial-gradient(circle at top right, rgba(41, 98, 255, 0.18), transparent 26%),
-                    radial-gradient(circle at top left, rgba(0, 200, 150, 0.14), transparent 20%),
-                    linear-gradient(180deg, #08111f 0%, #0b1728 45%, #0d1420 100%);
+                    radial-gradient(circle at top right, rgba(99,210,255,0.10), transparent 28%),
+                    linear-gradient(180deg, #07111f 0%, #081425 100%);
+                color: var(--text);
             }
+
+            html, body, [class*="css"]  {
+                color: var(--text);
+                font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+            }
+
             .block-container {
                 max-width: 1480px;
-                padding-top: 1.15rem;
+                padding-top: 1.6rem;
                 padding-bottom: 2rem;
+                padding-left: 1.6rem;
+                padding-right: 1.6rem;
             }
-            .yf-hero {
-                padding: 1.2rem 1.35rem;
-                border-radius: 22px;
-                background: linear-gradient(135deg, rgba(39, 110, 241, 0.22), rgba(0, 201, 167, 0.14));
-                border: 1px solid rgba(255,255,255,0.08);
-                box-shadow: 0 14px 40px rgba(0,0,0,0.18);
-                margin-bottom: .9rem;
+
+            h1, h2, h3, h4, h5, h6, p, span, label, div {
+                color: var(--text);
             }
-            .yf-title {
-                color: #f8fbff;
-                font-size: 2rem;
-                font-weight: 750;
-                line-height: 1.1;
-                margin-bottom: .25rem;
+
+            .hero {
+                padding: 1.5rem 1.5rem 1.2rem 1.5rem;
+                border: 1px solid var(--border);
+                border-radius: 24px;
+                background: linear-gradient(145deg, rgba(17,34,57,0.96), rgba(9,19,33,0.96));
+                box-shadow: 0 24px 60px rgba(0,0,0,0.22);
+                margin-bottom: 1rem;
             }
-            .yf-subtitle {
-                color: rgba(248,251,255,0.76);
-                font-size: .98rem;
-            }
-            .yf-chip-row {
-                display: flex;
-                gap: .45rem;
-                flex-wrap: wrap;
-                margin-top: .9rem;
-            }
-            .yf-chip {
-                background: rgba(255,255,255,0.08);
-                color: #eef6ff;
-                border: 1px solid rgba(255,255,255,0.08);
-                border-radius: 999px;
-                padding: .28rem .72rem;
-                font-size: .8rem;
-            }
-            div[data-testid="stMetric"] {
-                background: rgba(255,255,255,0.03);
-                border: 1px solid rgba(255,255,255,0.08);
-                border-radius: 16px;
-                padding: .35rem .25rem;
-                box-shadow: 0 10px 24px rgba(0,0,0,0.12);
-            }
-            .yf-note {
-                color: rgba(255,255,255,0.68);
-                font-size: .84rem;
-            }
-            .yf-card {
-                padding: .95rem;
-                border-radius: 18px;
-                background: rgba(255,255,255,0.03);
-                border: 1px solid rgba(255,255,255,0.08);
-                min-height: 162px;
-                box-shadow: 0 12px 28px rgba(0,0,0,0.10);
-            }
-            .yf-card-title {
-                color: white;
+
+            .eyebrow {
+                display: inline-block;
+                color: var(--accent);
+                font-size: 0.85rem;
                 font-weight: 700;
-                font-size: 1rem;
-                margin-bottom: .25rem;
+                letter-spacing: 0.08em;
+                text-transform: uppercase;
+                margin-bottom: 0.7rem;
             }
-            .yf-muted { color: rgba(255,255,255,0.66); }
-            .yf-low { color: #34d399; font-weight: 700; }
-            .yf-medium { color: #fbbf24; font-weight: 700; }
-            .yf-high { color: #f87171; font-weight: 700; }
+
+            .hero-title {
+                font-size: 2.25rem;
+                line-height: 1.05;
+                font-weight: 800;
+                margin-bottom: 0.4rem;
+            }
+
+            .hero-subtitle {
+                font-size: 1rem;
+                color: var(--muted);
+                max-width: 840px;
+                line-height: 1.55;
+            }
+
+            .metric-card {
+                background: linear-gradient(180deg, rgba(18,36,61,0.98), rgba(11,22,39,0.98));
+                border: 1px solid var(--border);
+                border-radius: 22px;
+                padding: 1rem 1rem 0.9rem 1rem;
+                min-height: 126px;
+                box-shadow: 0 10px 30px rgba(0,0,0,0.18);
+            }
+
+            .metric-label {
+                color: var(--muted);
+                font-size: 0.84rem;
+                font-weight: 600;
+                margin-bottom: 0.35rem;
+            }
+
+            .metric-value {
+                font-size: 1.7rem;
+                font-weight: 800;
+                margin-bottom: 0.15rem;
+            }
+
+            .metric-footnote {
+                color: var(--muted);
+                font-size: 0.82rem;
+                line-height: 1.45;
+            }
+
+            .section-card {
+                background: linear-gradient(180deg, rgba(13,27,47,0.96), rgba(9,19,33,0.98));
+                border: 1px solid var(--border);
+                border-radius: 22px;
+                padding: 1rem 1rem 1.15rem 1rem;
+                margin-top: 0.6rem;
+            }
+
+            [data-testid="stSidebar"] {
+                background: linear-gradient(180deg, rgba(11,22,39,1), rgba(7,17,31,1));
+                border-right: 1px solid var(--border);
+            }
+
+            [data-testid="stSidebar"] * {
+                color: var(--text) !important;
+            }
+
+            .small-note {
+                color: var(--muted);
+                font-size: 0.84rem;
+                line-height: 1.5;
+            }
+
+            .risk-pill {
+                display: inline-block;
+                padding: 0.26rem 0.56rem;
+                border-radius: 999px;
+                font-size: 0.78rem;
+                font-weight: 700;
+                border: 1px solid var(--border);
+                background: rgba(255,255,255,0.05);
+            }
+
+            div[data-testid="stDataFrame"] {
+                border: 1px solid var(--border);
+                border-radius: 18px;
+                overflow: hidden;
+            }
+
+            div[data-baseweb="select"] > div,
+            div[data-baseweb="input"] > div,
+            .stSlider,
+            .stMultiSelect {
+                background: rgba(255,255,255,0.02);
+            }
         </style>
         """,
         unsafe_allow_html=True,
     )
 
 
-def safe_load_json(path: Path, default):
-    if not path.exists():
-        return default
-    try:
-        return json.loads(path.read_text(encoding="utf-8"))
-    except Exception:
-        return default
+@st.cache_data(ttl=900, show_spinner=False)
+def fetch_pools() -> pd.DataFrame:
+    urls = [
+        "https://yields.llama.fi/pools",
+        "https://stablecoins.llama.fi/yields/pools",  # fallback in case infra routing changes
+    ]
+    errors = []
+    for url in urls:
+        try:
+            response = requests.get(url, timeout=TIMEOUT)
+            response.raise_for_status()
+            payload = response.json()
+            rows = payload.get("data", payload)
+            df = pd.DataFrame(rows)
+            if not df.empty:
+                return df
+        except Exception as exc:
+            errors.append(f"{url}: {exc}")
+
+    return sample_pool_data(errors)
 
 
-def safe_save_json(path: Path, data) -> None:
-    path.write_text(json.dumps(data, indent=2), encoding="utf-8")
+@st.cache_data(ttl=3600, show_spinner=False)
+def fetch_pool_chart(pool_id: str) -> pd.DataFrame:
+    urls = [
+        f"https://yields.llama.fi/chart/{pool_id}",
+        f"https://yields.llama.fi/chartLendBorrow/{pool_id}",
+    ]
+    for url in urls:
+        try:
+            response = requests.get(url, timeout=TIMEOUT)
+            response.raise_for_status()
+            payload = response.json()
+            rows = payload.get("data", payload)
+            chart = pd.DataFrame(rows)
+            if not chart.empty and "timestamp" in chart.columns:
+                chart["timestamp"] = pd.to_datetime(chart["timestamp"], errors="coerce")
+                chart = chart.dropna(subset=["timestamp"]).sort_values("timestamp")
+                return chart
+        except Exception:
+            continue
+    return pd.DataFrame()
 
 
-@st.cache_data(ttl=300, show_spinner=False)
-def fetch_market_data(top: int, source: str, min_tvl: float, max_apy: float, stablecoin_only: bool) -> pd.DataFrame:
-    items = rank_top_yields(
-        top=top,
-        source=source,
-        min_tvl=min_tvl,
-        max_apy=max_apy,
-        stablecoin_only=stablecoin_only,
+def sample_pool_data(errors: list[str]) -> pd.DataFrame:
+    demo = pd.DataFrame(
+        [
+            {
+                "pool": "demo-1",
+                "chain": "Ethereum",
+                "project": "aave-v3",
+                "symbol": "USDC",
+                "tvlUsd": 1450000000,
+                "apy": 4.18,
+                "apyBase": 3.61,
+                "apyReward": 0.57,
+                "poolMeta": "Lending",
+                "exposure": "single",
+                "stablecoin": True,
+                "volumeUsd1d": 25000000,
+                "predictions": {"predictedClass": "Stable"},
+            },
+            {
+                "pool": "demo-2",
+                "chain": "Arbitrum",
+                "project": "camelot-v3",
+                "symbol": "ETH-USDC",
+                "tvlUsd": 23800000,
+                "apy": 22.40,
+                "apyBase": 10.10,
+                "apyReward": 12.30,
+                "poolMeta": "LP",
+                "exposure": "multi",
+                "stablecoin": False,
+                "volumeUsd1d": 8200000,
+                "predictions": {"predictedClass": "Speculative"},
+            },
+            {
+                "pool": "demo-3",
+                "chain": "Base",
+                "project": "morpho-v1",
+                "symbol": "USDC",
+                "tvlUsd": 980000000,
+                "apy": 7.02,
+                "apyBase": 6.22,
+                "apyReward": 0.80,
+                "poolMeta": "Lending",
+                "exposure": "single",
+                "stablecoin": True,
+                "volumeUsd1d": 17000000,
+                "predictions": {"predictedClass": "Stable"},
+            },
+        ]
     )
-    return pd.DataFrame(as_rows(items))
-
-
-@st.cache_data(ttl=300, show_spinner=False)
-def fetch_full_snapshot(source: str) -> pd.DataFrame:
-    items = list_market_snapshot(source=source)
-    return pd.DataFrame(as_rows(items))
+    demo.attrs["errors"] = errors
+    return demo
 
 
 @st.cache_data(show_spinner=False)
-def to_csv_bytes(df: pd.DataFrame) -> bytes:
-    return df.to_csv(index=False).encode("utf-8")
+def enrich(df: pd.DataFrame) -> pd.DataFrame:
+    data = df.copy()
+
+    for column in ["apy", "apyBase", "apyReward", "tvlUsd", "volumeUsd1d"]:
+        if column not in data.columns:
+            data[column] = 0.0
+
+    data["apy"] = pd.to_numeric(data["apy"], errors="coerce").fillna(0.0)
+    data["apyBase"] = pd.to_numeric(data["apyBase"], errors="coerce").fillna(0.0)
+    data["apyReward"] = pd.to_numeric(data["apyReward"], errors="coerce").fillna(0.0)
+    data["tvlUsd"] = pd.to_numeric(data["tvlUsd"], errors="coerce").fillna(0.0)
+    data["volumeUsd1d"] = pd.to_numeric(data["volumeUsd1d"], errors="coerce").fillna(0.0)
+
+    for col in ["chain", "project", "symbol", "poolMeta", "exposure"]:
+        if col not in data.columns:
+            data[col] = "Unknown"
+        data[col] = data[col].fillna("Unknown").astype(str)
+
+    if "stablecoin" not in data.columns:
+        data["stablecoin"] = data["symbol"].str.contains("USDC|USDT|DAI|FRAX|USDe|USD", case=False, na=False)
+    data["stablecoin"] = data["stablecoin"].fillna(False)
+
+    data["risk_score"] = data.apply(score_pool, axis=1)
+    data["risk_band"] = data["risk_score"].apply(label_risk)
+    data["pool_url"] = data.apply(build_pool_url, axis=1)
+    data["apy_pct"] = data["apy"].map(lambda x: f"{x:,.2f}%")
+    data["tvl_label"] = data["tvlUsd"].map(format_money)
+    data["vol_label"] = data["volumeUsd1d"].map(format_money)
+    data["strategy_type"] = data["poolMeta"].replace({"Unknown": "General"})
+
+    data = data.sort_values(["risk_score", "apy", "tvlUsd"], ascending=[True, False, False])
+    return data
 
 
-@st.cache_data(show_spinner=False)
-def to_excel_bytes(df: pd.DataFrame) -> bytes:
-    output = BytesIO()
-    with pd.ExcelWriter(output, engine="openpyxl") as writer:
-        df.to_excel(writer, index=False, sheet_name="yield_flow")
-    return output.getvalue()
+
+def score_pool(row: pd.Series) -> int:
+    score = 45
+    apy = float(row.get("apy", 0) or 0)
+    tvl = float(row.get("tvlUsd", 0) or 0)
+    exposure = str(row.get("exposure", "Unknown")).lower()
+    stablecoin = bool(row.get("stablecoin", False))
+    pool_meta = str(row.get("poolMeta", "")).lower()
+
+    if apy > 100:
+        score += 32
+    elif apy > 40:
+        score += 20
+    elif apy > 20:
+        score += 12
+    elif apy > 10:
+        score += 6
+    elif apy < 8:
+        score -= 4
+
+    if tvl < 1_000_000:
+        score += 26
+    elif tvl < 10_000_000:
+        score += 16
+    elif tvl < 50_000_000:
+        score += 8
+    elif tvl > 500_000_000:
+        score -= 10
+
+    if exposure in {"multi", "lp"}:
+        score += 10
+    if stablecoin:
+        score -= 8
+    if "lever" in pool_meta or "farm" in pool_meta:
+        score += 10
+    if "lend" in pool_meta:
+        score -= 6
+
+    return max(1, min(100, int(round(score))))
+
+
+
+def label_risk(score: int) -> str:
+    if score <= 28:
+        return "Low"
+    if score <= 45:
+        return "Moderate"
+    if score <= 65:
+        return "High"
+    return "Speculative"
+
+
+
+def build_pool_url(row: pd.Series) -> str:
+    pool = row.get("pool")
+    if isinstance(pool, str) and pool and pool != "Unknown":
+        return f"https://defillama.com/yields/pool/{pool}"
+    return ""
+
 
 
 def format_money(value: float) -> str:
-    if pd.isna(value):
-        return "—"
-    if value >= 1_000_000_000:
-        return f"${value/1_000_000_000:.2f}B"
-    if value >= 1_000_000:
-        return f"${value/1_000_000:.1f}M"
-    if value >= 1_000:
-        return f"${value/1_000:.1f}K"
+    value = float(value or 0)
+    abs_value = abs(value)
+    if abs_value >= 1_000_000_000:
+        return f"${value/1_000_000_000:,.2f}B"
+    if abs_value >= 1_000_000:
+        return f"${value/1_000_000:,.2f}M"
+    if abs_value >= 1_000:
+        return f"${value/1_000:,.1f}K"
     return f"${value:,.0f}"
 
 
-RANKING_HELP = {
-    "Best APY": "Pure yield-first ranking. Useful for quick scanning, but can surface fragile or short-lived opportunities.",
-    "Best risk-adjusted yield": "Balances APY, TVL depth, and the internal risk score to surface stronger all-around candidates.",
-    "Largest TVL": "Favors deeper, more liquid pools that may be easier to size into or out of.",
-    "Lowest risk": "Prioritizes lower-risk opportunities based on the internal heuristic.",
-    "Stable income": "Leans toward stablecoin pools with moderate APY and lower risk.",
-    "Momentum (7D APY)": "Favors pools with stronger 7-day APY change, while still considering TVL and current APY.",
-}
 
-
-def prep_dataframe(df: pd.DataFrame) -> pd.DataFrame:
-    if df.empty:
-        return df
-    df = df.copy()
-    numeric_cols = [
-        "apy",
-        "tvl_usd",
-        "apy_base",
-        "apy_reward",
-        "apy_pct_1d",
-        "apy_pct_7d",
-        "apy_pct_30d",
-        "risk_score",
-    ]
-    for col in numeric_cols:
-        if col in df.columns:
-            df[col] = pd.to_numeric(df[col], errors="coerce")
-    if "stablecoin" in df.columns:
-        df["stablecoin"] = df["stablecoin"].fillna(False).astype(bool)
-    if "pool_id" not in df.columns:
-        df["pool_id"] = df.get("name", "")
-    return df
-
-
-def apply_filters(
-    df: pd.DataFrame,
-    *,
-    stablecoin_only: bool,
-    min_tvl: float,
-    max_apy: float,
-    chains: list[str],
-    projects: list[str],
-    risk_labels: list[str],
-    search_text: str,
-    asset_text: str,
-) -> pd.DataFrame:
-    filtered = df.copy()
-    if stablecoin_only and "stablecoin" in filtered.columns:
-        filtered = filtered[filtered["stablecoin"]]
-    if min_tvl > 0 and "tvl_usd" in filtered.columns:
-        filtered = filtered[filtered["tvl_usd"] >= min_tvl]
-    if max_apy > 0 and "apy" in filtered.columns:
-        filtered = filtered[filtered["apy"] <= max_apy]
-    if chains:
-        filtered = filtered[filtered["chain"].isin(chains)]
-    if projects:
-        filtered = filtered[filtered["project"].isin(projects)]
-    if risk_labels:
-        filtered = filtered[filtered["risk_label"].isin(risk_labels)]
-    if search_text:
-        needle = search_text.lower().strip()
-        filtered = filtered[
-            filtered["name"].fillna("").str.lower().str.contains(needle)
-            | filtered["project"].fillna("").str.lower().str.contains(needle)
-            | filtered["symbol"].fillna("").str.lower().str.contains(needle)
-        ]
-    if asset_text:
-        filtered = filtered[filtered["symbol"].fillna("").str.lower().str.contains(asset_text.lower().strip())]
-    return filtered
-
-
-
-def add_scores(df: pd.DataFrame) -> pd.DataFrame:
-    if df.empty:
-        return df
-    enriched = df.copy()
-    tvl_component = (enriched["tvl_usd"].fillna(0) / 50_000_000).clip(upper=5)
-    enriched["risk_adjusted_score"] = enriched["apy"].fillna(0) - enriched["risk_score"].fillna(5) * 1.25 + tvl_component
-    enriched["stable_income_score"] = (
-        enriched["apy"].fillna(0) * 0.8
-        + enriched["stablecoin"].astype(int) * 4
-        - enriched["risk_score"].fillna(5) * 1.1
-        + (enriched["tvl_usd"].fillna(0) / 75_000_000).clip(upper=4)
-    )
-    enriched["momentum_score"] = (
-        enriched["apy_pct_7d"].fillna(0) * 2.2
-        + enriched["apy"].fillna(0) * 0.35
-        + (enriched["tvl_usd"].fillna(0) / 100_000_000).clip(upper=3)
-        - enriched["risk_score"].fillna(5) * 0.5
-    )
-    enriched["opportunity_score"] = (
-        enriched["apy"].fillna(0) * 0.55
-        + (enriched["tvl_usd"].fillna(0) / 100_000_000).clip(upper=4) * 5
-        - enriched["risk_score"].fillna(5) * 1.8
-        + enriched["apy_pct_7d"].fillna(0) * 0.8
-    )
-    return enriched
-
-
-def risk_css_class(label: str) -> str:
-    mapping = {"Low": "yf-low", "Medium": "yf-medium", "High": "yf-high"}
-    return mapping.get(str(label), "yf-medium")
-
-
-def load_watchlist() -> list[str]:
-    return safe_load_json(WATCHLIST_FILE, [])
-
-
-def save_watchlist(ids: list[str]) -> None:
-    safe_save_json(WATCHLIST_FILE, sorted(set(x for x in ids if x)))
-
-
-def load_alerts() -> list[dict]:
-    alerts = safe_load_json(ALERTS_FILE, [])
-    return alerts if isinstance(alerts, list) else []
-
-
-def save_alerts(alerts: list[dict]) -> None:
-    safe_save_json(ALERTS_FILE, alerts)
-
-
-def render_hero(last_refreshed: str, snapshot_filtered: pd.DataFrame) -> None:
-    chains = snapshot_filtered["chain"].nunique() if not snapshot_filtered.empty else 0
-    protocols = snapshot_filtered["project"].nunique() if not snapshot_filtered.empty else 0
+def metric_card(label: str, value: str, footnote: str) -> None:
     st.markdown(
         f"""
-        <div class="yf-hero">
-            <div class="yf-title">Yield Flow Engine v3</div>
-            <div class="yf-subtitle">A sharper DeFi analytics dashboard for finding, filtering, and tracking yield opportunities in real time.</div>
-            <div class="yf-chip-row">
-                <span class="yf-chip">Live market snapshot</span>
-                <span class="yf-chip">{len(snapshot_filtered):,} visible pools</span>
-                <span class="yf-chip">{protocols:,} protocols</span>
-                <span class="yf-chip">{chains:,} chains</span>
-                <span class="yf-chip">Updated {last_refreshed} UTC</span>
-            </div>
+        <div class="metric-card">
+            <div class="metric-label">{label}</div>
+            <div class="metric-value">{value}</div>
+            <div class="metric-footnote">{footnote}</div>
         </div>
         """,
         unsafe_allow_html=True,
     )
 
 
-def render_pool_cards(df: pd.DataFrame) -> None:
-    st.markdown("### Quick-scan opportunity cards")
-    cards = df.head(6).to_dict("records")
-    cols = st.columns(3)
-    for idx, row in enumerate(cards):
-        with cols[idx % 3]:
-            risk_class = risk_css_class(row.get("risk_label", "Medium"))
-            st.markdown(
-                f"""
-                <div class="yf-card">
-                    <div class="yf-card-title">{row.get('project','N/A')} · {row.get('symbol','N/A')}</div>
-                    <div class="yf-muted">{row.get('chain','N/A')}</div>
-                    <div style="margin-top:.6rem;color:white;">APY <b>{row.get('apy',0):.2f}%</b></div>
-                    <div style="color:white;">TVL <b>{format_money(float(row.get('tvl_usd',0) or 0))}</b></div>
-                    <div class="{risk_class}">Risk {int(row.get('risk_score',0) or 0)}/10 · {row.get('risk_label','N/A')}</div>
-                    <div class="yf-note" style="margin-top:.45rem;">{row.get('name','')}</div>
-                </div>
-                """,
-                unsafe_allow_html=True,
-            )
-            link_col1, link_col2 = st.columns(2)
-            protocol_url = row.get("protocol_url") if isinstance(row.get("protocol_url"), str) else ""
-            pool_url = row.get("llama_pool_url") if isinstance(row.get("llama_pool_url"), str) else ""
-            if protocol_url:
-                link_col1.link_button("Protocol", protocol_url, use_container_width=True)
-            if pool_url:
-                link_col2.link_button("Pool", pool_url, use_container_width=True)
+
+def make_download_df(df: pd.DataFrame) -> pd.DataFrame:
+    cols = [
+        "project",
+        "chain",
+        "symbol",
+        "strategy_type",
+        "apy",
+        "apyBase",
+        "apyReward",
+        "tvlUsd",
+        "volumeUsd1d",
+        "risk_score",
+        "risk_band",
+        "pool_url",
+    ]
+    available = [c for c in cols if c in df.columns]
+    return df[available].copy()
 
 
 inject_css()
 
-if "refresh_nonce" not in st.session_state:
-    st.session_state.refresh_nonce = 0
-if "watchlist_ids" not in st.session_state:
-    st.session_state.watchlist_ids = load_watchlist()
-if "alerts" not in st.session_state:
-    st.session_state.alerts = load_alerts()
+raw_df = fetch_pools()
+df = enrich(raw_df)
+
+st.markdown(
+    f"""
+    <section class="hero">
+        <div class="eyebrow">Yield dashboard redesign</div>
+        <div class="hero-title">{APP_NAME}</div>
+        <div class="hero-subtitle">{APP_TAGLINE}. Cleaner spacing, higher-contrast typography, full-width charts, responsive tables, live DeFiLlama-backed yield data, and a simple risk model for fast filtering.</div>
+    </section>
+    """,
+    unsafe_allow_html=True,
+)
 
 with st.sidebar:
-    st.header("Controls")
-    source = st.selectbox("Data source", ["defillama", "all", "demo"], index=0)
-    top = st.slider("Results to rank", min_value=10, max_value=250, value=100, step=5)
-    min_tvl = st.number_input("Minimum TVL (USD)", min_value=0.0, value=1_000_000.0, step=100_000.0, format="%.0f")
-    max_apy = st.number_input("Maximum APY (%)", min_value=1.0, value=250.0, step=5.0)
-    stablecoin_only = st.checkbox("Stablecoin only", value=False)
-    search_text = st.text_input("Search pools / protocols")
-    asset_text = st.text_input("Asset symbol contains")
-    refresh = st.button("🔄 Refresh live data", use_container_width=True)
-    st.caption("Live data is cached for 5 minutes unless you force-refresh.")
+    st.markdown("### Filter universe")
+    chains = sorted(df["chain"].dropna().unique().tolist())
+    projects = sorted(df["project"].dropna().unique().tolist())
+    strategy_types = sorted(df["strategy_type"].dropna().unique().tolist())
 
-if refresh:
-    fetch_market_data.clear()
-    fetch_full_snapshot.clear()
-    st.session_state.refresh_nonce += 1
+    selected_chains = st.multiselect("Chains", chains, default=chains[: min(8, len(chains))])
+    selected_projects = st.multiselect("Protocols", projects)
+    selected_types = st.multiselect("Strategy type", strategy_types)
+    stable_only = st.toggle("Stablecoin pools only", value=False)
+    max_risk = st.slider("Max risk score", min_value=1, max_value=100, value=65)
+    min_tvl = st.number_input("Minimum TVL (USD)", min_value=0, value=1_000_000, step=500_000)
+    min_apy = st.slider("Minimum APY", min_value=0.0, max_value=200.0, value=0.0, step=0.5)
+    sort_by = st.selectbox(
+        "Sort by",
+        ["Best risk-adjusted", "Highest APY", "Largest TVL", "Highest 24h volume"],
+        index=0,
+    )
+    st.markdown(
+        "<div class='small-note'>Risk score is a lightweight heuristic based on APY, TVL, exposure, and strategy type. It is a triage signal, not a safety guarantee.</div>",
+        unsafe_allow_html=True,
+    )
 
-with st.spinner("Loading live market snapshot..."):
-    snapshot_df = prep_dataframe(fetch_full_snapshot(source))
-    ranked_df = prep_dataframe(fetch_market_data(top, source, min_tvl, max_apy, stablecoin_only))
+filtered = df.copy()
+if selected_chains:
+    filtered = filtered[filtered["chain"].isin(selected_chains)]
+if selected_projects:
+    filtered = filtered[filtered["project"].isin(selected_projects)]
+if selected_types:
+    filtered = filtered[filtered["strategy_type"].isin(selected_types)]
+if stable_only:
+    filtered = filtered[filtered["stablecoin"] == True]
 
-if snapshot_df.empty:
-    st.error("No data came back from the provider. Try switching source or refreshing again.")
-    st.stop()
+filtered = filtered[(filtered["risk_score"] <= max_risk) & (filtered["tvlUsd"] >= min_tvl) & (filtered["apy"] >= min_apy)]
 
-available_chains = sorted([c for c in snapshot_df["chain"].dropna().unique().tolist() if c])
-available_projects = sorted([p for p in snapshot_df["project"].dropna().unique().tolist() if p])
-available_risk_labels = sorted(snapshot_df["risk_label"].dropna().unique().tolist())
-
-filter_col1, filter_col2, filter_col3 = st.columns([1.15, 1.15, 0.9])
-selected_chains = filter_col1.multiselect("Chains", available_chains)
-selected_projects = filter_col2.multiselect("Protocols", available_projects)
-risk_labels = filter_col3.multiselect("Risk bands", available_risk_labels)
-
-snapshot_filtered = apply_filters(
-    snapshot_df,
-    stablecoin_only=stablecoin_only,
-    min_tvl=min_tvl,
-    max_apy=max_apy,
-    chains=selected_chains,
-    projects=selected_projects,
-    risk_labels=risk_labels,
-    search_text=search_text,
-    asset_text=asset_text,
-)
-ranked_df = apply_filters(
-    ranked_df,
-    stablecoin_only=stablecoin_only,
-    min_tvl=min_tvl,
-    max_apy=max_apy,
-    chains=selected_chains,
-    projects=selected_projects,
-    risk_labels=risk_labels,
-    search_text=search_text,
-    asset_text=asset_text,
-)
-
-snapshot_filtered = add_scores(snapshot_filtered)
-ranked_df = add_scores(ranked_df)
-
-sort_choice = st.selectbox("Rank by", list(RANKING_HELP.keys()))
-st.caption(RANKING_HELP[sort_choice])
-
-if sort_choice == "Best APY":
-    ranked_df = ranked_df.sort_values(["apy", "tvl_usd"], ascending=[False, False])
-elif sort_choice == "Best risk-adjusted yield":
-    ranked_df = ranked_df.sort_values(["risk_adjusted_score", "apy"], ascending=[False, False])
-elif sort_choice == "Largest TVL":
-    ranked_df = ranked_df.sort_values(["tvl_usd", "apy"], ascending=[False, False])
-elif sort_choice == "Lowest risk":
-    ranked_df = ranked_df.sort_values(["risk_score", "apy"], ascending=[True, False])
-elif sort_choice == "Stable income":
-    ranked_df = ranked_df.sort_values(["stable_income_score", "apy"], ascending=[False, False])
+if sort_by == "Highest APY":
+    filtered = filtered.sort_values(["apy", "tvlUsd"], ascending=[False, False])
+elif sort_by == "Largest TVL":
+    filtered = filtered.sort_values(["tvlUsd", "apy"], ascending=[False, False])
+elif sort_by == "Highest 24h volume":
+    filtered = filtered.sort_values(["volumeUsd1d", "apy"], ascending=[False, False])
 else:
-    ranked_df = ranked_df.sort_values(["momentum_score", "apy"], ascending=[False, False])
+    filtered = filtered.sort_values(["risk_score", "apy", "tvlUsd"], ascending=[True, False, False])
 
-ranked_df = ranked_df.reset_index(drop=True)
-last_refreshed = ranked_df["refreshed_at"].iloc[0] if not ranked_df.empty and "refreshed_at" in ranked_df.columns else datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M")
-render_hero(str(last_refreshed), snapshot_filtered)
+filtered = filtered.head(POOL_LIMIT)
 
-metric1, metric2, metric3, metric4, metric5, metric6 = st.columns(6)
-metric1.metric("Visible pools", f"{len(snapshot_filtered):,}")
-metric2.metric("Top APY", f"{snapshot_filtered['apy'].max():.2f}%" if not snapshot_filtered.empty else "—")
-metric3.metric("Median APY", f"{snapshot_filtered['apy'].median():.2f}%" if not snapshot_filtered.empty else "—")
-metric4.metric("Total TVL", format_money(float(snapshot_filtered["tvl_usd"].sum())) if not snapshot_filtered.empty else "—")
-metric5.metric("Avg risk", f"{snapshot_filtered['risk_score'].mean():.1f}/10" if not snapshot_filtered.empty else "—")
-metric6.metric("Watchlist", f"{len(st.session_state.watchlist_ids):,}")
+metric_cols = st.columns(4)
+with metric_cols[0]:
+    metric_card("Visible opportunities", f"{len(filtered):,}", "Pools after your current filters")
+with metric_cols[1]:
+    median_apy = filtered["apy"].median() if not filtered.empty else 0
+    metric_card("Median APY", f"{median_apy:,.2f}%", "Across the visible opportunity set")
+with metric_cols[2]:
+    total_tvl = filtered["tvlUsd"].sum() if not filtered.empty else 0
+    metric_card("Aggregate TVL", format_money(total_tvl), "Combined TVL for filtered pools")
+with metric_cols[3]:
+    low_risk_share = (filtered["risk_band"].isin(["Low", "Moderate"]).mean() * 100) if not filtered.empty else 0
+    metric_card("Lower-risk share", f"{low_risk_share:,.1f}%", "Pools tagged Low or Moderate")
 
-st.markdown('<div class="yf-note">Persistent watchlists and alerts are now saved locally for the deployed app instance.</div>', unsafe_allow_html=True)
+tab_overview, tab_opps, tab_pool = st.tabs(["Overview", "Opportunities", "Pool drilldown"])
 
-overview_tab, opportunities_tab, protocols_tab, charts_tab, risk_tab, watchlist_tab, alerts_tab = st.tabs(
-    ["Overview", "Opportunities", "Protocols", "Charts", "Risk", "Watchlist", "Alerts"]
-)
-
-with overview_tab:
-    left, right = st.columns([1.15, 0.85])
-    with left:
-        st.subheader("Top opportunities")
-        top_cols = ["name", "project", "chain", "symbol", "apy", "tvl_usd", "risk_score", "risk_label", "stablecoin"]
-        st.dataframe(
-            ranked_df[top_cols].head(15),
-            use_container_width=True,
-            hide_index=True,
-            column_config={
-                "apy": st.column_config.NumberColumn("APY %", format="%.2f"),
-                "tvl_usd": st.column_config.NumberColumn("TVL USD", format="$%.0f"),
-            },
+with tab_overview:
+    c1, c2 = st.columns([1.2, 1], gap="large")
+    with c1:
+        st.markdown("#### Top protocols by visible TVL")
+        protocol_summary = (
+            filtered.groupby("project", as_index=False)
+            .agg(total_tvl=("tvlUsd", "sum"), median_apy=("apy", "median"), pools=("pool", "count"))
+            .sort_values("total_tvl", ascending=False)
+            .head(12)
         )
-    with right:
-        st.subheader("Protocol concentration")
-        top_protocols = (
-            snapshot_filtered.groupby("project", as_index=False)
-            .agg(total_tvl=("tvl_usd", "sum"), avg_apy=("apy", "mean"), pools=("project", "count"))
+        if not protocol_summary.empty:
+            chart_df = protocol_summary.set_index("project")[["total_tvl"]]
+            st.bar_chart(chart_df, height=360, use_container_width=True)
+            st.dataframe(
+                protocol_summary.rename(
+                    columns={
+                        "project": "Protocol",
+                        "total_tvl": "TVL (USD)",
+                        "median_apy": "Median APY",
+                        "pools": "Pools",
+                    }
+                ),
+                use_container_width=True,
+                hide_index=True,
+                column_config={
+                    "TVL (USD)": st.column_config.NumberColumn(format="$%.0f"),
+                    "Median APY": st.column_config.NumberColumn(format="%.2f%%"),
+                },
+            )
+        else:
+            st.info("No pools match the current filter set.")
+
+    with c2:
+        st.markdown("#### Chain allocation")
+        chain_summary = (
+            filtered.groupby("chain", as_index=False)
+            .agg(total_tvl=("tvlUsd", "sum"), avg_apy=("apy", "mean"), pools=("pool", "count"))
             .sort_values("total_tvl", ascending=False)
             .head(10)
         )
-        if not top_protocols.empty:
-            chart = alt.Chart(top_protocols).mark_bar(cornerRadiusEnd=4).encode(
-                x=alt.X("total_tvl:Q", title="TVL (USD)"),
-                y=alt.Y("project:N", sort="-x", title="Protocol"),
-                tooltip=["project", alt.Tooltip("total_tvl:Q", format=",.0f"), alt.Tooltip("avg_apy:Q", format=".2f"), "pools"],
+        if not chain_summary.empty:
+            st.bar_chart(chain_summary.set_index("chain")[["total_tvl"]], height=360, use_container_width=True)
+            st.dataframe(
+                chain_summary.rename(
+                    columns={"chain": "Chain", "total_tvl": "TVL (USD)", "avg_apy": "Avg APY", "pools": "Pools"}
+                ),
+                use_container_width=True,
+                hide_index=True,
+                column_config={
+                    "TVL (USD)": st.column_config.NumberColumn(format="$%.0f"),
+                    "Avg APY": st.column_config.NumberColumn(format="%.2f%%"),
+                },
             )
-            st.altair_chart(chart, use_container_width=True)
         else:
-            st.info("No protocol data available for the current filters.")
-    render_pool_cards(ranked_df)
+            st.info("No chain allocation to show yet.")
 
-with opportunities_tab:
-    st.subheader("Opportunities explorer")
-    display = ranked_df.copy()
-    if not display.empty:
-        display["watching"] = display["pool_id"].isin(st.session_state.watchlist_ids)
-        display["apy"] = display["apy"].round(2)
-        display["tvl_usd"] = display["tvl_usd"].round(0)
-        display["protocol_link"] = display["protocol_url"].apply(lambda u: u if isinstance(u, str) else "")
-        display["pool_link"] = display["llama_pool_url"].apply(lambda u: u if isinstance(u, str) else "")
-        st.dataframe(
-            display[
-                [
-                    "watching",
-                    "name",
-                    "project",
-                    "chain",
-                    "symbol",
-                    "apy",
-                    "tvl_usd",
-                    "risk_score",
-                    "risk_label",
-                    "stablecoin",
-                    "opportunity_score",
-                    "risk_adjusted_score",
-                    "protocol_link",
-                    "pool_link",
-                ]
-            ],
-            column_config={
-                "apy": st.column_config.NumberColumn("APY %", format="%.2f"),
-                "tvl_usd": st.column_config.NumberColumn("TVL USD", format="$%.0f"),
-                "opportunity_score": st.column_config.NumberColumn("Opportunity", format="%.2f"),
-                "risk_adjusted_score": st.column_config.NumberColumn("Adj score", format="%.2f"),
-                "protocol_link": st.column_config.LinkColumn("Protocol", display_text="Open protocol"),
-                "pool_link": st.column_config.LinkColumn("Pool page", display_text="Open pool"),
-            },
-            use_container_width=True,
-            hide_index=True,
-        )
-
-        exp1, exp2, exp3 = st.columns([1, 1, 1])
-        with exp1:
-            st.download_button(
-                "Download filtered CSV",
-                data=to_csv_bytes(display),
-                file_name="yield_flow_opportunities.csv",
-                mime="text/csv",
-                use_container_width=True,
-            )
-        with exp2:
-            st.download_button(
-                "Download filtered Excel",
-                data=to_excel_bytes(display),
-                file_name="yield_flow_opportunities.xlsx",
-                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                use_container_width=True,
-            )
-        with exp3:
-            pool_to_toggle = st.selectbox("Add/remove watchlist pool", display["name"].tolist(), key="watch_toggle")
-            chosen = display[display["name"] == pool_to_toggle].iloc[0]
-            if st.button("Toggle watchlist", use_container_width=True):
-                pool_id = chosen["pool_id"]
-                if pool_id in st.session_state.watchlist_ids:
-                    st.session_state.watchlist_ids.remove(pool_id)
-                elif pool_id:
-                    st.session_state.watchlist_ids.append(pool_id)
-                save_watchlist(st.session_state.watchlist_ids)
-                st.rerun()
-
-        with st.expander("Selected pool details", expanded=True):
-            detail_name = st.selectbox("Choose a pool", display["name"].tolist(), key="detail_select")
-            selected = display[display["name"] == detail_name].iloc[0]
-            a, b, c, d = st.columns(4)
-            a.metric("APY", f"{selected['apy']:.2f}%")
-            b.metric("TVL", format_money(float(selected["tvl_usd"])))
-            c.metric("Risk", f"{int(selected['risk_score'])}/10 · {selected['risk_label']}")
-            d.metric("7D APY Δ", f"{selected.get('apy_pct_7d', 0) or 0:.2f}%")
-            st.write(selected.get("risk_reasons", ""))
-            info1, info2, info3 = st.columns(3)
-            info1.write(f"**Category:** {selected.get('category') or 'N/A'}")
-            info2.write(f"**Exposure:** {selected.get('exposure') or 'N/A'}")
-            info3.write(f"**Stablecoin:** {'Yes' if bool(selected.get('stablecoin')) else 'No'}")
-            protocol_link = selected.get("protocol_link") or 'N/A'
-            pool_link = selected.get("pool_link") or 'N/A'
-            st.markdown(f"**Protocol page:** {protocol_link}")
-            st.markdown(f"**Pool page:** {pool_link}")
-    else:
-        st.info("No opportunities matched the selected filters.")
-
-with protocols_tab:
-    st.subheader("Protocol analytics")
-    protocols = (
-        snapshot_filtered.groupby("project", as_index=False)
-        .agg(
-            pools=("project", "count"),
-            total_tvl=("tvl_usd", "sum"),
-            avg_apy=("apy", "mean"),
-            avg_risk=("risk_score", "mean"),
-            protocol_link=("protocol_url", "first"),
-        )
-        .sort_values(["total_tvl", "avg_apy"], ascending=[False, False])
+with tab_opps:
+    st.markdown("#### Best opportunities")
+    display = filtered.copy()
+    display["Open"] = display["pool_url"].apply(lambda x: x if x else "")
+    compact = display[
+        [
+            "project",
+            "chain",
+            "symbol",
+            "strategy_type",
+            "apy",
+            "apyBase",
+            "apyReward",
+            "tvlUsd",
+            "risk_score",
+            "risk_band",
+            "Open",
+        ]
+    ].rename(
+        columns={
+            "project": "Protocol",
+            "chain": "Chain",
+            "symbol": "Asset",
+            "strategy_type": "Type",
+            "apy": "APY",
+            "apyBase": "Base",
+            "apyReward": "Rewards",
+            "tvlUsd": "TVL (USD)",
+            "risk_score": "Risk",
+            "risk_band": "Band",
+        }
     )
-    if not protocols.empty:
-        st.dataframe(
-            protocols,
-            column_config={
-                "total_tvl": st.column_config.NumberColumn("Total TVL", format="$%.0f"),
-                "avg_apy": st.column_config.NumberColumn("Avg APY", format="%.2f"),
-                "avg_risk": st.column_config.NumberColumn("Avg risk", format="%.1f"),
-                "protocol_link": st.column_config.LinkColumn("Link", display_text="Open protocol"),
-            },
-            use_container_width=True,
-            hide_index=True,
-        )
-        selected_protocol = st.selectbox("Protocol detail", protocols["project"].tolist())
-        protocol_pools = snapshot_filtered[snapshot_filtered["project"] == selected_protocol].sort_values(["tvl_usd", "apy"], ascending=[False, False])
-        p1, p2, p3, p4 = st.columns(4)
-        p1.metric("Pools", f"{len(protocol_pools):,}")
-        p2.metric("Protocol TVL", format_money(float(protocol_pools['tvl_usd'].sum())))
-        p3.metric("Avg APY", f"{protocol_pools['apy'].mean():.2f}%")
-        p4.metric("Avg risk", f"{protocol_pools['risk_score'].mean():.1f}/10")
-        st.dataframe(
-            protocol_pools[["name", "chain", "symbol", "apy", "tvl_usd", "risk_score", "risk_label", "llama_pool_url"]],
-            column_config={
-                "apy": st.column_config.NumberColumn("APY", format="%.2f"),
-                "tvl_usd": st.column_config.NumberColumn("TVL USD", format="$%.0f"),
-                "llama_pool_url": st.column_config.LinkColumn("Pool link", display_text="Open pool"),
-            },
-            use_container_width=True,
-            hide_index=True,
-        )
-    else:
-        st.info("No protocols available for the current filters.")
 
-with charts_tab:
-    st.subheader("Yield charts")
-    chart_left, chart_right = st.columns(2)
-    with chart_left:
-        apy_hist = alt.Chart(snapshot_filtered).mark_bar(cornerRadiusTopLeft=3, cornerRadiusTopRight=3).encode(
-            x=alt.X("apy:Q", bin=alt.Bin(maxbins=25), title="APY %"),
-            y=alt.Y("count():Q", title="Pool count"),
-            tooltip=[alt.Tooltip("count():Q", title="Pools")],
-        )
-        st.altair_chart(apy_hist, use_container_width=True)
-
-        chain_chart_df = (
-            snapshot_filtered.groupby("chain", as_index=False)
-            .agg(avg_apy=("apy", "mean"), pools=("chain", "count"), total_tvl=("tvl_usd", "sum"))
-            .sort_values("avg_apy", ascending=False)
-            .head(12)
-        )
-        chain_chart = alt.Chart(chain_chart_df).mark_bar(cornerRadiusEnd=4).encode(
-            x=alt.X("avg_apy:Q", title="Avg APY %"),
-            y=alt.Y("chain:N", sort="-x", title="Chain"),
-            color=alt.Color("pools:Q", legend=None),
-            tooltip=["chain", alt.Tooltip("avg_apy:Q", format=".2f"), alt.Tooltip("total_tvl:Q", format=",.0f"), "pools"],
-        )
-        st.altair_chart(chain_chart, use_container_width=True)
-
-        top10_protocol_df = (
-            snapshot_filtered.groupby("project", as_index=False)
-            .agg(avg_apy=("apy", "mean"), pools=("project", "count"))
-            .sort_values(["avg_apy", "pools"], ascending=[False, False])
-            .head(10)
-        )
-        top10_protocol_chart = alt.Chart(top10_protocol_df).mark_bar(cornerRadiusEnd=4).encode(
-            x=alt.X("avg_apy:Q", title="Average APY %"),
-            y=alt.Y("project:N", sort="-x"),
-            tooltip=["project", alt.Tooltip("avg_apy:Q", format=".2f"), "pools"],
-        )
-        st.altair_chart(top10_protocol_chart, use_container_width=True)
-
-    with chart_right:
-        scatter = alt.Chart(snapshot_filtered.head(500)).mark_circle(size=90).encode(
-            x=alt.X("tvl_usd:Q", title="TVL USD", scale=alt.Scale(type="log")),
-            y=alt.Y("apy:Q", title="APY %"),
-            color=alt.Color("risk_label:N", title="Risk"),
-            tooltip=["name", "project", "chain", alt.Tooltip("tvl_usd:Q", format=",.0f"), alt.Tooltip("apy:Q", format=".2f"), "risk_label"],
-        )
-        st.altair_chart(scatter, use_container_width=True)
-
-        risk_dist = alt.Chart(snapshot_filtered).mark_bar(cornerRadiusTopLeft=3, cornerRadiusTopRight=3).encode(
-            x=alt.X("risk_score:O", title="Risk score"),
-            y=alt.Y("count():Q", title="Pool count"),
-            color=alt.Color("risk_label:N", title="Risk band"),
-        )
-        st.altair_chart(risk_dist, use_container_width=True)
-
-        stable_mix = (
-            snapshot_filtered.assign(stable_group=snapshot_filtered["stablecoin"].map({True: "Stablecoin", False: "Volatile"}))
-            .groupby("stable_group", as_index=False)
-            .agg(pools=("stable_group", "count"), total_tvl=("tvl_usd", "sum"))
-        )
-        mix_chart = alt.Chart(stable_mix).mark_arc(innerRadius=45).encode(
-            theta=alt.Theta("total_tvl:Q"),
-            color=alt.Color("stable_group:N", title="Exposure"),
-            tooltip=["stable_group", alt.Tooltip("total_tvl:Q", format=",.0f"), "pools"],
-        )
-        st.altair_chart(mix_chart, use_container_width=True)
-
-with risk_tab:
-    st.subheader("Risk model")
-    st.write(
-        "This score is a heuristic, not investment advice. It currently weights chain maturity, TVL depth, APY extremeness, "
-        "stablecoin exposure, impermanent-loss flags, and certain complex strategy categories."
-    )
-    risk_summary = (
-        snapshot_filtered.groupby("risk_label", as_index=False)
-        .agg(pools=("risk_label", "count"), avg_apy=("apy", "mean"), total_tvl=("tvl_usd", "sum"))
-        .sort_values("pools", ascending=False)
-    )
     st.dataframe(
-        risk_summary,
+        compact,
+        use_container_width=True,
+        hide_index=True,
+        height=560,
         column_config={
-            "avg_apy": st.column_config.NumberColumn("Avg APY", format="%.2f"),
-            "total_tvl": st.column_config.NumberColumn("Total TVL", format="$%.0f"),
+            "APY": st.column_config.NumberColumn(format="%.2f%%", width="small"),
+            "Base": st.column_config.NumberColumn(format="%.2f%%", width="small"),
+            "Rewards": st.column_config.NumberColumn(format="%.2f%%", width="small"),
+            "TVL (USD)": st.column_config.NumberColumn(format="$%.0f", width="medium"),
+            "Risk": st.column_config.NumberColumn(width="small"),
+            "Open": st.column_config.LinkColumn("Pool link", display_text="view"),
         },
-        use_container_width=True,
-        hide_index=True,
-    )
-    risky = ranked_df.sort_values(["risk_score", "apy"], ascending=[False, False]).head(20)
-    st.markdown("### Highest-risk visible pools")
-    st.dataframe(
-        risky[["name", "project", "chain", "apy", "risk_score", "risk_label", "risk_reasons"]],
-        column_config={"apy": st.column_config.NumberColumn("APY", format="%.2f")},
-        use_container_width=True,
-        hide_index=True,
     )
 
-with watchlist_tab:
-    st.subheader("Watchlist")
-    watch_df = snapshot_filtered[snapshot_filtered["pool_id"].isin(st.session_state.watchlist_ids)].copy()
-    watch_df = add_scores(watch_df)
-    if watch_df.empty:
-        st.info("Your watchlist is empty. Add pools from the Opportunities tab.")
+    csv = make_download_df(filtered).to_csv(index=False).encode("utf-8")
+    st.download_button("Download current table as CSV", csv, file_name=f"{APP_NAME.lower()}_opportunities.csv", mime="text/csv")
+
+with tab_pool:
+    st.markdown("#### Pool drilldown")
+    if filtered.empty:
+        st.info("Adjust filters to inspect a pool.")
     else:
-        st.dataframe(
-            watch_df[["name", "project", "chain", "symbol", "apy", "tvl_usd", "risk_score", "risk_label", "llama_pool_url"]],
-            column_config={
-                "apy": st.column_config.NumberColumn("APY", format="%.2f"),
-                "tvl_usd": st.column_config.NumberColumn("TVL USD", format="$%.0f"),
-                "llama_pool_url": st.column_config.LinkColumn("Pool link", display_text="Open pool"),
-            },
-            use_container_width=True,
-            hide_index=True,
+        options_df = filtered.copy()
+        options_df["label"] = options_df.apply(
+            lambda row: f"{row['project']} • {row['symbol']} • {row['chain']} • {row['apy']:.2f}% APY",
+            axis=1,
         )
-        watch_name = st.selectbox("Watchlist pool", watch_df["name"].tolist(), key="watchlist_pick")
-        item = watch_df[watch_df["name"] == watch_name].iloc[0]
-        c1, c2, c3 = st.columns(3)
-        c1.metric("APY", f"{item['apy']:.2f}%")
-        c2.metric("TVL", format_money(float(item['tvl_usd'])))
-        c3.metric("Risk-adjusted", f"{item['risk_adjusted_score']:.2f}")
-        st.write(item.get("risk_reasons", ""))
-        if st.button("Remove from watchlist", use_container_width=False):
-            st.session_state.watchlist_ids = [pid for pid in st.session_state.watchlist_ids if pid != item["pool_id"]]
-            save_watchlist(st.session_state.watchlist_ids)
-            st.rerun()
+        selected_label = st.selectbox("Select a pool", options_df["label"].tolist(), index=0)
+        selected_row = options_df.loc[options_df["label"] == selected_label].iloc[0]
+        a, b, c = st.columns(3)
+        with a:
+            metric_card("Selected APY", f"{selected_row['apy']:.2f}%", f"Base {selected_row['apyBase']:.2f}% • Rewards {selected_row['apyReward']:.2f}%")
+        with b:
+            metric_card("Pool TVL", format_money(selected_row['tvlUsd']), f"{selected_row['project']} on {selected_row['chain']}")
+        with c:
+            metric_card("Risk band", selected_row['risk_band'], f"Heuristic score: {selected_row['risk_score']}/100")
 
-with alerts_tab:
-    st.subheader("Opportunity alerts")
-    st.write("Create reusable alert rules to surface pools that match your APY, TVL, risk, and chain requirements.")
+        pool_chart = fetch_pool_chart(selected_row["pool"])
+        if not pool_chart.empty:
+            chart_col = "apy" if "apy" in pool_chart.columns else pool_chart.select_dtypes(include="number").columns[0]
+            series = pool_chart.set_index("timestamp")[[chart_col]].rename(columns={chart_col: "value"})
+            st.line_chart(series, height=380, use_container_width=True)
+            st.caption("Historical series sourced from the selected pool endpoint when available.")
+        else:
+            st.info("Historical chart data was not available for this pool. The live table is still usable.")
 
-    with st.expander("Create new alert", expanded=False):
-        a1, a2, a3, a4 = st.columns(4)
-        alert_name = a1.text_input("Alert name", value="High APY / lower risk")
-        alert_min_apy = a2.number_input("Min APY %", min_value=0.0, value=20.0, step=1.0)
-        alert_min_tvl = a3.number_input("Min TVL USD", min_value=0.0, value=5_000_000.0, step=100_000.0, format="%.0f")
-        alert_max_risk = a4.slider("Max risk", min_value=1, max_value=10, value=5)
-        alert_chain = st.selectbox("Chain", ["Any"] + available_chains, key="alert_chain")
-        if st.button("Save alert", use_container_width=False):
-            st.session_state.alerts.append(
-                {
-                    "name": alert_name,
-                    "min_apy": float(alert_min_apy),
-                    "min_tvl": float(alert_min_tvl),
-                    "max_risk": int(alert_max_risk),
-                    "chain": alert_chain,
-                }
-            )
-            save_alerts(st.session_state.alerts)
-            st.rerun()
+        st.markdown(
+            f"""
+            <div class="section-card">
+                <div class="metric-label">Pool notes</div>
+                <div class="small-note">
+                    Protocol: <strong>{selected_row['project']}</strong><br/>
+                    Asset: <strong>{selected_row['symbol']}</strong><br/>
+                    Chain: <strong>{selected_row['chain']}</strong><br/>
+                    Strategy: <strong>{selected_row['strategy_type']}</strong><br/>
+                    Exposure: <strong>{selected_row['exposure']}</strong><br/>
+                    Stablecoin pool: <strong>{'Yes' if selected_row['stablecoin'] else 'No'}</strong><br/>
+                    Pool link: <a href="{selected_row['pool_url']}" target="_blank">Open in DeFiLlama</a>
+                </div>
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
 
-    if not st.session_state.alerts:
-        st.info("No alerts created yet.")
-    else:
-        updated_alerts = []
-        for idx, alert in enumerate(st.session_state.alerts):
-            st.markdown(f"### {alert['name']}")
-            st.caption(
-                f"APY ≥ {alert['min_apy']:.2f}% · TVL ≥ {format_money(alert['min_tvl'])} · Risk ≤ {alert['max_risk']} · Chain: {alert['chain']}"
-            )
-            matches = snapshot_filtered[
-                (snapshot_filtered["apy"] >= alert["min_apy"])
-                & (snapshot_filtered["tvl_usd"] >= alert["min_tvl"])
-                & (snapshot_filtered["risk_score"] <= alert["max_risk"])
-            ].copy()
-            if alert["chain"] != "Any":
-                matches = matches[matches["chain"] == alert["chain"]]
-            matches = add_scores(matches).sort_values(["opportunity_score", "apy"], ascending=[False, False])
-            if matches.empty:
-                st.warning("No matches right now.")
-            else:
-                st.success(f"{len(matches):,} match(es) found.")
-                st.dataframe(
-                    matches[["name", "project", "chain", "symbol", "apy", "tvl_usd", "risk_score", "risk_label", "llama_pool_url"]].head(12),
-                    column_config={
-                        "apy": st.column_config.NumberColumn("APY", format="%.2f"),
-                        "tvl_usd": st.column_config.NumberColumn("TVL USD", format="$%.0f"),
-                        "llama_pool_url": st.column_config.LinkColumn("Pool link", display_text="Open pool"),
-                    },
-                    use_container_width=True,
-                    hide_index=True,
-                )
-            if st.button("Delete alert", key=f"delete_alert_{idx}"):
-                continue
-            updated_alerts.append(alert)
-        if updated_alerts != st.session_state.alerts:
-            st.session_state.alerts = updated_alerts
-            save_alerts(updated_alerts)
-            st.rerun()
+st.markdown(
+    f"""
+    <div class="small-note" style="margin-top:1rem;">
+        {APP_NAME} is designed to feel less cramped than the earlier version: wide layout, better spacing, higher-contrast typography, and slimmer tables so you do not have to horizontally scroll to get core decision data.
+    </div>
+    """,
+    unsafe_allow_html=True,
+)
+
+errors = raw_df.attrs.get("errors", []) if hasattr(raw_df, "attrs") else []
+if errors:
+    st.warning("Live API could not be reached, so demo data is being shown.\n\n" + "\n".join(errors))
