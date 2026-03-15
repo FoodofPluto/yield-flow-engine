@@ -1,9 +1,10 @@
 from __future__ import annotations
 
-from datetime import datetime
 from typing import Any
 
 import pandas as pd
+import plotly.express as px
+import plotly.graph_objects as go
 import requests
 import streamlit as st
 
@@ -39,8 +40,10 @@ def inject_css() -> None:
                 --good: #35d49a;
                 --warn: #f3c15f;
                 --bad: #ff7b86;
-                --chip-bg: #91ebff;
-                --chip-text: #07111f;
+                --surface-light: #eaf6ff;
+                --surface-light-2: #d9f1ff;
+                --surface-dark-text: #08111f;
+                --surface-dark-text-2: #11233b;
             }
 
             html, body, [class*="css"] {
@@ -56,7 +59,7 @@ def inject_css() -> None:
             }
 
             .block-container {
-                max-width: 1560px;
+                max-width: 1580px;
                 padding-top: 1.2rem;
                 padding-bottom: 2rem;
                 padding-left: 1.6rem;
@@ -202,17 +205,45 @@ def inject_css() -> None:
                 overflow: hidden;
             }
 
+            /* FIX: Make control interiors light with dark readable text */
             div[data-baseweb="select"] > div,
             div[data-baseweb="input"] > div,
-            div[data-baseweb="popover"] div,
-            .stNumberInput div[data-baseweb="input"] > div {
-                background: rgba(255,255,255,0.05) !important;
-                border-color: rgba(255,255,255,0.08) !important;
-                color: var(--text) !important;
+            div[data-baseweb="select"] input,
+            div[data-baseweb="select"] span,
+            div[data-baseweb="select"] div,
+            .stNumberInput div[data-baseweb="input"] > div,
+            .stSelectbox div[data-baseweb="select"] > div,
+            .stMultiSelect div[data-baseweb="select"] > div {
+                background: var(--surface-light) !important;
+                border-color: rgba(0,0,0,0.08) !important;
+                color: var(--surface-dark-text) !important;
+            }
+
+            div[data-baseweb="popover"],
+            div[data-baseweb="menu"],
+            ul[role="listbox"] {
+                background: #f6fbff !important;
+                color: var(--surface-dark-text) !important;
+            }
+
+            li[role="option"],
+            div[role="option"],
+            ul[role="listbox"] li,
+            [data-baseweb="menu"] li,
+            [data-baseweb="menu"] div {
+                color: var(--surface-dark-text) !important;
+                background: #f6fbff !important;
+                font-weight: 700 !important;
+            }
+
+            li[role="option"][aria-selected="true"],
+            div[role="option"][aria-selected="true"] {
+                background: #dcefff !important;
+                color: var(--surface-dark-text) !important;
             }
 
             div[data-baseweb="tag"] {
-                background: var(--chip-bg) !important;
+                background: var(--surface-light-2) !important;
                 border-color: rgba(0,0,0,0.08) !important;
             }
 
@@ -222,14 +253,13 @@ def inject_css() -> None:
             div[data-baseweb="select"] span,
             div[data-baseweb="select"] div,
             div[data-baseweb="input"] input,
-            .stSlider label,
             .stDownloadButton button,
             .stButton button,
             .stSelectbox label,
             .stMultiSelect label,
             .stNumberInput label,
             .stToggle label {
-                color: var(--chip-text) !important;
+                color: var(--surface-dark-text) !important;
                 font-weight: 700 !important;
             }
 
@@ -237,7 +267,8 @@ def inject_css() -> None:
             .stSelectbox label,
             .stNumberInput label,
             .stSlider label,
-            .stToggle label {
+            .stToggle label,
+            .stRadio label {
                 color: var(--text) !important;
                 font-weight: 700 !important;
             }
@@ -247,9 +278,16 @@ def inject_css() -> None:
             }
 
             .stSlider [role="slider"] {
-                background: var(--chip-bg) !important;
+                background: var(--surface-light) !important;
                 border: 2px solid #c8f7ff !important;
                 box-shadow: 0 0 0 4px rgba(124,226,255,0.15);
+            }
+
+            .stSlider [data-testid="stTickBarMin"],
+            .stSlider [data-testid="stTickBarMax"],
+            .stSlider [data-testid="stWidgetLabel"] + div,
+            .stSlider span {
+                color: var(--surface-dark-text-2) !important;
             }
 
             .stDownloadButton button,
@@ -300,6 +338,109 @@ def inject_css() -> None:
                 font-weight: 800;
                 border: 1px solid var(--border);
                 background: rgba(255,255,255,0.05);
+            }
+
+            .badge-row {
+                display: flex;
+                flex-wrap: wrap;
+                gap: 0.45rem;
+                margin-top: 0.65rem;
+                margin-bottom: 0.65rem;
+            }
+
+            .badge {
+                display: inline-flex;
+                align-items: center;
+                gap: 0.35rem;
+                border-radius: 999px;
+                padding: 0.32rem 0.65rem;
+                background: rgba(124,226,255,0.12);
+                border: 1px solid rgba(124,226,255,0.18);
+                color: #dff8ff;
+                font-size: 0.76rem;
+                font-weight: 800;
+            }
+
+            .opp-card {
+                border: 1px solid var(--border);
+                border-radius: 20px;
+                padding: 1rem;
+                background: linear-gradient(180deg, rgba(17,34,57,0.98), rgba(9,18,31,0.98));
+                box-shadow: 0 12px 28px rgba(0,0,0,0.16);
+                min-height: 240px;
+            }
+
+            .opp-top {
+                display: flex;
+                justify-content: space-between;
+                align-items: flex-start;
+                gap: 0.75rem;
+                margin-bottom: 0.75rem;
+            }
+
+            .opp-name {
+                font-size: 1.05rem;
+                font-weight: 900;
+                line-height: 1.15;
+            }
+
+            .opp-sub {
+                color: var(--muted);
+                font-size: 0.84rem;
+                margin-top: 0.18rem;
+            }
+
+            .protocol-dot {
+                width: 42px;
+                height: 42px;
+                border-radius: 14px;
+                display: inline-flex;
+                align-items: center;
+                justify-content: center;
+                background: linear-gradient(180deg, rgba(124,226,255,0.24), rgba(94,199,255,0.14));
+                border: 1px solid rgba(124,226,255,0.16);
+                font-weight: 900;
+                color: white;
+            }
+
+            .metric-strip {
+                display: grid;
+                grid-template-columns: repeat(3, minmax(0, 1fr));
+                gap: 0.65rem;
+                margin-top: 0.75rem;
+            }
+
+            .metric-box {
+                border-radius: 16px;
+                padding: 0.72rem;
+                background: rgba(255,255,255,0.035);
+                border: 1px solid var(--border);
+            }
+
+            .metric-mini-label {
+                color: var(--muted);
+                font-size: 0.72rem;
+                font-weight: 700;
+                margin-bottom: 0.18rem;
+            }
+
+            .metric-mini-value {
+                color: var(--text);
+                font-size: 1rem;
+                font-weight: 900;
+            }
+
+            .watch-pill {
+                display: inline-flex;
+                align-items: center;
+                gap: 0.35rem;
+                border-radius: 999px;
+                padding: 0.25rem 0.6rem;
+                background: rgba(53,212,154,0.12);
+                color: #caffec;
+                font-size: 0.74rem;
+                font-weight: 800;
+                border: 1px solid rgba(53,212,154,0.18);
             }
 
             @media (max-width: 1100px) {
@@ -394,6 +535,11 @@ def enrich(df: pd.DataFrame) -> pd.DataFrame:
     data["pool_url"] = data.apply(build_pool_url, axis=1)
     data["scorecard"] = data.apply(build_scorecard, axis=1)
     data["chain_project"] = data["chain"] + " • " + data["project"]
+    data["protocol_badge"] = data["project"].apply(protocol_badge)
+    data["watch_label"] = data.apply(
+        lambda row: f"{row['project']} • {row['symbol']} • {row['chain']} • {row['apy']:.2f}%",
+        axis=1,
+    )
     data["rank_score"] = (
         data["apy"].clip(lower=0, upper=80) * 0.7
         + (data["tvlUsd"].clip(lower=0).rank(pct=True) * 20)
@@ -401,6 +547,12 @@ def enrich(df: pd.DataFrame) -> pd.DataFrame:
     )
     data = data.sort_values(["rank_score", "apy", "tvlUsd"], ascending=[False, False, False])
     return data
+
+
+def protocol_badge(project: str) -> str:
+    parts = [p for p in str(project).replace("_", "-").split("-") if p]
+    letters = "".join(part[0] for part in parts[:2]).upper()
+    return letters[:2] if letters else "??"
 
 
 def score_pool(row: pd.Series) -> int:
@@ -441,7 +593,7 @@ def score_pool(row: pd.Series) -> int:
         score += 10
     if stablecoin:
         score -= 7
-    if any(word in strategy for word in ["farm", "lever", "loop", "volatility"]):
+    if any(word in strategy for word in ["farm", "lever", "loop", "volatility", "dex"]):
         score += 10
     if any(word in strategy for word in ["lend", "borrow", "cdp"]):
         score -= 5
@@ -468,14 +620,8 @@ def build_pool_url(row: pd.Series) -> str:
 
 def build_scorecard(row: pd.Series) -> str:
     parts = []
-    if row.get("stablecoin", False):
-        parts.append("Stable")
-    else:
-        parts.append("Directional")
-    if float(row.get("tvlUsd", 0) or 0) >= 100_000_000:
-        parts.append("Deep TVL")
-    else:
-        parts.append("Lighter TVL")
+    parts.append("Stable" if row.get("stablecoin", False) else "Directional")
+    parts.append("Deep TVL" if float(row.get("tvlUsd", 0) or 0) >= 100_000_000 else "Lighter TVL")
     parts.append(label_risk(int(row.get("risk_score", 50))))
     return " • ".join(parts)
 
@@ -650,9 +796,76 @@ def compact_table(df: pd.DataFrame) -> pd.DataFrame:
     return table
 
 
+def plotly_theme(fig: go.Figure, height: int = 380) -> go.Figure:
+    fig.update_layout(
+        height=height,
+        margin=dict(l=10, r=10, t=20, b=10),
+        paper_bgcolor="rgba(0,0,0,0)",
+        plot_bgcolor="rgba(0,0,0,0)",
+        font=dict(color="#eef4ff", family="Inter, Segoe UI, sans-serif"),
+        legend=dict(bgcolor="rgba(0,0,0,0)", orientation="h", yanchor="bottom", y=1.02, x=0),
+        xaxis=dict(gridcolor="rgba(255,255,255,0.08)", zeroline=False),
+        yaxis=dict(gridcolor="rgba(255,255,255,0.08)", zeroline=False),
+    )
+    return fig
+
+
+def render_opportunity_card(row: pd.Series, idx: int, watched: bool) -> None:
+    watch_html = '<span class="watch-pill">★ Watched</span>' if watched else ''
+    st.markdown(
+        f"""
+        <div class="opp-card">
+            <div class="opp-top">
+                <div>
+                    <div class="opp-name">{row['project']}</div>
+                    <div class="opp-sub">{row['symbol']} • {row['chain']}</div>
+                </div>
+                <div class="protocol-dot">{row['protocol_badge']}</div>
+            </div>
+            {watch_html}
+            <div class="badge-row">
+                <span class="badge">{row['strategy_type']}</span>
+                <span class="badge">{row['risk_band']} risk</span>
+                <span class="badge">{row['scorecard']}</span>
+            </div>
+            <div class="metric-strip">
+                <div class="metric-box">
+                    <div class="metric-mini-label">APY</div>
+                    <div class="metric-mini-value">{row['apy']:.2f}%</div>
+                </div>
+                <div class="metric-box">
+                    <div class="metric-mini-label">TVL</div>
+                    <div class="metric-mini-value">{format_money(row['tvlUsd'])}</div>
+                </div>
+                <div class="metric-box">
+                    <div class="metric-mini-label">Risk</div>
+                    <div class="metric-mini-value">{int(row['risk_score'])}/100</div>
+                </div>
+            </div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+    c1, c2 = st.columns(2)
+    with c1:
+        if watched:
+            if st.button("Remove", key=f"remove_watch_{idx}", use_container_width=True):
+                st.session_state.watchlist = [p for p in st.session_state.watchlist if p != row["pool"]]
+                st.rerun()
+        else:
+            if st.button("Watch", key=f"add_watch_{idx}", use_container_width=True):
+                st.session_state.watchlist = list(dict.fromkeys(st.session_state.watchlist + [row["pool"]]))
+                st.rerun()
+    with c2:
+        st.link_button("Open pool", row["pool_url"] or "https://defillama.com/yields", use_container_width=True)
+
+
 inject_css()
 raw_df = fetch_pools()
 df = enrich(raw_df)
+
+if "watchlist" not in st.session_state:
+    st.session_state.watchlist = []
 
 st.markdown(
     f"""
@@ -660,7 +873,7 @@ st.markdown(
         <div class="hero-inner">
             <div class="eyebrow">DeFi yield workstation • redesigned</div>
             <div class="hero-title">{APP_NAME}</div>
-            <div class="hero-subtitle">{APP_TAGLINE}. Built to feel much closer to a public-facing DeFi analytics product: stronger spacing, cleaner hierarchy, more legible controls, fewer cramped tables, better protocol comparison, and a sharper pool drilldown experience on top of live DeFiLlama yield data.</div>
+            <div class="hero-subtitle">{APP_TAGLINE}. This build pushes the app further toward a real product feel with darker readable control text, richer charting, protocol-style badges, a curated opportunity board, and a true watchlist layer on top of live DeFiLlama yield data.</div>
         </div>
     </section>
     """,
@@ -716,6 +929,7 @@ else:
     filtered = filtered.sort_values(["rank_score", "apy", "tvlUsd"], ascending=[False, False, False])
 
 filtered = filtered.head(POOL_LIMIT)
+watchlist_df = df[df["pool"].isin(st.session_state.watchlist)].copy()
 
 visible = len(filtered)
 median_apy = filtered["apy"].median() if visible else 0.0
@@ -731,10 +945,10 @@ with metric_cols[1]:
 with metric_cols[2]:
     stat_card("Aggregate TVL", format_money(total_tvl), "Combined depth across the visible market slice")
 with metric_cols[3]:
-    stat_card("Lower-risk share", f"{lower_risk:,.1f}%", "Pools tagged Low or Moderate by the heuristic")
+    stat_card("Watchlist", f"{len(watchlist_df):,}", "Pools you marked for repeat tracking")
 st.markdown("</div>", unsafe_allow_html=True)
 
-main_tab, market_tab, drill_tab = st.tabs(["Scanner", "Market map", "Pool drilldown"])
+main_tab, market_tab, drill_tab, watch_tab = st.tabs(["Scanner", "Market map", "Pool drilldown", "Watchlist"])
 
 with main_tab:
     left, right = st.columns([1.55, 1], gap="large")
@@ -742,16 +956,23 @@ with main_tab:
     with left:
         st.markdown("<div class='panel'>", unsafe_allow_html=True)
         section_header(
-            "Opportunity feed",
-            "Cleaner scanner table",
-            "The main table now keeps only the fields you actually need in view, so the dashboard reads more like a product and less like a raw export.",
+            "Opportunity board",
+            "Custom scan view",
+            "The scanner now leads with richer cards for the top ideas, then falls back to a compact table for deeper browsing and CSV export.",
         )
+        top_cards = filtered.head(6)
+        for start in range(0, len(top_cards), 3):
+            cols = st.columns(3, gap="medium")
+            for i, (_, row) in enumerate(top_cards.iloc[start:start+3].iterrows()):
+                with cols[i]:
+                    render_opportunity_card(row, start + i, row["pool"] in st.session_state.watchlist)
+        st.markdown("<div style='height:0.4rem;'></div>", unsafe_allow_html=True)
         table_df = compact_table(filtered)
         st.dataframe(
             table_df,
             use_container_width=True,
             hide_index=True,
-            height=560,
+            height=500,
             column_config={
                 "APY": st.column_config.NumberColumn(format="%.2f%%", width="small"),
                 "Base": st.column_config.NumberColumn(format="%.2f%%", width="small"),
@@ -774,21 +995,22 @@ with main_tab:
         st.markdown("<div class='panel'>", unsafe_allow_html=True)
         section_header(
             "Fast reads",
-            "What the current slice says",
-            "These summary tables make the market feel navigable without forcing the user to inspect dozens of rows first.",
+            "Protocol and chain pulse",
+            "These panels make the market feel navigable without forcing the user to inspect dozens of rows first.",
         )
         top_protocols = top_n_summary(filtered, "project", "total_tvl", 8)
         if not top_protocols.empty:
+            protocol_view = top_protocols.rename(
+                columns={
+                    "project": "Protocol",
+                    "total_tvl": "TVL (USD)",
+                    "median_apy": "Median APY",
+                    "pools": "Pools",
+                    "avg_risk": "Avg Risk",
+                }
+            )
             st.dataframe(
-                top_protocols.rename(
-                    columns={
-                        "project": "Protocol",
-                        "total_tvl": "TVL (USD)",
-                        "median_apy": "Median APY",
-                        "pools": "Pools",
-                        "avg_risk": "Avg Risk",
-                    }
-                ),
+                protocol_view,
                 use_container_width=True,
                 hide_index=True,
                 column_config={
@@ -796,36 +1018,30 @@ with main_tab:
                     "Median APY": st.column_config.NumberColumn(format="%.2f%%"),
                     "Avg Risk": st.column_config.NumberColumn(format="%.0f"),
                 },
-                height=260,
+                height=250,
             )
         else:
             st.info("No protocol summary is available with the current filters.")
 
-        top_chains = top_n_summary(filtered, "chain", "total_tvl", 8)
-        if not top_chains.empty:
-            st.dataframe(
-                top_chains.rename(
-                    columns={
-                        "chain": "Chain",
-                        "total_tvl": "TVL (USD)",
-                        "median_apy": "Median APY",
-                        "pools": "Pools",
-                        "avg_risk": "Avg Risk",
-                    }
-                ),
-                use_container_width=True,
-                hide_index=True,
-                column_config={
-                    "TVL (USD)": st.column_config.NumberColumn(format="$%.0f"),
-                    "Median APY": st.column_config.NumberColumn(format="%.2f%%"),
-                    "Avg Risk": st.column_config.NumberColumn(format="%.0f"),
-                },
-                height=260,
+        if not filtered.empty:
+            bubble = px.scatter(
+                filtered.head(80),
+                x="risk_score",
+                y="apy",
+                size="tvlUsd",
+                color="chain",
+                hover_name="project",
+                hover_data={"symbol": True, "tvlUsd": ':$,.0f', "risk_score": True, "apy": ':.2f'},
+                size_max=34,
             )
+            bubble.update_traces(marker=dict(line=dict(width=1, color="rgba(255,255,255,0.25)"), opacity=0.78))
+            bubble.update_xaxes(title="Risk score")
+            bubble.update_yaxes(title="APY %")
+            st.plotly_chart(plotly_theme(bubble, 325), use_container_width=True)
         st.markdown("</div>", unsafe_allow_html=True)
 
 with market_tab:
-    c1, c2 = st.columns([1.15, 1], gap="large")
+    c1, c2 = st.columns([1.1, 1], gap="large")
     with c1:
         st.markdown("<div class='panel'>", unsafe_allow_html=True)
         section_header(
@@ -835,8 +1051,16 @@ with market_tab:
         )
         protocol_summary = top_n_summary(filtered, "project", "total_tvl", 12)
         if not protocol_summary.empty:
-            chart_df = protocol_summary.set_index("project")[["total_tvl"]]
-            st.bar_chart(chart_df, height=390, use_container_width=True)
+            fig = px.bar(
+                protocol_summary,
+                x="project",
+                y="total_tvl",
+                color="median_apy",
+                hover_data={"pools": True, "avg_risk": ':.1f', "median_apy": ':.2f', "total_tvl": ':$,.0f'},
+            )
+            fig.update_xaxes(title="")
+            fig.update_yaxes(title="TVL (USD)")
+            st.plotly_chart(plotly_theme(fig, 390), use_container_width=True)
         else:
             st.info("No protocol chart is available with the current filters.")
         st.markdown("</div>", unsafe_allow_html=True)
@@ -850,19 +1074,27 @@ with market_tab:
         )
         chain_summary = top_n_summary(filtered, "chain", "total_tvl", 12)
         if not chain_summary.empty:
-            st.bar_chart(chain_summary.set_index("chain")[["total_tvl"]], height=390, use_container_width=True)
+            fig = px.treemap(
+                chain_summary,
+                path=["chain"],
+                values="total_tvl",
+                color="median_apy",
+                hover_data={"pools": True, "avg_risk": ':.1f', "median_apy": ':.2f', "total_tvl": ':$,.0f'},
+            )
+            st.plotly_chart(plotly_theme(fig, 390), use_container_width=True)
         else:
             st.info("No chain chart is available with the current filters.")
         st.markdown("</div>", unsafe_allow_html=True)
 
     st.markdown("<div class='panel' style='margin-top: 1rem;'>", unsafe_allow_html=True)
     section_header(
-        "Market rows",
-        "Sorted leaderboard",
-        "This keeps the market map readable and still exportable, while avoiding the sideways-scroll problem from the earlier versions.",
+        "Leaderboard",
+        "Market rows with badges",
+        "This keeps the market map readable while avoiding the sideways-scroll problem from earlier versions.",
     )
-    leaderboard = filtered[["project", "chain", "symbol", "apy", "tvlUsd", "risk_score", "scorecard"]].rename(
+    leaderboard = filtered[["protocol_badge", "project", "chain", "symbol", "apy", "tvlUsd", "risk_score", "scorecard"]].rename(
         columns={
+            "protocol_badge": "Badge",
             "project": "Protocol",
             "chain": "Chain",
             "symbol": "Asset",
@@ -896,12 +1128,8 @@ with drill_tab:
         st.info("Adjust the filters to populate the drilldown panel.")
     else:
         options_df = filtered.copy()
-        options_df["label"] = options_df.apply(
-            lambda row: f"{row['project']} • {row['symbol']} • {row['chain']} • {row['apy']:.2f}% APY",
-            axis=1,
-        )
-        selected_label = st.selectbox("Choose a pool", options_df["label"].tolist(), index=0)
-        selected = options_df.loc[options_df["label"] == selected_label].iloc[0]
+        selected_label = st.selectbox("Choose a Pool", options_df["watch_label"].tolist(), index=0)
+        selected = options_df.loc[options_df["watch_label"] == selected_label].iloc[0]
 
         a, b, c, d = st.columns(4)
         with a:
@@ -916,15 +1144,18 @@ with drill_tab:
 
         chart_df = fetch_pool_chart(str(selected["pool"]))
         if not chart_df.empty:
-            numeric_candidates = [c for c in ["apy", "apyBase", "apyReward"] if c in chart_df.columns]
-            chart_col = numeric_candidates[0] if numeric_candidates else chart_df.select_dtypes(include="number").columns[0]
-            series = chart_df.set_index("timestamp")[[chart_col]].rename(columns={chart_col: "value"})
-            st.line_chart(series, height=380, use_container_width=True)
+            metric_choices = [col for col in ["apy", "apyBase", "apyReward"] if col in chart_df.columns]
+            metric = st.radio("Chart metric", metric_choices or ["apy"], horizontal=True)
+            line = px.line(chart_df, x="timestamp", y=metric, markers=False)
+            line.update_traces(line=dict(width=3))
+            line.update_yaxes(title=f"{metric} %")
+            line.update_xaxes(title="")
+            st.plotly_chart(plotly_theme(line, 400), use_container_width=True)
             st.caption("Historical pool chart from the DeFiLlama yield chart endpoint when available.")
         else:
             st.info("Historical chart data was not available for this pool, but the live market data is still active.")
 
-        info_left, info_right = st.columns([1.1, 1], gap="large")
+        info_left, info_right = st.columns([1.05, 1], gap="large")
         with info_left:
             details = pd.DataFrame(
                 {
@@ -967,8 +1198,63 @@ with drill_tab:
             )
     st.markdown("</div>", unsafe_allow_html=True)
 
+with watch_tab:
+    st.markdown("<div class='panel'>", unsafe_allow_html=True)
+    section_header(
+        "Saved pools",
+        "Watchlist layer",
+        "Use this area like a lightweight decision board. Save pools from the scanner, compare them here, and export the subset you care about.",
+    )
+    if watchlist_df.empty:
+        st.info("Your watchlist is empty. Add pools from the Scanner tab.")
+    else:
+        compare_cols = st.columns([1.15, 1], gap="large")
+        with compare_cols[0]:
+            compare = watchlist_df[["project", "chain", "symbol", "apy", "tvlUsd", "risk_score"]].copy()
+            long_df = compare.melt(id_vars=["project", "chain", "symbol"], value_vars=["apy", "tvlUsd", "risk_score"], var_name="metric", value_name="value")
+            long_df["label"] = compare["project"] + " • " + compare["symbol"]
+            long_df = watchlist_df[["project", "symbol", "apy", "tvlUsd", "risk_score"]].melt(
+                id_vars=["project", "symbol"], value_vars=["apy", "tvlUsd", "risk_score"], var_name="metric", value_name="value"
+            )
+            long_df["label"] = long_df["project"] + " • " + long_df["symbol"]
+            radar_metric = st.selectbox("Compare watchlist by", ["apy", "tvlUsd", "risk_score"], index=0)
+            comp_fig = px.bar(
+                watchlist_df.sort_values(radar_metric, ascending=False),
+                x="watch_label",
+                y=radar_metric,
+                color="chain",
+                hover_data={"project": True, "symbol": True, "tvlUsd": ':$,.0f', "apy": ':.2f', "risk_score": True},
+            )
+            comp_fig.update_xaxes(title="", tickangle=-25)
+            comp_fig.update_yaxes(title=radar_metric)
+            st.plotly_chart(plotly_theme(comp_fig, 360), use_container_width=True)
+        with compare_cols[1]:
+            st.dataframe(
+                watchlist_df[["protocol_badge", "project", "chain", "symbol", "apy", "tvlUsd", "risk_band"]].rename(
+                    columns={
+                        "protocol_badge": "Badge",
+                        "project": "Protocol",
+                        "chain": "Chain",
+                        "symbol": "Asset",
+                        "apy": "APY",
+                        "tvlUsd": "TVL (USD)",
+                        "risk_band": "Band",
+                    }
+                ),
+                use_container_width=True,
+                hide_index=True,
+                height=360,
+                column_config={
+                    "APY": st.column_config.NumberColumn(format="%.2f%%"),
+                    "TVL (USD)": st.column_config.NumberColumn(format="$%.0f"),
+                },
+            )
+        export_watch = make_download_df(watchlist_df).to_csv(index=False).encode("utf-8")
+        st.download_button("Download watchlist as CSV", export_watch, file_name="furuflow_watchlist.csv", mime="text/csv")
+    st.markdown("</div>", unsafe_allow_html=True)
+
 st.markdown(
-    "<div class='note' style='margin-top: 1rem;'>This build specifically fixes the low-contrast control text issue by making the text inside selection chips, the sort box, the CSV download button, and other interactive controls much darker against brighter control surfaces.</div>",
+    "<div class='note' style='margin-top: 1rem;'>This version explicitly fixes the contrast problem for the choose-options controls by using darker text inside the Protocols, Strategy Type, Sort by, and Choose a Pool controls, while also upgrading the app with richer visual charts, badge-style protocol identity, and a persistent watchlist layer.</div>",
     unsafe_allow_html=True,
 )
 
