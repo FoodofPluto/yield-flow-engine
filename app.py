@@ -961,7 +961,7 @@ if page == "Scanner":
             st.download_button("Download current table as CSV", csv, file_name="furuflow_scanner.csv", mime="text/csv")
         else:
             st.markdown("<div class='signal-card'><div class='signal-title'>CSV export is Pro</div><div class='signal-copy'>Keep the scanner open to everyone, then charge for export workflows and deeper decision tools.</div></div>", unsafe_allow_html=True)
-            st.link_button("Unlock CSV export", STRIPE_PAYMENT_LINK, use_container_width=True)
+            st.link_button("Unlock CSV export", FURUFLOW_STRIPE_LINK, use_container_width=True)
         st.markdown("</div>", unsafe_allow_html=True)
     with right:
         st.markdown("<div class='panel'>", unsafe_allow_html=True)
