@@ -716,7 +716,7 @@ def require_pro(feature_name: str) -> None:
     with left:
         st.markdown("<div class='signal-card'><div class='signal-title'>Pro unlocks</div><div class='signal-copy'>Whale inflow detection, arbitrage tools, yield trend AI, strategy builder, and CSV export are designed to live behind this gate.</div></div>", unsafe_allow_html=True)
     with right:
-        st.link_button("Upgrade to FuruFlow Pro", STRIPE_PAYMENT_LINK, use_container_width=True)
+        st.link_button("Upgrade Now", FURUFLOW_STRIPE_LINK, use_container_width=True)
         st.markdown("<div class='tiny' style='margin-top:0.5rem;'>After payment, give the buyer your current Pro access code or rotate to a new one in Streamlit secrets / environment variables.</div>", unsafe_allow_html=True)
     st.markdown("</div>", unsafe_allow_html=True)
     st.stop()
