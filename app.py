@@ -878,7 +878,7 @@ Yield trend AI
 Strategy builder  
 CSV export  
 """)
-    st.link_button("Upgrade Now", STRIPE_PAYMENT_LINK, use_container_width=True)
+    st.link_button("Upgrade Now", FURUFLOW_STRIPE_LINK, use_container_width=True)
     st.markdown("<div class='note'>Tip: set FURUFLOW_PRO_PASSWORD and FURUFLOW_STRIPE_LINK in Streamlit secrets or environment variables before sharing the app publicly.</div>", unsafe_allow_html=True)
 
 filtered = df.copy()
