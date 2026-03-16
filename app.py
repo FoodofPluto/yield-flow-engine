@@ -10,6 +10,7 @@ import plotly.express as px
 import plotly.graph_objects as go
 import requests
 import streamlit as st
+from streamlit.components.v1 import html as st_html
 
 APP_NAME = "FuruFlow"
 APP_VERSION = "v8"
@@ -689,32 +690,52 @@ def strategy_builder_filter(df: pd.DataFrame, stable_only: bool, min_apy: float,
 
 def render_opportunity_card(row: pd.Series, idx: int, watched: bool) -> None:
     signal = row.get("signal", "Steady")
-    st.markdown(
-        f"""
-        <div class="opp-card">
-            <div class="opp-top">
-                <div>
-                    <div class="opp-name">{row['project']}</div>
-                    <div class="opp-sub">{row['symbol']} • {row['chain']} • {row['protocol_tier']}</div>
-                </div>
-                <div class="protocol-dot">{row['protocol_badge']}</div>
+    card_html = f"""
+    <style>
+        .ff-card-wrap {{
+            background: linear-gradient(180deg, rgba(14,29,49,0.98), rgba(10,21,39,0.98));
+            border: 1px solid rgba(255,255,255,0.08);
+            border-radius: 18px;
+            padding: 16px;
+            color: #eef4ff;
+            font-family: Inter, 'Segoe UI', sans-serif;
+            box-shadow: 0 14px 34px rgba(0,0,0,0.22);
+        }}
+        .ff-opp-top {{ display:flex; justify-content:space-between; gap:12px; align-items:flex-start; }}
+        .ff-opp-name {{ font-size: 1.02rem; font-weight: 700; color:#ffffff; line-height:1.15; }}
+        .ff-opp-sub {{ color:#aab8d4; font-size:0.85rem; margin-top:0.25rem; }}
+        .ff-protocol-dot {{ min-width:34px; height:34px; border-radius:999px; display:flex; align-items:center; justify-content:center; background: linear-gradient(135deg, #7ce2ff, #66d5ff); color:#072030; font-weight:800; }}
+        .ff-watch-pill {{ display:inline-flex; margin-top:10px; background:rgba(124,226,255,0.14); color:#7ce2ff; border:1px solid rgba(124,226,255,0.28); padding:5px 9px; border-radius:999px; font-size:0.78rem; font-weight:700; }}
+        .ff-badge-row {{ display:flex; flex-wrap:wrap; gap:7px; margin-top:12px; margin-bottom:12px; }}
+        .ff-badge {{ display:inline-flex; align-items:center; background:#eef4ff; color:#17283d; border:1px solid #d7e4fb; border-radius:999px; padding:4px 9px; font-size:0.75rem; font-weight:700; }}
+        .ff-metric-strip {{ display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:10px; margin-top:6px; }}
+        .ff-metric-box {{ background:#f7faff; border:1px solid #d9e7fb; border-radius:12px; padding:10px 8px; text-align:center; }}
+        .ff-metric-mini-label {{ font-size:0.70rem; font-weight:700; color:#617287; text-transform:uppercase; letter-spacing:0.05em; }}
+        .ff-metric-mini-value {{ font-size:1rem; font-weight:800; color:#122235; margin-top:2px; }}
+    </style>
+    <div class="ff-card-wrap">
+        <div class="ff-opp-top">
+            <div>
+                <div class="ff-opp-name">{row['project']}</div>
+                <div class="ff-opp-sub">{row['symbol']} • {row['chain']} • {row['protocol_tier']}</div>
             </div>
-            {'<span class="watch-pill">★ Watched</span>' if watched else ''}
-            <div class="badge-row">
-                <span class="badge">{row['strategy_type']}</span>
-                <span class="badge">{row['risk_band']} risk</span>
-                <span class="badge">{row['scorecard']}</span>
-                <span class="badge">{signal}</span>
-            </div>
-            <div class="metric-strip">
-                <div class="metric-box"><div class="metric-mini-label">APY</div><div class="metric-mini-value">{row['apy']:.2f}%</div></div>
-                <div class="metric-box"><div class="metric-mini-label">TVL</div><div class="metric-mini-value">{format_money(row['tvlUsd'])}</div></div>
-                <div class="metric-box"><div class="metric-mini-label">Risk</div><div class="metric-mini-value">{int(row['risk_score'])}/100</div></div>
-            </div>
+            <div class="ff-protocol-dot">{row['protocol_badge']}</div>
         </div>
-        """,
-        unsafe_allow_html=True,
-    )
+        {'<span class="ff-watch-pill">★ Watched</span>' if watched else ''}
+        <div class="ff-badge-row">
+            <span class="ff-badge">{row['strategy_type']}</span>
+            <span class="ff-badge">{row['risk_band']} risk</span>
+            <span class="ff-badge">{row['scorecard']}</span>
+            <span class="ff-badge">{signal}</span>
+        </div>
+        <div class="ff-metric-strip">
+            <div class="ff-metric-box"><div class="ff-metric-mini-label">APY</div><div class="ff-metric-mini-value">{row['apy']:.2f}%</div></div>
+            <div class="ff-metric-box"><div class="ff-metric-mini-label">TVL</div><div class="ff-metric-mini-value">{format_money(row['tvlUsd'])}</div></div>
+            <div class="ff-metric-box"><div class="ff-metric-mini-label">Risk</div><div class="ff-metric-mini-value">{int(row['risk_score'])}/100</div></div>
+        </div>
+    </div>
+    """
+    st_html(card_html, height=235)
     c1, c2 = st.columns(2)
     with c1:
         st.markdown("<div class='watch-wrap'>", unsafe_allow_html=True)
