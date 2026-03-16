@@ -28,3 +28,13 @@ streamlit run app.py
 ## Deploy
 
 Push the updated repo to the branch connected to Streamlit Cloud. The app should auto-redeploy.
+
+
+## Monetization quick start
+
+Set these environment variables in Streamlit Cloud or your local shell before launch:
+
+- `FURUFLOW_PRO_PASSWORD` — the current Pro access code you will share with paid users
+- `FURUFLOW_STRIPE_LINK` — your Stripe Payment Link for FuruFlow Pro
+
+The app now keeps the Scanner free while gating Signals, Arbitrage, Strategy Builder, and CSV export behind Pro. Supported protocols can also route `Open Pool` through affiliate-style links when configured in `AFFILIATE_LINKS`.

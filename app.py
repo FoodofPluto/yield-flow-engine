@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 from typing import Any
@@ -19,6 +20,21 @@ POOL_LIMIT = 400
 TIMEOUT = 18
 SIGNAL_SAMPLE = 16
 WATCHLIST_FILE = Path(__file__).with_name("watchlist.json")
+PRO_PASSWORD = "furuflow-pro"
+FURUFLOW_STRIPE_LINK = "https://buy.stripe.com/bJefZgcgmbYecju4ztd3i00"
+AFFILIATE_LINKS = {
+    "aave": "https://app.aave.com/?ref=furuflow",
+    "aave-v3": "https://app.aave.com/?ref=furuflow",
+    "pendle": "https://app.pendle.finance/trade/markets?ref=furuflow",
+    "gmx": "https://app.gmx.io/#/?ref=furuflow",
+    "curve": "https://curve.fi/#/ethereum/pools?ref=furuflow",
+    "beefy": "https://app.beefy.com/?ref=furuflow",
+    "yearn": "https://yearn.fi/?ref=furuflow",
+    "morpho": "https://app.morpho.org/?ref=furuflow",
+    "morpho-v1": "https://app.morpho.org/?ref=furuflow",
+    "uniswap": "https://app.uniswap.org/?ref=furuflow",
+    "uniswap-v3": "https://app.uniswap.org/?ref=furuflow",
+}
 
 st.set_page_config(
     page_title=f"{APP_NAME} {APP_VERSION}",
@@ -532,6 +548,10 @@ def label_risk(score: int) -> str:
 
 
 def build_pool_url(row: pd.Series) -> str:
+    project_key = str(row.get("project_key", row.get("project", ""))).lower().strip()
+    for key, link in AFFILIATE_LINKS.items():
+        if key in project_key:
+            return link
     pool = row.get("pool", "")
     if isinstance(pool, str) and pool and pool != "Unknown":
         return f"https://defillama.com/yields/pool/{pool}"
@@ -688,6 +708,20 @@ def strategy_builder_filter(df: pd.DataFrame, stable_only: bool, min_apy: float,
     return out.sort_values(["rank_score", "apy", "tvlUsd"], ascending=[False, False, False]).head(25)
 
 
+def require_pro(feature_name: str) -> None:
+    st.markdown("<div class='panel'>", unsafe_allow_html=True)
+    section_header("FuruFlow Pro", f"Unlock {feature_name}", "Monetize today with a simple Pro gate. Use Stripe Payment Links for checkout and the sidebar access code for paid users.")
+    st.warning(f"🔒 {feature_name} is part of FuruFlow Pro.")
+    left, right = st.columns([1, 1], gap="medium")
+    with left:
+        st.markdown("<div class='signal-card'><div class='signal-title'>Pro unlocks</div><div class='signal-copy'>Whale inflow detection, arbitrage tools, yield trend AI, strategy builder, and CSV export are designed to live behind this gate.</div></div>", unsafe_allow_html=True)
+    with right:
+        st.link_button("Upgrade to FuruFlow Pro", STRIPE_PAYMENT_LINK, use_container_width=True)
+        st.markdown("<div class='tiny' style='margin-top:0.5rem;'>After payment, give the buyer your current Pro access code or rotate to a new one in Streamlit secrets / environment variables.</div>", unsafe_allow_html=True)
+    st.markdown("</div>", unsafe_allow_html=True)
+    st.stop()
+
+
 def render_opportunity_card(row: pd.Series, idx: int, watched: bool) -> None:
     signal = row.get("signal", "Steady")
     card_html = f"""
@@ -747,6 +781,7 @@ def render_opportunity_card(row: pd.Series, idx: int, watched: bool) -> None:
     with c2:
         st.markdown("<div class='pool-wrap'>", unsafe_allow_html=True)
         st.link_button("Open Pool", row["pool_url"], use_container_width=True)
+        st.markdown("<div class='tiny' style='margin-top:0.35rem;'>Affiliate-enabled when FuruFlow has a protocol referral route.</div>", unsafe_allow_html=True)
         st.markdown("</div>", unsafe_allow_html=True)
 
 
@@ -799,6 +834,8 @@ st.markdown(
     unsafe_allow_html=True,
 )
 
+st.info("🔥 FuruFlow Pro surfaces whale inflows, arbitrage gaps, and decision-support yield signals. Keep the scanner free, then monetize advanced tools with a Stripe payment link today.")
+
 with st.sidebar:
     st.markdown(f"## {APP_NAME} {APP_VERSION}")
     st.markdown("Set the market slice, then move through the app pages like a lightweight DeFi terminal.")
@@ -825,6 +862,24 @@ with st.sidebar:
     min_apy = st.slider("Minimum APY", min_value=0.0, max_value=250.0, value=0.0, step=0.5)
     sort_by = st.selectbox("Sort by", ["FuruFlow rank", "Highest APY", "Largest TVL", "Lowest risk", "Highest 24h volume", "Largest signal move"], index=0)
     st.markdown("<div class='note'>Risk score is heuristic. It blends protocol age, TVL stability, audit confidence, reward dependence, and inferred pool volatility. Signals come from recent chart movement when chart data is available.</div>", unsafe_allow_html=True)
+
+    st.markdown("---")
+    st.markdown("### 🔐 FuruFlow Pro")
+    pro_access_code = st.text_input("Enter Pro Access Code", type="password")
+    is_pro = pro_access_code == PRO_PASSWORD
+    if is_pro:
+        st.success("Pro Mode Enabled")
+    else:
+        st.info("Upgrade to unlock Signals, Arbitrage, Strategy Builder, and CSV export.")
+    st.markdown("### 🚀 Upgrade to Pro")
+    st.markdown("""Whale inflow detection  
+Arbitrage scanner  
+Yield trend AI  
+Strategy builder  
+CSV export  
+""")
+    st.link_button("Upgrade Now", STRIPE_PAYMENT_LINK, use_container_width=True)
+    st.markdown("<div class='note'>Tip: set FURUFLOW_PRO_PASSWORD and FURUFLOW_STRIPE_LINK in Streamlit secrets or environment variables before sharing the app publicly.</div>", unsafe_allow_html=True)
 
 filtered = df.copy()
 if selected_chains:
@@ -901,8 +956,12 @@ if page == "Scanner":
                 "Open": st.column_config.LinkColumn("Pool link", display_text="Open"),
             },
         )
-        csv = make_download_df(filtered).to_csv(index=False).encode("utf-8")
-        st.download_button("Download current table as CSV", csv, file_name="furuflow_scanner.csv", mime="text/csv")
+        if is_pro:
+            csv = make_download_df(filtered).to_csv(index=False).encode("utf-8")
+            st.download_button("Download current table as CSV", csv, file_name="furuflow_scanner.csv", mime="text/csv")
+        else:
+            st.markdown("<div class='signal-card'><div class='signal-title'>CSV export is Pro</div><div class='signal-copy'>Keep the scanner open to everyone, then charge for export workflows and deeper decision tools.</div></div>", unsafe_allow_html=True)
+            st.link_button("Unlock CSV export", STRIPE_PAYMENT_LINK, use_container_width=True)
         st.markdown("</div>", unsafe_allow_html=True)
     with right:
         st.markdown("<div class='panel'>", unsafe_allow_html=True)
@@ -921,6 +980,8 @@ if page == "Scanner":
         st.markdown("</div>", unsafe_allow_html=True)
 
 elif page == "Signals":
+    if not is_pro:
+        require_pro("Signals")
     left, right = st.columns([1.2, 1], gap="large")
     with left:
         st.markdown("<div class='panel'>", unsafe_allow_html=True)
@@ -949,6 +1010,8 @@ elif page == "Signals":
         st.markdown("</div>", unsafe_allow_html=True)
 
 elif page == "Arbitrage":
+    if not is_pro:
+        require_pro("Arbitrage scanner")
     left, right = st.columns([1.15, 1], gap="large")
     with left:
         st.markdown("<div class='panel'>", unsafe_allow_html=True)
@@ -1044,6 +1107,7 @@ elif page == "Pool Explorer":
             with c2:
                 st.markdown("<div class='pool-wrap'>", unsafe_allow_html=True)
                 st.link_button("Open Pool", row["pool_url"], use_container_width=True)
+                st.markdown("<div class='tiny' style='margin-top:0.35rem;'>Affiliate-enabled when FuruFlow has a protocol referral route.</div>", unsafe_allow_html=True)
                 st.markdown("</div>", unsafe_allow_html=True)
     st.markdown("</div>", unsafe_allow_html=True)
 
@@ -1051,6 +1115,8 @@ elif page == "Protocol Dashboard":
     render_protocol_dashboard(filtered)
 
 elif page == "Strategy Builder":
+    if not is_pro:
+        require_pro("Strategy Builder")
     left, right = st.columns([1, 1.1], gap="large")
     with left:
         st.markdown("<div class='panel'>", unsafe_allow_html=True)
