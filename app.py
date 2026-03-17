@@ -19,7 +19,7 @@ from entitlements import can_access_pro
 from stripe_stub import render_checkout_section
 
 APP_NAME = "FuruFlow"
-APP_VERSION = "v8"
+APP_VERSION = "v8.1"
 APP_TAGLINE = "DeFi yield intelligence for scanning, signaling, arbitrage, and watchlist workflows"
 POOL_LIMIT = 400
 TIMEOUT = 18
@@ -389,6 +389,37 @@ def fetch_signal_snapshots(pool_ids: tuple[str, ...]) -> pd.DataFrame:
     return pd.DataFrame(rows)
 
 
+@st.cache_data(ttl=1800, show_spinner=False)
+def synthesize_pool_chart(pool_id: str, apy: float, apy_base: float, apy_reward: float, tvl: float) -> pd.DataFrame:
+    periods = 14
+    end = pd.Timestamp.utcnow().floor("D")
+    dates = pd.date_range(end=end, periods=periods, freq="D")
+    drift = max(apy * 0.03, 0.25)
+    apy_points = [max(0.0, round(apy - drift * (periods - i - 1), 2)) for i in range(periods)]
+    base_points = [max(0.0, round(apy_base - drift * 0.55 * (periods - i - 1), 2)) for i in range(periods)]
+    reward_points = [max(0.0, round(a - b, 2)) for a, b in zip(apy_points, base_points)]
+    tvl_floor = tvl * 0.9
+    tvl_points = [round(tvl_floor + ((i + 1) / periods) * max(tvl - tvl_floor, 0.0), 2) for i in range(periods)]
+    return pd.DataFrame({
+        "timestamp": dates,
+        "apy": apy_points,
+        "apyBase": base_points,
+        "apyReward": reward_points,
+        "tvlUsd": tvl_points,
+    })
+
+
+def get_pool_chart_with_fallback(row: pd.Series) -> tuple[pd.DataFrame, str]:
+    chart = fetch_pool_chart(str(row["pool"]))
+    if not chart.empty:
+        return chart, "live"
+    apy = float(row.get("apy", 0.0) or 0.0)
+    apy_base = float(row.get("apyBase", apy * 0.7) or 0.0)
+    apy_reward = float(row.get("apyReward", max(apy - apy_base, 0.0)) or 0.0)
+    tvl = float(row.get("tvlUsd", 0.0) or 0.0)
+    return synthesize_pool_chart(str(row["pool"]), apy, apy_base, apy_reward, tvl), "fallback"
+
+
 def derive_chart_signal(pool_id: str, chart: pd.DataFrame) -> dict[str, Any]:
     recent = chart.dropna(subset=["timestamp"]).sort_values("timestamp").tail(30).copy()
     if recent.empty:
@@ -716,12 +747,12 @@ def require_pro(feature_name: str) -> None:
     st.markdown("<div class='panel'>", unsafe_allow_html=True)
     section_header("FuruFlow Pro", f"Unlock {feature_name}", "This feature is locked until the signed-in account has an active Pro entitlement.")
     st.warning(f"🔒 {feature_name} is part of FuruFlow Pro.")
+    if st.session_state.get("auth_email"):
+        st.caption(f"Signed in as {st.session_state.get('auth_email')}")
+    else:
+        st.info("You can keep using the public scanner without signing in. Sign in only when you want saved account features or Pro tools.")
     render_checkout_section(current_email=st.session_state.get("auth_email", ""))
-    if st.button("Demo: Restore / Unlock Pro for this account", key=f"restore_{feature_name}"):
-        grant_lifetime_access(st.session_state.get("auth_email", ""))
-        st.session_state["access_granted"] = True
-        st.success("Pro restored for this account.")
-        st.rerun()
+    st.link_button("Buy FuruFlow Pro", FURUFLOW_STRIPE_LINK)
     st.markdown("</div>", unsafe_allow_html=True)
     st.stop()
 
@@ -901,96 +932,46 @@ ADMIN_EMAILS = {
 
 with st.sidebar:
     st.markdown("## Account")
+    if st.session_state.get("auth_email"):
+        st.caption("Signed in for saved access and Pro features.")
+    else:
+        st.caption("Public mode is live. Sign in only for saved account features or Pro.")
+    login_form()
 
 user = get_current_user()
+guest_mode = user is None
 
-if not user:
-    with st.sidebar:
-        login_form()
+if guest_mode:
+    db_user = {
+        "email": "Guest",
+        "is_admin": False,
+        "lifetime_access": False,
+        "pro_active": False,
+    }
+    is_pro = False
+else:
+    email = user["email"].lower()
+    db_user = get_user_by_email(email)
+    if not db_user:
+        db_user = upsert_user(email=email, is_admin=(email in ADMIN_EMAILS))
+    elif email in ADMIN_EMAILS and not db_user.get("is_admin", False):
+        db_user = upsert_user(email=email, is_admin=True)
+    db_user = get_user_by_email(email)
+    is_pro = can_access_pro(db_user)
 
-    st.markdown(
-        f"""
-        <section class="hero-shell"><div class="hero-inner">
-            <div class="eyebrow">DeFi yield workstation • {APP_VERSION}</div>
-            <div class="hero-title">{APP_NAME} Pro</div>
-            <div class="hero-subtitle">{APP_TAGLINE}. Sign in to continue, or unlock Pro to access the full FuruFlow terminal.</div>
-        </div></section>
-        """,
-        unsafe_allow_html=True,
-    )
-
-    col_login, col_offer = st.columns([1.15, 0.85], gap="large")
-    with col_login:
-        st.markdown("<div class='panel'>", unsafe_allow_html=True)
-        section_header("Sign in", "Open your account", "Use the email tied to your purchase or admin access.")
-        st.info("Sign in from the sidebar to continue.")
-        st.markdown("</div>", unsafe_allow_html=True)
-
-    with col_offer:
-        st.markdown("<div class='panel'>", unsafe_allow_html=True)
-        section_header("FuruFlow Pro", "Unlock the terminal", "One purchase should open Pro on future logins with the same account.")
-        st.markdown(
-            f'''
-            <div class="badge-row">
-                <span class="badge-pill">Yield scanner</span>
-                <span class="badge-pill">Arbitrage views</span>
-                <span class="badge-pill">Watchlists</span>
-                <span class="badge-pill">Risk overlays</span>
-            </div>
-            <p style="color:#aab8d4; margin-top:0.9rem;">
-                Already purchased? Just sign in. New user? Use the link below to unlock FuruFlow Pro.
-            </p>
-            <a href="{FURUFLOW_STRIPE_LINK}" target="_blank" style="text-decoration:none;">
-                <div style="margin-top:0.9rem; display:inline-block; background:linear-gradient(135deg,#7ce2ff,#66d5ff); color:#082031; padding:0.8rem 1rem; border-radius:12px; font-weight:800;">
-                    Buy FuruFlow Pro
-                </div>
-            </a>
-            ''',
-            unsafe_allow_html=True,
-        )
-        st.markdown("</div>", unsafe_allow_html=True)
-
-    st.stop()
-
-email = user["email"].lower()
-db_user = get_user_by_email(email)
-if not db_user:
-    db_user = upsert_user(email=email, is_admin=(email in ADMIN_EMAILS))
-elif email in ADMIN_EMAILS and not db_user.get("is_admin", False):
-    db_user = upsert_user(email=email, is_admin=True)
-
-db_user = get_user_by_email(email)
-is_pro = can_access_pro(db_user)
 st.session_state["access_granted"] = is_pro
 
 with st.sidebar:
-    st.write(f"Signed in as: **{db_user['email']}**")
-    st.write(f"Admin: **{'Yes' if db_user['is_admin'] else 'No'}**")
-    st.write(f"Lifetime access: **{'Yes' if db_user['lifetime_access'] else 'No'}**")
-    st.write(f"Pro active: **{'Yes' if db_user['pro_active'] else 'No'}**")
-    logout_button()
+    st.write(f"Session: **{db_user['email']}**")
+    st.write(f"Plan: **{'Pro' if is_pro else 'Free'}**")
+    if not guest_mode:
+        st.write(f"Admin: **{'Yes' if db_user['is_admin'] else 'No'}**")
+        st.write(f"Lifetime access: **{'Yes' if db_user['lifetime_access'] else 'No'}**")
+        st.write(f"Pro active: **{'Yes' if db_user['pro_active'] else 'No'}**")
+        logout_button()
 
 if db_user.get('is_admin'):
     render_admin_access_panel(db_user)
-
-if not is_pro:
-    st.markdown(
-        f"""
-        <section class="hero-shell"><div class="hero-inner">
-            <div class="eyebrow">DeFi yield workstation • {APP_VERSION}</div>
-            <div class="hero-title">{APP_NAME} Pro</div>
-            <div class="hero-subtitle">{APP_TAGLINE}. Your original app is intact, but this account needs Pro access before the terminal opens.</div>
-        </div></section>
-        """,
-        unsafe_allow_html=True,
-    )
-    st.warning("This account does not have FuruFlow Pro access yet.")
-    st.link_button("Buy FuruFlow Pro", FURUFLOW_STRIPE_LINK)
-    render_checkout_section(current_email=db_user["email"])
-    st.divider()
-    st.subheader("Restore access")
-    st.write("If you already paid, sign in with the same email used for purchase.")
-    st.stop()
 
 raw_df = fetch_pools()
 df = enrich(raw_df)
@@ -1020,7 +1001,12 @@ st.markdown(
     unsafe_allow_html=True,
 )
 
-st.info("🔥 FuruFlow Pro surfaces whale inflows, arbitrage gaps, and decision-support yield signals. Keep the scanner free, then monetize advanced tools with a Stripe payment link today.")
+if guest_mode:
+    st.info("🌐 Free mode is open to everyone. Browse the scanner, market map, protocol dashboard, and pool explorer immediately. Sign in later for saved account features and unlock Pro for deeper workflows.")
+elif is_pro:
+    st.info("🔥 FuruFlow Pro surfaces whale inflows, arbitrage gaps, and decision-support yield signals.")
+else:
+    st.info("✅ Your free account is active. Upgrade to Pro any time for advanced workflows.")
 
 with st.sidebar:
     st.markdown(f"## {APP_NAME} {APP_VERSION}")
@@ -1050,14 +1036,26 @@ with st.sidebar:
     st.markdown("<div class='note'>Risk score is heuristic. It blends protocol age, TVL stability, audit confidence, reward dependence, and inferred pool volatility. Signals come from recent chart movement when chart data is available.</div>", unsafe_allow_html=True)
 
     st.markdown("---")
-    st.markdown("### ✅ FuruFlow Pro")
-    st.success("Pro access active for this account.")
-    st.markdown("""Whale inflow detection  
+    if is_pro:
+        st.markdown("### ✅ FuruFlow Pro")
+        st.success("Pro access active for this account.")
+        st.markdown("""Whale inflow detection  
 Arbitrage scanner  
 Yield trend AI  
 Strategy builder  
 CSV export  
+Saved watchlist workflows
 """)
+    else:
+        st.markdown("### 🌐 FuruFlow Free")
+        st.success("Public scanner access is active.")
+        st.markdown("""Live scanner  
+Market map  
+Pool explorer  
+Protocol dashboard
+""")
+        st.markdown("<div class='note'>Upgrade to Pro for signals, arbitrage, strategy builder, CSV export, and persistent account workflows.</div>", unsafe_allow_html=True)
+        st.link_button("Upgrade to FuruFlow Pro", FURUFLOW_STRIPE_LINK)
     st.markdown("<div class='note'>This account-based entitlement replaces the old shared access-code workflow.</div>", unsafe_allow_html=True)
 
 filtered = df.copy()
@@ -1249,18 +1247,19 @@ elif page == "Pool Explorer":
         row = pool_options.loc[pool_options["pool_pick"] == chosen].iloc[0]
         cols = st.columns([1.3, 1], gap="large")
         with cols[0]:
-            chart = fetch_pool_chart(str(row["pool"]))
-            if not chart.empty:
-                fig = go.Figure()
-                fig.add_trace(go.Scatter(x=chart["timestamp"], y=chart["apy"], mode="lines", name="APY"))
-                if chart["tvlUsd"].gt(0).any():
-                    fig.add_trace(go.Scatter(x=chart["timestamp"], y=chart["tvlUsd"], mode="lines", name="TVL", yaxis="y2"))
-                    fig.update_layout(yaxis2=dict(overlaying="y", side="right", showgrid=False, title="TVL"))
-                fig.update_xaxes(title="Time")
-                fig.update_yaxes(title="APY %")
-                st.plotly_chart(plotly_theme(fig, 430), use_container_width=True)
+            chart, chart_mode = get_pool_chart_with_fallback(row)
+            fig = go.Figure()
+            fig.add_trace(go.Scatter(x=chart["timestamp"], y=chart["apy"], mode="lines", name="APY"))
+            if chart["tvlUsd"].gt(0).any():
+                fig.add_trace(go.Scatter(x=chart["timestamp"], y=chart["tvlUsd"], mode="lines", name="TVL", yaxis="y2"))
+                fig.update_layout(yaxis2=dict(overlaying="y", side="right", showgrid=False, title="TVL"))
+            fig.update_xaxes(title="Time")
+            fig.update_yaxes(title="APY %")
+            st.plotly_chart(plotly_theme(fig, 430), use_container_width=True)
+            if chart_mode == "fallback":
+                st.caption("Live history was unavailable from the upstream pool chart endpoint, so FuruFlow generated a preview trend from the current pool snapshot to avoid an empty chart state.")
             else:
-                st.info("Chart history is unavailable for this pool right now.")
+                st.caption("Live chart history loaded from the upstream pool endpoint.")
         with cols[1]:
             st.markdown(f"<div class='signal-card'><div class='signal-title'>{row['project']} • {row['symbol']}</div><div class='signal-copy'>{row['chain']} • {row['strategy_type']} • {row['signal']}</div></div>", unsafe_allow_html=True)
             stats = pd.DataFrame([
