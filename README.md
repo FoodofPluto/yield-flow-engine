@@ -126,3 +126,9 @@ Wire this into your existing FuruFlow / Yield Flow Streamlit app by:
 - `app.py`
 - `.env.example`
 - `stripe_webhook_example.py`
+
+
+## Added in this build
+
+- Paywall offer appears on the logged-out landing page.
+- Admins can grant or remove lifetime access, Pro access, and admin status for accounts.

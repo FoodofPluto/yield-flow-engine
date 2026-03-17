@@ -14,7 +14,7 @@ import streamlit as st
 from streamlit.components.v1 import html as st_html
 
 from auth import get_current_user, login_form, logout_button
-from db import get_user_by_email, init_db, upsert_user
+from db import get_user_by_email, init_db, search_users, set_admin, set_lifetime_access, set_pro_active, upsert_user
 from entitlements import can_access_pro, grant_lifetime_access
 from stripe_stub import render_checkout_section
 
@@ -726,6 +726,87 @@ def require_pro(feature_name: str) -> None:
     st.stop()
 
 
+
+
+def render_admin_access_panel(current_user: dict) -> None:
+    st.markdown("<div class='panel'>", unsafe_allow_html=True)
+    section_header(
+        "Admin access controls",
+        "Grant or remove account access",
+        "Manage lifetime access, recurring Pro, and admin status for any account.",
+    )
+
+    query = st.text_input(
+        "Find account by email",
+        value="",
+        placeholder="name@example.com",
+        key="admin_user_search",
+    )
+    users = search_users(query=query, limit=50)
+
+    target_emails = [u["email"] for u in users]
+    if current_user["email"] not in target_emails:
+        target_emails.insert(0, current_user["email"])
+
+    selected_email = st.selectbox(
+        "Select account",
+        options=target_emails if target_emails else [current_user["email"]],
+        key="admin_target_email",
+    )
+
+    target_user = get_user_by_email(selected_email)
+    if not target_user:
+        upsert_user(selected_email, is_admin=False)
+        target_user = get_user_by_email(selected_email)
+
+    col1, col2, col3 = st.columns(3)
+    with col1:
+        st.metric("Admin", "Yes" if target_user["is_admin"] else "No")
+    with col2:
+        st.metric("Lifetime", "Yes" if target_user["lifetime_access"] else "No")
+    with col3:
+        st.metric("Pro active", "Yes" if target_user["pro_active"] else "No")
+
+    a1, a2, a3 = st.columns(3)
+    with a1:
+        if target_user["lifetime_access"]:
+            if st.button("Remove lifetime access", key=f"remove_lifetime_{selected_email}"):
+                set_lifetime_access(selected_email, False)
+                st.success(f"Removed lifetime access from {selected_email}.")
+                st.rerun()
+        else:
+            if st.button("Grant lifetime access", key=f"grant_lifetime_{selected_email}"):
+                set_lifetime_access(selected_email, True)
+                st.success(f"Granted lifetime access to {selected_email}.")
+                st.rerun()
+
+    with a2:
+        if target_user["pro_active"]:
+            if st.button("Deactivate Pro", key=f"deactivate_pro_{selected_email}"):
+                set_pro_active(selected_email, False)
+                st.success(f"Deactivated Pro for {selected_email}.")
+                st.rerun()
+        else:
+            if st.button("Activate Pro", key=f"activate_pro_{selected_email}"):
+                set_pro_active(selected_email, True)
+                st.success(f"Activated Pro for {selected_email}.")
+                st.rerun()
+
+    with a3:
+        can_edit_admin = selected_email != current_user["email"]
+        if target_user["is_admin"]:
+            if st.button("Remove admin", key=f"remove_admin_{selected_email}", disabled=not can_edit_admin):
+                set_admin(selected_email, False)
+                st.success(f"Removed admin from {selected_email}.")
+                st.rerun()
+        else:
+            if st.button("Make admin", key=f"make_admin_{selected_email}"):
+                set_admin(selected_email, True)
+                st.success(f"Made {selected_email} an admin.")
+                st.rerun()
+
+    st.markdown("</div>", unsafe_allow_html=True)
+
 def render_opportunity_card(row: pd.Series, idx: int, watched: bool) -> None:
     signal = row.get("signal", "Steady")
     card_html = f"""
@@ -826,17 +907,49 @@ user = get_current_user()
 if not user:
     with st.sidebar:
         login_form()
+
     st.markdown(
         f"""
         <section class="hero-shell"><div class="hero-inner">
             <div class="eyebrow">DeFi yield workstation • {APP_VERSION}</div>
-            <div class="hero-title">{APP_NAME}</div>
-            <div class="hero-subtitle">{APP_TAGLINE}. Sign in to open the full FuruFlow terminal.</div>
+            <div class="hero-title">{APP_NAME} Pro</div>
+            <div class="hero-subtitle">{APP_TAGLINE}. Sign in to continue, or unlock Pro to access the full FuruFlow terminal.</div>
         </div></section>
         """,
         unsafe_allow_html=True,
     )
-    st.info("Sign in with your email to continue.")
+
+    col_login, col_offer = st.columns([1.15, 0.85], gap="large")
+    with col_login:
+        st.markdown("<div class='panel'>", unsafe_allow_html=True)
+        section_header("Sign in", "Open your account", "Use the email tied to your purchase or admin access.")
+        st.info("Sign in from the sidebar to continue.")
+        st.markdown("</div>", unsafe_allow_html=True)
+
+    with col_offer:
+        st.markdown("<div class='panel'>", unsafe_allow_html=True)
+        section_header("FuruFlow Pro", "Unlock the terminal", "One purchase should open Pro on future logins with the same account.")
+        st.markdown(
+            f'''
+            <div class="badge-row">
+                <span class="badge-pill">Yield scanner</span>
+                <span class="badge-pill">Arbitrage views</span>
+                <span class="badge-pill">Watchlists</span>
+                <span class="badge-pill">Risk overlays</span>
+            </div>
+            <p style="color:#aab8d4; margin-top:0.9rem;">
+                Already purchased? Just sign in. New user? Use the link below to unlock FuruFlow Pro.
+            </p>
+            <a href="{FURUFLOW_STRIPE_LINK}" target="_blank" style="text-decoration:none;">
+                <div style="margin-top:0.9rem; display:inline-block; background:linear-gradient(135deg,#7ce2ff,#66d5ff); color:#082031; padding:0.8rem 1rem; border-radius:12px; font-weight:800;">
+                    Buy FuruFlow Pro
+                </div>
+            </a>
+            ''',
+            unsafe_allow_html=True,
+        )
+        st.markdown("</div>", unsafe_allow_html=True)
+
     st.stop()
 
 email = user["email"].lower()
@@ -857,6 +970,9 @@ with st.sidebar:
     st.write(f"Pro active: **{'Yes' if db_user['pro_active'] else 'No'}**")
     logout_button()
 
+if db_user.get('is_admin'):
+    render_admin_access_panel(db_user)
+
 if not is_pro:
     st.markdown(
         f"""
@@ -869,6 +985,7 @@ if not is_pro:
         unsafe_allow_html=True,
     )
     st.warning("This account does not have FuruFlow Pro access yet.")
+    st.link_button("Buy FuruFlow Pro", FURUFLOW_STRIPE_LINK)
     render_checkout_section(current_email=db_user["email"])
     st.divider()
     st.subheader("Restore access")

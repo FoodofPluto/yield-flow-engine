@@ -101,3 +101,44 @@ def set_pro_active(email: str, value: bool = True):
             (1 if value else 0, email.lower()),
         )
         conn.commit()
+
+
+def search_users(query: str = "", limit: int = 50):
+    query = (query or "").strip().lower()
+    with closing(get_conn()) as conn:
+        if query:
+            rows = conn.execute(
+                """
+                SELECT email, is_admin, lifetime_access, pro_active,
+                       stripe_customer_id, purchase_source, created_at, updated_at
+                FROM users
+                WHERE lower(email) LIKE ?
+                ORDER BY updated_at DESC, created_at DESC
+                LIMIT ?
+                """,
+                (f"%{query}%", limit),
+            ).fetchall()
+        else:
+            rows = conn.execute(
+                """
+                SELECT email, is_admin, lifetime_access, pro_active,
+                       stripe_customer_id, purchase_source, created_at, updated_at
+                FROM users
+                ORDER BY updated_at DESC, created_at DESC
+                LIMIT ?
+                """,
+                (limit,),
+            ).fetchall()
+    return [_row_to_dict(row) for row in rows]
+
+def set_admin(email: str, value: bool = True):
+    with closing(get_conn()) as conn:
+        conn.execute(
+            """
+            UPDATE users
+            SET is_admin = ?, updated_at = CURRENT_TIMESTAMP
+            WHERE email = ?
+            """,
+            (1 if value else 0, email.lower()),
+        )
+        conn.commit()
