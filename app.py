@@ -17,11 +17,15 @@ from auth import get_current_user, login_form, logout_button
 from db import get_user_by_email, init_db, search_users, set_admin, set_lifetime_access, set_pro_active, upsert_user
 from entitlements import can_access_pro
 from stripe_stub import render_checkout_section
+from history_store import load_history, save_snapshot
 
 APP_NAME = "FuruFlow"
 APP_VERSION = "v8.1"
-APP_TAGLINE = "DeFi yield intelligence for scanning, signaling, arbitrage, and watchlist workflows"
+APP_TAGLINE = "Find the smartest yields. Avoid the dumb ones."
 POOL_LIMIT = 400
+FREE_POOL_LIMIT = 10
+FREE_SORT_OPTIONS = ["Highest APY", "Largest TVL"]
+PRO_SORT_OPTIONS = ["FuruFlow rank", "Lowest risk", "Highest 24h volume", "Largest signal move"]
 TIMEOUT = 18
 SIGNAL_SAMPLE = 16
 WATCHLIST_FILE = Path(__file__).with_name("watchlist.json")
@@ -41,7 +45,7 @@ AFFILIATE_LINKS = {
 }
 
 st.set_page_config(
-    page_title=f"{APP_NAME} {APP_VERSION}",
+    page_title=APP_NAME,
     page_icon="🐸",
     layout="wide",
     initial_sidebar_state="expanded",
@@ -410,14 +414,20 @@ def synthesize_pool_chart(pool_id: str, apy: float, apy_base: float, apy_reward:
 
 
 def get_pool_chart_with_fallback(row: pd.Series) -> tuple[pd.DataFrame, str]:
-    chart = fetch_pool_chart(str(row["pool"]))
+    pool_id = str(row["pool"])
+    chart = fetch_pool_chart(pool_id)
     if not chart.empty:
         return chart, "live"
+
+    stored = load_history(pool_id)
+    if not stored.empty:
+        return stored, "stored"
+
     apy = float(row.get("apy", 0.0) or 0.0)
     apy_base = float(row.get("apyBase", apy * 0.7) or 0.0)
     apy_reward = float(row.get("apyReward", max(apy - apy_base, 0.0)) or 0.0)
     tvl = float(row.get("tvlUsd", 0.0) or 0.0)
-    return synthesize_pool_chart(str(row["pool"]), apy, apy_base, apy_reward, tvl), "fallback"
+    return synthesize_pool_chart(pool_id, apy, apy_base, apy_reward, tvl), "fallback"
 
 
 def derive_chart_signal(pool_id: str, chart: pd.DataFrame) -> dict[str, Any]:
@@ -743,16 +753,32 @@ def strategy_builder_filter(df: pd.DataFrame, stable_only: bool, min_apy: float,
     return out.sort_values(["rank_score", "apy", "tvlUsd"], ascending=[False, False, False]).head(25)
 
 
-def require_pro(feature_name: str) -> None:
+def require_pro(feature_name: str, preview_df: pd.DataFrame | None = None, preview_note: str | None = None) -> None:
     st.markdown("<div class='panel'>", unsafe_allow_html=True)
-    section_header("FuruFlow Pro", f"Unlock {feature_name}", "This feature is locked until the signed-in account has an active Pro entitlement.")
+    section_header("FuruFlow Pro", f"Unlock {feature_name}", "The public product stays useful on purpose. Pro adds the signal layer, ranked workflows, and faster decision support.")
     st.warning(f"🔒 {feature_name} is part of FuruFlow Pro.")
+    if preview_note:
+        st.caption(preview_note)
+    if preview_df is not None and not preview_df.empty:
+        st.markdown("### Preview")
+        st.dataframe(preview_df.head(3), use_container_width=True, hide_index=True, height=180)
+    st.markdown(
+        """
+**FuruFlow Pro includes:**
+- Arbitrage signals
+- Whale-flow and signal engine views
+- Advanced ranking and sorting
+- Full scanner depth and CSV export
+- Future signal-based alerts
+"""
+    )
+    st.caption("Pro is $20/month.")
     if st.session_state.get("auth_email"):
         st.caption(f"Signed in as {st.session_state.get('auth_email')}")
     else:
-        st.info("You can keep using the public scanner without signing in. Sign in only when you want saved account features or Pro tools.")
+        st.info("Keep browsing in free mode, or sign in when you're ready to unlock Pro.")
     render_checkout_section(current_email=st.session_state.get("auth_email", ""))
-    st.link_button("Buy FuruFlow Pro", FURUFLOW_STRIPE_LINK)
+    st.link_button("Upgrade to FuruFlow Pro — $20/month", FURUFLOW_STRIPE_LINK)
     st.markdown("</div>", unsafe_allow_html=True)
     st.stop()
 
@@ -989,28 +1015,29 @@ for col, default in [("signal", "Steady"), ("apy_delta_7", 0.0), ("tvl_delta_7_p
     df[col] = df[col].fillna(default)
 
 watchlist_df = df[df["pool"].isin(st.session_state.watchlist)].copy()
+save_snapshot(df)
 
 st.markdown(
     f"""
     <section class="hero-shell"><div class="hero-inner">
-        <div class="eyebrow">DeFi yield workstation • {APP_VERSION}</div>
+        <div class="eyebrow">DeFi yield intelligence</div>
         <div class="hero-title">{APP_NAME}</div>
-        <div class="hero-subtitle">{APP_TAGLINE}. This build rolls the prior v7 productization pass into a fuller v8 terminal: readable dropdown title boxes, darker dropdown selections, readable Watch and Open Pool actions, cleaner pool bubbles, persistent watchlists, arbitrage discovery, smarter risk scoring, richer charts, a strategy builder, and dedicated pages for scanner, signals, market map, pool explorer, protocol analysis, and tracked pools.</div>
+        <div class="hero-subtitle">{APP_TAGLINE}</div>
     </div></section>
     """,
     unsafe_allow_html=True,
 )
 
 if guest_mode:
-    st.info("🌐 Free mode is open to everyone. Browse the scanner, market map, protocol dashboard, and pool explorer immediately. Sign in later for saved account features and unlock Pro for deeper workflows.")
+    st.info("🌐 Free mode is open immediately. Explore core pools, the market map, protocol dashboard, and pool explorer without creating an account.")
 elif is_pro:
-    st.info("🔥 FuruFlow Pro surfaces whale inflows, arbitrage gaps, and decision-support yield signals.")
+    st.info("🔥 Pro is active. You have access to arbitrage signals, whale-flow intelligence, advanced ranking, and full scanner depth.")
 else:
-    st.info("✅ Your free account is active. Upgrade to Pro any time for advanced workflows.")
+    st.info("✅ Free account active. Upgrade to Pro for signals, arbitrage, advanced ranking, and the full opportunity set.")
 
 with st.sidebar:
-    st.markdown(f"## {APP_NAME} {APP_VERSION}")
-    st.markdown("Set the market slice, then move through the app pages like a lightweight DeFi terminal.")
+    st.markdown(f"## {APP_NAME}")
+    st.markdown(APP_TAGLINE)
 
     page = st.radio(
         "Navigation",
@@ -1032,30 +1059,32 @@ with st.sidebar:
     min_tvl = st.slider("Minimum TVL", min_value=0, max_value=500_000_000, value=5_000_000, step=1_000_000)
     max_risk = st.slider("Maximum risk score", min_value=1, max_value=100, value=70)
     min_apy = st.slider("Minimum APY", min_value=0.0, max_value=250.0, value=0.0, step=0.5)
-    sort_by = st.selectbox("Sort by", ["FuruFlow rank", "Highest APY", "Largest TVL", "Lowest risk", "Highest 24h volume", "Largest signal move"], index=0)
+    sort_options = FREE_SORT_OPTIONS + PRO_SORT_OPTIONS if is_pro else FREE_SORT_OPTIONS
+    sort_by = st.selectbox("Sort by", sort_options, index=0)
     st.markdown("<div class='note'>Risk score is heuristic. It blends protocol age, TVL stability, audit confidence, reward dependence, and inferred pool volatility. Signals come from recent chart movement when chart data is available.</div>", unsafe_allow_html=True)
 
     st.markdown("---")
     if is_pro:
         st.markdown("### ✅ FuruFlow Pro")
         st.success("Pro access active for this account.")
-        st.markdown("""Whale inflow detection  
-Arbitrage scanner  
-Yield trend AI  
+        st.markdown("""Arbitrage signals  
+Whale-flow intelligence  
+Advanced ranking  
+Signal engine  
 Strategy builder  
-CSV export  
-Saved watchlist workflows
+CSV export
 """)
     else:
         st.markdown("### 🌐 FuruFlow Free")
-        st.success("Public scanner access is active.")
-        st.markdown("""Live scanner  
+        st.success("Public access is live.")
+        st.markdown("""Basic pools  
+Limited sorting  
 Market map  
 Pool explorer  
 Protocol dashboard
 """)
-        st.markdown("<div class='note'>Upgrade to Pro for signals, arbitrage, strategy builder, CSV export, and persistent account workflows.</div>", unsafe_allow_html=True)
-        st.link_button("Upgrade to FuruFlow Pro", FURUFLOW_STRIPE_LINK)
+        st.markdown("<div class='note'>Pro unlocks arbitrage signals, whale flows, advanced ranking, deeper scanner access, and future signal-based alerts.</div>", unsafe_allow_html=True)
+        st.link_button("Upgrade to FuruFlow Pro — $20/month", FURUFLOW_STRIPE_LINK)
     st.markdown("<div class='note'>This account-based entitlement replaces the old shared access-code workflow.</div>", unsafe_allow_html=True)
 
 filtered = df.copy()
@@ -1086,8 +1115,11 @@ else:
     filtered = filtered.sort_values(["rank_score", "apy", "tvlUsd"], ascending=[False, False, False])
 
 filtered = filtered.head(POOL_LIMIT)
+full_filtered = filtered.copy()
+if not is_pro:
+    filtered = filtered.head(FREE_POOL_LIMIT)
 watchlist_df = df[df["pool"].isin(st.session_state.watchlist)].copy()
-arb_df = find_arbitrage_candidates(filtered)
+arb_df = find_arbitrage_candidates(full_filtered if is_pro else filtered)
 
 visible = len(filtered)
 median_apy = filtered["apy"].median() if visible else 0.0
@@ -1105,6 +1137,43 @@ with metric_cols[3]:
     stat_card("Signal density", f"{signal_share:,.0f}%", "Pools with non-steady signal labels")
 with metric_cols[4]:
     stat_card("Watchlist", f"{len(watchlist_df):,}", "Pools saved to your persistent tracker")
+
+if not is_pro:
+    st.markdown("<div class='panel' style='margin-top:0.75rem;'><strong>Upgrade to FuruFlow Pro — $20/month</strong><div class='tiny' style='margin-top:0.35rem;'>Unlock arbitrage signals, whale flows, advanced ranking, and the full scanner depth.</div></div>", unsafe_allow_html=True)
+    if len(full_filtered) > len(filtered):
+        st.info(f"Free mode shows the top {FREE_POOL_LIMIT} pools from your current filter set. Upgrade to unlock all {len(full_filtered):,} matching pools.")
+
+landing_left, landing_mid, landing_right = st.columns(3, gap="large")
+with landing_left:
+    st.markdown("<div class='panel'>", unsafe_allow_html=True)
+    section_header("Top Opportunities Today", "Fastest high-level scan", "The highest-yield pools in your current market slice.")
+    top_today = full_filtered[["project", "chain", "symbol", "apy", "tvlUsd", "risk_band"]].head(5).copy()
+    if top_today.empty:
+        st.info("No opportunities match the current filters.")
+    else:
+        top_today.columns = ["Protocol", "Chain", "Asset", "APY", "TVL (USD)", "Risk"]
+        st.dataframe(top_today, use_container_width=True, hide_index=True, height=240, column_config={"APY": st.column_config.NumberColumn(format="%.2f%%"), "TVL (USD)": st.column_config.NumberColumn(format="$%.0f")})
+    st.markdown("</div>", unsafe_allow_html=True)
+with landing_mid:
+    st.markdown("<div class='panel'>", unsafe_allow_html=True)
+    section_header("Biggest Yield Changes", "What moved recently", "Big APY moves can mean opportunity, crowding, or emissions changes.")
+    movers = full_filtered.sort_values(["apy_delta_7", "tvl_delta_7_pct"], ascending=[False, False])[["project", "symbol", "apy_delta_7", "tvl_delta_7_pct", "signal"]].head(5).copy()
+    if movers.empty:
+        st.info("No yield changes available yet.")
+    else:
+        movers.columns = ["Protocol", "Asset", "7d APY Δ", "7d TVL Δ %", "Signal"]
+        st.dataframe(movers, use_container_width=True, hide_index=True, height=240, column_config={"7d APY Δ": st.column_config.NumberColumn(format="%.2f"), "7d TVL Δ %": st.column_config.NumberColumn(format="%.2f")})
+    st.markdown("</div>", unsafe_allow_html=True)
+with landing_right:
+    st.markdown("<div class='panel'>", unsafe_allow_html=True)
+    section_header("Safest High APY", "Yield with stronger footing", "Pools above 10% APY, with deeper TVL and lower modeled risk.")
+    safest = full_filtered[(full_filtered["apy"] >= 10) & (full_filtered["tvlUsd"] >= 1_000_000) & (full_filtered["risk_score"] <= 45)].sort_values(["risk_score", "apy", "tvlUsd"], ascending=[True, False, False])[["project", "symbol", "apy", "tvlUsd", "risk_score"]].head(5).copy()
+    if safest.empty:
+        st.info("No safer high-APY pools match the current filters.")
+    else:
+        safest.columns = ["Protocol", "Asset", "APY", "TVL (USD)", "Risk"]
+        st.dataframe(safest, use_container_width=True, hide_index=True, height=240, column_config={"APY": st.column_config.NumberColumn(format="%.2f%%"), "TVL (USD)": st.column_config.NumberColumn(format="$%.0f")})
+    st.markdown("</div>", unsafe_allow_html=True)
 
 if page == "Scanner":
     left, right = st.columns([1.6, 1], gap="large")
@@ -1158,7 +1227,9 @@ if page == "Scanner":
 
 elif page == "Signals":
     if not is_pro:
-        require_pro("Signals")
+        preview = filtered[["project", "chain", "symbol", "signal", "apy_delta_7", "tvl_delta_7_pct"]].copy().head(8)
+        preview.columns = ["Protocol", "Chain", "Asset", "Signal", "7d APY Δ", "7d TVL Δ %"]
+        require_pro("Signals", preview_df=preview, preview_note="Free users can scan pools, but the signal engine is reserved for Pro.")
     left, right = st.columns([1.2, 1], gap="large")
     with left:
         st.markdown("<div class='panel'>", unsafe_allow_html=True)
@@ -1257,7 +1328,9 @@ elif page == "Pool Explorer":
             fig.update_yaxes(title="APY %")
             st.plotly_chart(plotly_theme(fig, 430), use_container_width=True)
             if chart_mode == "fallback":
-                st.caption("Live history was unavailable from the upstream pool chart endpoint, so FuruFlow generated a preview trend from the current pool snapshot to avoid an empty chart state.")
+                st.caption("Live history was unavailable, so FuruFlow generated a preview trend from the current pool snapshot to avoid an empty chart state.")
+            elif chart_mode == "stored":
+                st.caption("Live history was unavailable, so FuruFlow loaded stored snapshots collected by the app to render a real local chart history.")
             else:
                 st.caption("Live chart history loaded from the upstream pool endpoint.")
         with cols[1]:
@@ -1294,7 +1367,9 @@ elif page == "Protocol Dashboard":
 
 elif page == "Strategy Builder":
     if not is_pro:
-        require_pro("Strategy Builder")
+        preview = strategy_builder_filter(df, True, 8.0, 10_000_000.0, 40, "Any")[["project", "chain", "symbol", "apy", "risk_score", "signal"]].copy().head(8)
+        preview.columns = ["Protocol", "Chain", "Asset", "APY", "Risk", "Signal"]
+        require_pro("Strategy Builder", preview_df=preview, preview_note="Build reusable high-conviction slices in Pro.")
     left, right = st.columns([1, 1.1], gap="large")
     with left:
         st.markdown("<div class='panel'>", unsafe_allow_html=True)
