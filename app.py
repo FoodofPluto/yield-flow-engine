@@ -13,6 +13,11 @@ import requests
 import streamlit as st
 from streamlit.components.v1 import html as st_html
 
+from auth import get_current_user, login_form, logout_button
+from db import get_user_by_email, init_db, upsert_user
+from entitlements import can_access_pro, grant_lifetime_access
+from stripe_stub import render_checkout_section
+
 APP_NAME = "FuruFlow"
 APP_VERSION = "v8"
 APP_TAGLINE = "DeFi yield intelligence for scanning, signaling, arbitrage, and watchlist workflows"
@@ -20,7 +25,6 @@ POOL_LIMIT = 400
 TIMEOUT = 18
 SIGNAL_SAMPLE = 16
 WATCHLIST_FILE = Path(__file__).with_name("watchlist.json")
-PRO_PASSWORD = "furuflow-pro"
 FURUFLOW_STRIPE_LINK = "https://buy.stripe.com/bJefZgcgmbYecju4ztd3i00"
 AFFILIATE_LINKS = {
     "aave": "https://app.aave.com/?ref=furuflow",
@@ -710,14 +714,14 @@ def strategy_builder_filter(df: pd.DataFrame, stable_only: bool, min_apy: float,
 
 def require_pro(feature_name: str) -> None:
     st.markdown("<div class='panel'>", unsafe_allow_html=True)
-    section_header("FuruFlow Pro", f"Unlock {feature_name}", "Monetize today with a simple Pro gate. Use Stripe Payment Links for checkout and the sidebar access code for paid users.")
+    section_header("FuruFlow Pro", f"Unlock {feature_name}", "This feature is locked until the signed-in account has an active Pro entitlement.")
     st.warning(f"🔒 {feature_name} is part of FuruFlow Pro.")
-    left, right = st.columns([1, 1], gap="medium")
-    with left:
-        st.markdown("<div class='signal-card'><div class='signal-title'>Pro unlocks</div><div class='signal-copy'>Whale inflow detection, arbitrage tools, yield trend AI, strategy builder, and CSV export are designed to live behind this gate.</div></div>", unsafe_allow_html=True)
-    with right:
-        st.link_button("Upgrade Now", FURUFLOW_STRIPE_LINK, use_container_width=True)
-        st.markdown("<div class='tiny' style='margin-top:0.5rem;'>After payment, give the buyer your current Pro access code or rotate to a new one in Streamlit secrets / environment variables.</div>", unsafe_allow_html=True)
+    render_checkout_section(current_email=st.session_state.get("auth_email", ""))
+    if st.button("Demo: Restore / Unlock Pro for this account", key=f"restore_{feature_name}"):
+        grant_lifetime_access(st.session_state.get("auth_email", ""))
+        st.session_state["access_granted"] = True
+        st.success("Pro restored for this account.")
+        st.rerun()
     st.markdown("</div>", unsafe_allow_html=True)
     st.stop()
 
@@ -806,6 +810,76 @@ def render_protocol_dashboard(df: pd.DataFrame) -> None:
 
 
 inject_css()
+init_db()
+
+ADMIN_EMAILS = {
+    email.strip().lower()
+    for email in os.getenv("ADMIN_EMAILS", "d.arvelop93@gmail.com").split(",")
+    if email.strip()
+}
+
+with st.sidebar:
+    st.markdown("## Account")
+
+user = get_current_user()
+
+if not user:
+    with st.sidebar:
+        login_form()
+    st.markdown(
+        f"""
+        <section class="hero-shell"><div class="hero-inner">
+            <div class="eyebrow">DeFi yield workstation • {APP_VERSION}</div>
+            <div class="hero-title">{APP_NAME}</div>
+            <div class="hero-subtitle">{APP_TAGLINE}. Sign in to open the full FuruFlow terminal.</div>
+        </div></section>
+        """,
+        unsafe_allow_html=True,
+    )
+    st.info("Sign in with your email to continue.")
+    st.stop()
+
+email = user["email"].lower()
+db_user = get_user_by_email(email)
+if not db_user:
+    db_user = upsert_user(email=email, is_admin=(email in ADMIN_EMAILS))
+elif email in ADMIN_EMAILS and not db_user.get("is_admin", False):
+    db_user = upsert_user(email=email, is_admin=True)
+
+db_user = get_user_by_email(email)
+is_pro = can_access_pro(db_user)
+st.session_state["access_granted"] = is_pro
+
+with st.sidebar:
+    st.write(f"Signed in as: **{db_user['email']}**")
+    st.write(f"Admin: **{'Yes' if db_user['is_admin'] else 'No'}**")
+    st.write(f"Lifetime access: **{'Yes' if db_user['lifetime_access'] else 'No'}**")
+    st.write(f"Pro active: **{'Yes' if db_user['pro_active'] else 'No'}**")
+    logout_button()
+
+if not is_pro:
+    st.markdown(
+        f"""
+        <section class="hero-shell"><div class="hero-inner">
+            <div class="eyebrow">DeFi yield workstation • {APP_VERSION}</div>
+            <div class="hero-title">{APP_NAME} Pro</div>
+            <div class="hero-subtitle">{APP_TAGLINE}. Your original app is intact, but this account needs Pro access before the terminal opens.</div>
+        </div></section>
+        """,
+        unsafe_allow_html=True,
+    )
+    st.warning("This account does not have FuruFlow Pro access yet.")
+    render_checkout_section(current_email=db_user["email"])
+    st.divider()
+    st.subheader("Restore access")
+    st.write("If you already paid, sign in with the same email used for purchase.")
+    if st.button("Demo: Restore / Unlock Pro for this account"):
+        grant_lifetime_access(db_user["email"])
+        st.session_state["access_granted"] = True
+        st.success("Pro restored for this account.")
+        st.rerun()
+    st.stop()
+
 raw_df = fetch_pools()
 df = enrich(raw_df)
 
@@ -864,22 +938,15 @@ with st.sidebar:
     st.markdown("<div class='note'>Risk score is heuristic. It blends protocol age, TVL stability, audit confidence, reward dependence, and inferred pool volatility. Signals come from recent chart movement when chart data is available.</div>", unsafe_allow_html=True)
 
     st.markdown("---")
-    st.markdown("### 🔐 FuruFlow Pro")
-    pro_access_code = st.text_input("Enter Pro Access Code", type="password")
-    is_pro = pro_access_code == PRO_PASSWORD
-    if is_pro:
-        st.success("Pro Mode Enabled")
-    else:
-        st.info("Upgrade to unlock Signals, Arbitrage, Strategy Builder, and CSV export.")
-    st.markdown("### 🚀 Upgrade to Pro")
+    st.markdown("### ✅ FuruFlow Pro")
+    st.success("Pro access active for this account.")
     st.markdown("""Whale inflow detection  
 Arbitrage scanner  
 Yield trend AI  
 Strategy builder  
 CSV export  
 """)
-    st.link_button("Upgrade Now", FURUFLOW_STRIPE_LINK, use_container_width=True)
-    st.markdown("<div class='note'>Tip: set FURUFLOW_PRO_PASSWORD and FURUFLOW_STRIPE_LINK in Streamlit secrets or environment variables before sharing the app publicly.</div>", unsafe_allow_html=True)
+    st.markdown("<div class='note'>This account-based entitlement replaces the old shared access-code workflow.</div>", unsafe_allow_html=True)
 
 filtered = df.copy()
 if selected_chains:

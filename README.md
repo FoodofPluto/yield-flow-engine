@@ -1,3 +1,5 @@
+Merged build note: this package restores the original FuruFlow terminal UI and keeps the account-based Pro access system.
+
 # FuruFlow Pro Production Starter
 
 This zip gives you a **production-style starter** for the exact behavior you asked for:
