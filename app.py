@@ -20,34 +20,30 @@ st.caption("Production-style starter for one-time Pro unlock + persistent access
 
 with st.sidebar:
     st.header("Account")
-    login_form()
 
 user = get_current_user()
 
 if not user:
+    with st.sidebar:
+        login_form()
     st.info("Sign in with your email to continue.")
     st.stop()
 
 email = user["email"].lower()
-db_user = get_user_by_email(email)
-if not db_user:
-    db_user = upsert_user(email=email, is_admin=(email in ADMIN_EMAILS))
+# Always upsert after login so an existing user can still be promoted to admin
+db_user = upsert_user(email=email, is_admin=(email in ADMIN_EMAILS))
 
 # Refresh after possible admin update
 db_user = get_user_by_email(email)
-
 access = can_access_pro(db_user)
+st.session_state["access_granted"] = access
 
 with st.sidebar:
-    st.divider()
     st.write(f"Signed in as: **{db_user['email']}**")
     st.write(f"Admin: **{'Yes' if db_user['is_admin'] else 'No'}**")
     st.write(f"Lifetime access: **{'Yes' if db_user['lifetime_access'] else 'No'}**")
     st.write(f"Pro active: **{'Yes' if db_user['pro_active'] else 'No'}**")
     logout_button()
-
-# Session cache so users do not repeatedly hit the paywall during navigation
-st.session_state["access_granted"] = access
 
 if st.session_state["access_granted"]:
     st.success("Welcome to FuruFlow Pro.")
