@@ -102,7 +102,6 @@ def set_pro_active(email: str, value: bool = True):
         )
         conn.commit()
 
-
 def search_users(query: str = "", limit: int = 50):
     query = (query or "").strip().lower()
     with closing(get_conn()) as conn:
