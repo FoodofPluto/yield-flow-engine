@@ -132,3 +132,8 @@ Wire this into your existing FuruFlow / Yield Flow Streamlit app by:
 
 - Paywall offer appears on the logged-out landing page.
 - Admins can grant or remove lifetime access, Pro access, and admin status for accounts.
+
+
+## Remove demo free unlocks
+
+The demo self-unlock buttons were removed so non-Pro users can no longer grant themselves access.

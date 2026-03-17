@@ -15,7 +15,7 @@ from streamlit.components.v1 import html as st_html
 
 from auth import get_current_user, login_form, logout_button
 from db import get_user_by_email, init_db, search_users, set_admin, set_lifetime_access, set_pro_active, upsert_user
-from entitlements import can_access_pro, grant_lifetime_access
+from entitlements import can_access_pro
 from stripe_stub import render_checkout_section
 
 APP_NAME = "FuruFlow"
@@ -990,11 +990,6 @@ if not is_pro:
     st.divider()
     st.subheader("Restore access")
     st.write("If you already paid, sign in with the same email used for purchase.")
-    if st.button("Demo: Restore / Unlock Pro for this account"):
-        grant_lifetime_access(db_user["email"])
-        st.session_state["access_granted"] = True
-        st.success("Pro restored for this account.")
-        st.rerun()
     st.stop()
 
 raw_df = fetch_pools()
