@@ -1,40 +1,126 @@
-# FuruFlow v8
+# FuruFlow Pro Production Starter
 
-FuruFlow is a DeFi yield intelligence dashboard built in Streamlit.
+This zip gives you a **production-style starter** for the exact behavior you asked for:
 
-## What's in v8
+- **You** can access FuruFlow Pro without paying yourself
+- A real buyer should **purchase once**
+- After purchase, the buyer should be able to **log in and open Pro directly**
+- The app should **not force repeated paywall loops**
 
-- upgraded from the prior v7 productization pass to a fuller multi-page interface
-- fixed low-contrast dropdown and title-box text for Chains, Protocols, Strategy Type, Signal Filter, Sort by, and Choose a Pool
-- fixed Watch and Open Pool button readability
-- fixed pool-card badge and metric readability
-- scanner cards with cleaner visual hierarchy
-- richer Plotly charting
-- signal engine for APY spikes, farm rotations, emerging pools, and whale inflows
-- heuristic risk scoring using protocol age, TVL stability, audit confidence, and pool volatility
-- same-asset, cross-chain arbitrage surface
-- pool explorer page with chart + score breakdown
-- protocol dashboard page
-- strategy builder page
-- persistent watchlist saved to `watchlist.json`
+## What is inside
 
-## Run locally
+- `app.py` — Streamlit app with login, paywall gate, session cache, and Pro area
+- `auth.py` — simple email sign-in session helper
+- `db.py` — SQLite user database
+- `entitlements.py` — access rules
+- `stripe_stub.py` — demo one-time unlock flow
+- `stripe_webhook_example.py` — example backend webhook handler for real Stripe fulfillment
+- `.env.example` — environment variable template
+- `requirements.txt` — Python packages
+
+## Core architecture
+
+The app uses this access logic:
+
+1. User signs in with email
+2. App checks the database for that user
+3. Access is granted if any of the following are true:
+   - user is admin
+   - `DEV_MODE=true`
+   - `lifetime_access=True`
+   - `pro_active=True`
+
+That means your real customers should **not** get stuck re-buying. Their entitlement lives in the database, not only in a temporary session.
+
+## Quick start
+
+Create and activate a virtual environment if you want, then install:
 
 ```bash
 pip install -r requirements.txt
+```
+
+Run the app:
+
+```bash
 streamlit run app.py
 ```
 
-## Deploy
+## Give yourself permanent access
 
-Push the updated repo to the branch connected to Streamlit Cloud. The app should auto-redeploy.
+Open `.env.example`, copy it to `.env`, then set:
 
+```env
+ADMIN_EMAILS=yourrealemail@example.com
+```
 
-## Monetization quick start
+You can also set the variable directly in your environment.
 
-Set these environment variables in Streamlit Cloud or your local shell before launch:
+## How this avoids repeat paywall friction
 
-- `FURUFLOW_PRO_PASSWORD` — the current Pro access code you will share with paid users
-- `FURUFLOW_STRIPE_LINK` — your Stripe Payment Link for FuruFlow Pro
+This starter does **not** rely on “did the checkout just happen right now?”
 
-The app now keeps the Scanner free while gating Signals, Arbitrage, Strategy Builder, and CSV export behind Pro. Supported protocols can also route `Open Pool` through affiliate-style links when configured in `AFFILIATE_LINKS`.
+Instead it stores access in the database.  
+That is the key difference.
+
+When someone pays, your production flow should:
+
+- complete Stripe Checkout
+- receive a Stripe webhook on your backend
+- locate the user by email or Stripe customer ID
+- set `lifetime_access = True`
+
+After that, every future login opens Pro directly.
+
+## Recommended production flow for FuruFlow
+
+### For you
+- admin email bypass
+
+### For customers
+- sign in once
+- buy once
+- entitlement saved permanently
+- return later and open Pro via login
+
+### For the app
+- check access once on load
+- store the result in session state
+- let Pro users move around freely
+
+## Important note
+
+This zip includes a **demo checkout button** for testing.  
+It does **not** include a live hosted backend or real Stripe secret handling in the Streamlit app.
+
+That is deliberate.
+
+For production:
+- keep Stripe secrets on the backend
+- use `stripe_webhook_example.py` as the starting pattern
+- do not trust the frontend alone for granting paid access
+
+## Best next integration step
+
+Wire this into your existing FuruFlow / Yield Flow Streamlit app by:
+
+1. moving your current dashboard into the `if access_granted:` area
+2. replacing the demo checkout UI with a real Stripe Checkout button
+3. deploying the webhook separately
+4. persisting users in a real hosted database later if needed
+
+## Minimal implementation checklist
+
+- [ ] Set your admin email
+- [ ] Test login
+- [ ] Test demo purchase
+- [ ] Confirm repeat login opens Pro
+- [ ] Replace demo purchase with Stripe Checkout
+- [ ] Deploy Stripe webhook
+- [ ] Mark paid users in DB automatically
+
+## Files to edit first
+
+- `app.py`
+- `.env.example`
+- `stripe_webhook_example.py`
