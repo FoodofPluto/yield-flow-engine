@@ -137,3 +137,25 @@ Wire this into your existing FuruFlow / Yield Flow Streamlit app by:
 ## Remove demo free unlocks
 
 The demo self-unlock buttons were removed so non-Pro users can no longer grant themselves access.
+
+
+## Subscription tracking notes
+
+Your current Stripe buy link is a monthly Pro offer, so the production webhook should update `pro_active` based on Stripe subscription events.
+
+This build now includes:
+
+- `stripe_subscription_id` and `subscription_status` fields in the user database
+- a webhook example that handles `checkout.session.completed`
+- subscription lifecycle syncing for `customer.subscription.created`, `updated`, and `deleted`
+- automatic activation/deactivation of Pro based on the Stripe subscription state
+
+### Recommended deployment split
+
+- **Frontend:** Streamlit app on Community Cloud
+- **Backend webhook:** a small Flask app on Render, Railway, Fly.io, or another backend host
+- **Secrets:** set `STRIPE_SECRET_KEY` and `STRIPE_WEBHOOK_SECRET` on the backend only
+
+### Important limitation
+
+The current sign-in flow is lightweight email-based app access, not a full password or magic-link auth system. It is fine for an MVP gate, but it is not the same as hardened authentication.
