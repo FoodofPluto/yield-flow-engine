@@ -1,3 +1,4 @@
+import uuid
 import streamlit as st
 
 def login_form():
@@ -17,6 +18,8 @@ def login_form():
             st.error("Enter a valid email.")
         else:
             st.session_state["auth_email"] = email
+            st.session_state["auth_session_id"] = uuid.uuid4().hex
+            st.session_state["auth_session_claimed"] = False
             st.rerun()
 
 def get_current_user():
@@ -28,5 +31,7 @@ def get_current_user():
 def logout_button():
     if st.button("Log out", key="logout_button"):
         st.session_state.pop("auth_email", None)
+        st.session_state.pop("auth_session_id", None)
+        st.session_state.pop("auth_session_claimed", None)
         st.session_state.pop("access_granted", None)
         st.rerun()

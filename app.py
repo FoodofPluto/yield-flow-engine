@@ -5,6 +5,7 @@ import os
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 from typing import Any
+from urllib.parse import quote
 
 import pandas as pd
 import plotly.express as px
@@ -14,7 +15,7 @@ import streamlit as st
 from streamlit.components.v1 import html as st_html
 
 from auth import get_current_user, login_form, logout_button
-from db import get_user_by_email, init_db, search_users, set_admin, set_lifetime_access, set_pro_active, upsert_user
+from db import claim_session, clear_session, get_user_by_email, init_db, search_users, set_admin, set_lifetime_access, set_pro_active, touch_session, upsert_user
 from entitlements import can_access_pro
 from stripe_stub import render_checkout_section
 from history_store import load_history, save_snapshot
@@ -29,7 +30,7 @@ PRO_SORT_OPTIONS = ["FuruFlow rank", "Lowest risk", "Highest 24h volume", "Large
 TIMEOUT = 18
 SIGNAL_SAMPLE = 16
 WATCHLIST_FILE = Path(__file__).with_name("watchlist.json")
-FURUFLOW_STRIPE_LINK = "https://buy.stripe.com/bJefZgcgmbYecju4ztd3i00"
+FURUFLOW_STRIPE_LINK = os.getenv("FURUFLOW_STRIPE_LINK", "https://buy.stripe.com/bJefZgcgmbYecju4ztd3i00")
 AFFILIATE_LINKS = {
     "aave": "https://app.aave.com/?ref=furuflow",
     "aave-v3": "https://app.aave.com/?ref=furuflow",
@@ -625,6 +626,54 @@ def sample_pool_data(errors: list[str]) -> pd.DataFrame:
     return demo
 
 
+def get_checkout_link(current_email: str = "") -> str:
+    base = FURUFLOW_STRIPE_LINK.strip()
+    if not current_email:
+        return base
+    sep = "&" if "?" in base else "?"
+    safe_email = quote(current_email)
+    safe_ref = quote(f"furuflow:{current_email}")
+    return f"{base}{sep}prefilled_email={safe_email}&client_reference_id={safe_ref}"
+
+
+def render_link_table(source_df: pd.DataFrame, title: str, description: str, *, limit: int = 8, sort_cols: list[str] | None = None) -> None:
+    st.markdown("<div class='panel'>", unsafe_allow_html=True)
+    section_header(title, "Pool links", description)
+    if source_df.empty:
+        st.info("No pool links are available for the current filter set.")
+    else:
+        view = source_df.copy()
+        if sort_cols:
+            ascending = [False] * len(sort_cols)
+            view = view.sort_values(sort_cols, ascending=ascending)
+        cols = ["project", "chain", "symbol", "apy", "tvlUsd", "risk_score", "signal", "pool_url"]
+        cols = [c for c in cols if c in view.columns]
+        link_view = view[cols].head(limit).copy()
+        link_view = link_view.rename(columns={
+            "project": "Protocol",
+            "chain": "Chain",
+            "symbol": "Asset",
+            "apy": "APY",
+            "tvlUsd": "TVL (USD)",
+            "risk_score": "Risk",
+            "signal": "Signal",
+            "pool_url": "Open",
+        })
+        st.dataframe(
+            link_view,
+            use_container_width=True,
+            hide_index=True,
+            height=min(120 + 42 * len(link_view), 420),
+            column_config={
+                "APY": st.column_config.NumberColumn(format="%.2f%%"),
+                "TVL (USD)": st.column_config.NumberColumn(format="$%.0f"),
+                "Risk": st.column_config.NumberColumn(format="%.0f"),
+                "Open": st.column_config.LinkColumn("Pool link", display_text="Open"),
+            },
+        )
+    st.markdown("</div>", unsafe_allow_html=True)
+
+
 def format_money(value: float) -> str:
     value = float(value or 0)
     abs_value = abs(value)
@@ -702,9 +751,11 @@ def find_arbitrage_candidates(df: pd.DataFrame) -> pd.DataFrame:
                 "Best chain": top["chain"],
                 "Best protocol": top["project"],
                 "Best APY": float(top["apy"]),
+                "Best link": top["pool_url"],
                 "Lower chain": low["chain"],
                 "Lower protocol": low["project"],
                 "Lower APY": float(low["apy"]),
+                "Lower link": low["pool_url"],
                 "APY difference": diff,
             })
     return pd.DataFrame(rows).sort_values("APY difference", ascending=False).head(30) if rows else pd.DataFrame()
@@ -778,7 +829,7 @@ def require_pro(feature_name: str, preview_df: pd.DataFrame | None = None, previ
     else:
         st.info("Keep browsing in free mode, or sign in when you're ready to unlock Pro.")
     render_checkout_section(current_email=st.session_state.get("auth_email", ""))
-    st.link_button("Upgrade to FuruFlow Pro — $20/month", FURUFLOW_STRIPE_LINK)
+    st.link_button("Upgrade to FuruFlow Pro — $20/month", get_checkout_link(st.session_state.get("auth_email", "")))
     st.markdown("</div>", unsafe_allow_html=True)
     st.stop()
 
@@ -882,8 +933,8 @@ def render_opportunity_card(row: pd.Series, idx: int, watched: bool) -> None:
         .ff-opp-sub {{ color:#aab8d4; font-size:0.85rem; margin-top:0.25rem; }}
         .ff-protocol-dot {{ min-width:34px; height:34px; border-radius:999px; display:flex; align-items:center; justify-content:center; background: linear-gradient(135deg, #7ce2ff, #66d5ff); color:#072030; font-weight:800; }}
         .ff-watch-pill {{ display:inline-flex; margin-top:10px; background:rgba(124,226,255,0.14); color:#7ce2ff; border:1px solid rgba(124,226,255,0.28); padding:5px 9px; border-radius:999px; font-size:0.78rem; font-weight:700; }}
-        .ff-badge-row {{ display:flex; flex-wrap:wrap; gap:7px; margin-top:12px; margin-bottom:12px; }}
-        .ff-badge {{ display:inline-flex; align-items:center; background:#eef4ff; color:#17283d; border:1px solid #d7e4fb; border-radius:999px; padding:4px 9px; font-size:0.75rem; font-weight:700; }}
+        .ff-badge-row {{ display:flex; flex-wrap:wrap; gap:7px; margin-top:12px; margin-bottom:12px; align-items:flex-start; }}
+        .ff-badge {{ display:inline-flex; align-items:center; background:#eef4ff; color:#17283d; border:1px solid #d7e4fb; border-radius:999px; padding:4px 9px; font-size:0.75rem; font-weight:700; white-space:normal; overflow-wrap:anywhere; line-height:1.25; max-width:100%; }}
         .ff-metric-strip {{ display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:10px; margin-top:6px; }}
         .ff-metric-box {{ background:#f7faff; border:1px solid #d9e7fb; border-radius:12px; padding:10px 8px; text-align:center; }}
         .ff-metric-mini-label {{ font-size:0.70rem; font-weight:700; color:#617287; text-transform:uppercase; letter-spacing:0.05em; }}
@@ -911,7 +962,7 @@ def render_opportunity_card(row: pd.Series, idx: int, watched: bool) -> None:
         </div>
     </div>
     """
-    st_html(card_html, height=235)
+    st_html(card_html, height=300)
     c1, c2 = st.columns(2)
     with c1:
         st.markdown("<div class='watch-wrap'>", unsafe_allow_html=True)
@@ -923,7 +974,6 @@ def render_opportunity_card(row: pd.Series, idx: int, watched: bool) -> None:
     with c2:
         st.markdown("<div class='pool-wrap'>", unsafe_allow_html=True)
         st.link_button("Open Pool", row["pool_url"], use_container_width=True)
-        st.markdown("<div class='tiny' style='margin-top:0.35rem;'>Affiliate-enabled when FuruFlow has a protocol referral route.</div>", unsafe_allow_html=True)
         st.markdown("</div>", unsafe_allow_html=True)
 
 
@@ -982,6 +1032,28 @@ else:
         db_user = upsert_user(email=email, is_admin=(email in ADMIN_EMAILS))
     elif email in ADMIN_EMAILS and not db_user.get("is_admin", False):
         db_user = upsert_user(email=email, is_admin=True)
+
+    session_id = st.session_state.get("auth_session_id")
+    if not session_id:
+        session_id = os.urandom(16).hex()
+        st.session_state["auth_session_id"] = session_id
+        st.session_state["auth_session_claimed"] = False
+
+    if not st.session_state.get("auth_session_claimed", False):
+        claim_session(email, session_id)
+        st.session_state["auth_session_claimed"] = True
+    else:
+        db_user = get_user_by_email(email)
+        active_session_id = db_user.get("current_session_id") if db_user else None
+        if active_session_id and active_session_id != session_id:
+            st.session_state.pop("auth_email", None)
+            st.session_state.pop("auth_session_id", None)
+            st.session_state.pop("auth_session_claimed", None)
+            st.session_state.pop("access_granted", None)
+            st.warning("This account was opened in another browser session, so this session was signed out to keep FuruFlow to one active login at a time.")
+            st.stop()
+        touch_session(email, session_id)
+
     db_user = get_user_by_email(email)
     is_pro = can_access_pro(db_user)
 
@@ -994,7 +1066,14 @@ with st.sidebar:
         st.write(f"Admin: **{'Yes' if db_user['is_admin'] else 'No'}**")
         st.write(f"Lifetime access: **{'Yes' if db_user['lifetime_access'] else 'No'}**")
         st.write(f"Pro active: **{'Yes' if db_user['pro_active'] else 'No'}**")
-        logout_button()
+        st.caption("Single-active-session lock is on for email-only sign-in.")
+        if st.button("Log out", key="logout_button"):
+            clear_session(db_user["email"], st.session_state.get("auth_session_id"))
+            st.session_state.pop("auth_email", None)
+            st.session_state.pop("auth_session_id", None)
+            st.session_state.pop("auth_session_claimed", None)
+            st.session_state.pop("access_granted", None)
+            st.rerun()
 
 if db_user.get('is_admin'):
     render_admin_access_panel(db_user)
@@ -1084,7 +1163,7 @@ Pool explorer
 Protocol dashboard
 """)
         st.markdown("<div class='note'>Pro unlocks arbitrage signals, whale flows, advanced ranking, deeper scanner access, and future signal-based alerts.</div>", unsafe_allow_html=True)
-        st.link_button("Upgrade to FuruFlow Pro — $20/month", FURUFLOW_STRIPE_LINK)
+        st.link_button("Upgrade to FuruFlow Pro — $20/month", get_checkout_link(st.session_state.get("auth_email", "")))
     st.markdown("<div class='note'>This account-based entitlement replaces the old shared access-code workflow.</div>", unsafe_allow_html=True)
 
 filtered = df.copy()
@@ -1207,7 +1286,7 @@ if page == "Scanner":
             st.download_button("Download current table as CSV", csv, file_name="furuflow_scanner.csv", mime="text/csv")
         else:
             st.markdown("<div class='signal-card'><div class='signal-title'>CSV export is Pro</div><div class='signal-copy'>Keep the scanner open to everyone, then charge for export workflows and deeper decision tools.</div></div>", unsafe_allow_html=True)
-            st.link_button("Unlock CSV export", FURUFLOW_STRIPE_LINK, use_container_width=True)
+            st.link_button("Unlock CSV export", get_checkout_link(st.session_state.get("auth_email", "")), use_container_width=True)
         st.markdown("</div>", unsafe_allow_html=True)
     with right:
         st.markdown("<div class='panel'>", unsafe_allow_html=True)
@@ -1234,9 +1313,9 @@ elif page == "Signals":
     with left:
         st.markdown("<div class='panel'>", unsafe_allow_html=True)
         section_header("Signal engine", "Yield trend AI layer", "Rules-based labels surface APY spikes, farm rotations, emerging pools, and whale inflows from recent pool chart movement.")
-        sig_view = filtered[["project", "chain", "symbol", "signal", "apy_delta_7", "tvl_delta_7_pct", "apy_volatility"]].copy().head(20)
-        sig_view.columns = ["Protocol", "Chain", "Asset", "Signal", "7d APY Δ", "7d TVL Δ %", "APY volatility"]
-        st.dataframe(sig_view, use_container_width=True, hide_index=True, height=560, column_config={"7d APY Δ": st.column_config.NumberColumn(format="%.2f"), "7d TVL Δ %": st.column_config.NumberColumn(format="%.2f"), "APY volatility": st.column_config.NumberColumn(format="%.2f")})
+        sig_view = filtered[["project", "chain", "symbol", "signal", "apy_delta_7", "tvl_delta_7_pct", "apy_volatility", "pool_url"]].copy().head(20)
+        sig_view.columns = ["Protocol", "Chain", "Asset", "Signal", "7d APY Δ", "7d TVL Δ %", "APY volatility", "Open"]
+        st.dataframe(sig_view, use_container_width=True, hide_index=True, height=560, column_config={"7d APY Δ": st.column_config.NumberColumn(format="%.2f"), "7d TVL Δ %": st.column_config.NumberColumn(format="%.2f"), "APY volatility": st.column_config.NumberColumn(format="%.2f"), "Open": st.column_config.LinkColumn("Pool link", display_text="Open")})
         st.markdown("</div>", unsafe_allow_html=True)
     with right:
         st.markdown("<div class='panel'>", unsafe_allow_html=True)
@@ -1256,6 +1335,7 @@ elif page == "Signals":
             fig.update_yaxes(title="Average APY %")
             st.plotly_chart(plotly_theme(fig, 320), use_container_width=True)
         st.markdown("</div>", unsafe_allow_html=True)
+    render_link_table(filtered.sort_values(["apy_delta_7", "tvl_delta_7_pct"], ascending=[False, False]), "Signals", "Open the strongest recent signal movers directly from the signal view.", limit=10)
 
 elif page == "Arbitrage":
     if not is_pro:
@@ -1267,7 +1347,7 @@ elif page == "Arbitrage":
         if arb_df.empty:
             st.info("No meaningful cross-chain APY gaps are visible for the current filters.")
         else:
-            st.dataframe(arb_df, use_container_width=True, hide_index=True, height=560, column_config={"Best APY": st.column_config.NumberColumn(format="%.2f%%"), "Lower APY": st.column_config.NumberColumn(format="%.2f%%"), "APY difference": st.column_config.NumberColumn(format="%.2f")})
+            st.dataframe(arb_df, use_container_width=True, hide_index=True, height=560, column_config={"Best APY": st.column_config.NumberColumn(format="%.2f%%"), "Lower APY": st.column_config.NumberColumn(format="%.2f%%"), "APY difference": st.column_config.NumberColumn(format="%.2f"), "Best link": st.column_config.LinkColumn("Best pool", display_text="Open"), "Lower link": st.column_config.LinkColumn("Lower pool", display_text="Open")})
         st.markdown("</div>", unsafe_allow_html=True)
     with right:
         st.markdown("<div class='panel'>", unsafe_allow_html=True)
@@ -1284,6 +1364,9 @@ elif page == "Arbitrage":
             fig.update_yaxes(title="APY difference")
             st.plotly_chart(plotly_theme(fig, 330), use_container_width=True)
         st.markdown("</div>", unsafe_allow_html=True)
+    if not filtered.empty:
+        arb_focus = filtered.sort_values(["apy", "tvlUsd"], ascending=[False, False]).head(10)
+        render_link_table(arb_focus, "Arbitrage", "Open candidate pools from the arb universe without leaving this screen.", limit=10)
 
 elif page == "Market Map":
     left, right = st.columns([1, 1], gap="large")
@@ -1305,6 +1388,7 @@ elif page == "Market Map":
             sun = px.treemap(chain_df, path=[px.Constant("Chains"), "chain"], values="total_tvl", color="median_apy", hover_data={"pools": True, "median_apy": ':.2f'})
             st.plotly_chart(plotly_theme(sun, 420), use_container_width=True)
         st.markdown("</div>", unsafe_allow_html=True)
+    render_link_table(filtered, "Market map", "Open the pools you are seeing in the current market field view.", limit=10, sort_cols=["rank_score", "apy", "tvlUsd"])
 
 elif page == "Pool Explorer":
     st.markdown("<div class='panel'>", unsafe_allow_html=True)
@@ -1358,12 +1442,13 @@ elif page == "Pool Explorer":
             with c2:
                 st.markdown("<div class='pool-wrap'>", unsafe_allow_html=True)
                 st.link_button("Open Pool", row["pool_url"], use_container_width=True)
-                st.markdown("<div class='tiny' style='margin-top:0.35rem;'>Affiliate-enabled when FuruFlow has a protocol referral route.</div>", unsafe_allow_html=True)
                 st.markdown("</div>", unsafe_allow_html=True)
     st.markdown("</div>", unsafe_allow_html=True)
 
 elif page == "Protocol Dashboard":
     render_protocol_dashboard(filtered)
+    top_protocol_pools = filtered.sort_values(["tvlUsd", "apy"], ascending=[False, False]).head(10)
+    render_link_table(top_protocol_pools, "Protocol dashboard", "Jump from protocol summary into high-TVL pools without switching sections.", limit=10)
 
 elif page == "Strategy Builder":
     if not is_pro:
@@ -1402,9 +1487,9 @@ elif page == "Watchlist":
         if watchlist_df.empty:
             st.info("Your watchlist is empty. Use Watch on any scanner card or pool explorer panel.")
         else:
-            view = watchlist_df[["project", "chain", "symbol", "apy", "tvlUsd", "risk_score", "signal"]].copy()
-            view.columns = ["Protocol", "Chain", "Asset", "APY", "TVL (USD)", "Risk", "Signal"]
-            st.dataframe(view, use_container_width=True, hide_index=True, height=440, column_config={"APY": st.column_config.NumberColumn(format="%.2f%%"), "TVL (USD)": st.column_config.NumberColumn(format="$%.0f")})
+            view = watchlist_df[["project", "chain", "symbol", "apy", "tvlUsd", "risk_score", "signal", "pool_url"]].copy()
+            view.columns = ["Protocol", "Chain", "Asset", "APY", "TVL (USD)", "Risk", "Signal", "Open"]
+            st.dataframe(view, use_container_width=True, hide_index=True, height=440, column_config={"APY": st.column_config.NumberColumn(format="%.2f%%"), "TVL (USD)": st.column_config.NumberColumn(format="$%.0f"), "Open": st.column_config.LinkColumn("Pool link", display_text="Open")})
             st.markdown("<div class='danger-wrap'>", unsafe_allow_html=True)
             if st.button("Clear watchlist", use_container_width=True):
                 set_watchlist([])

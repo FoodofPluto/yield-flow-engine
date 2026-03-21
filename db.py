@@ -23,6 +23,8 @@ def init_db():
                 stripe_subscription_id TEXT,
                 subscription_status TEXT,
                 purchase_source TEXT,
+                current_session_id TEXT,
+                current_session_seen_at TEXT,
                 created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
                 updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
             )
@@ -34,6 +36,8 @@ def init_db():
         migrations = [
             ("stripe_subscription_id", "ALTER TABLE users ADD COLUMN stripe_subscription_id TEXT"),
             ("subscription_status", "ALTER TABLE users ADD COLUMN subscription_status TEXT"),
+            ("current_session_id", "ALTER TABLE users ADD COLUMN current_session_id TEXT"),
+            ("current_session_seen_at", "ALTER TABLE users ADD COLUMN current_session_seen_at TEXT"),
         ]
         for col, sql in migrations:
             if col not in existing_cols:
@@ -48,7 +52,8 @@ def _row_to_dict(row):
     columns = [
         "email", "is_admin", "lifetime_access", "pro_active",
         "stripe_customer_id", "stripe_subscription_id", "subscription_status",
-        "purchase_source", "created_at", "updated_at"
+        "purchase_source", "current_session_id", "current_session_seen_at",
+        "created_at", "updated_at"
     ]
     data = dict(zip(columns, row))
     data["is_admin"] = bool(data["is_admin"])
@@ -63,7 +68,8 @@ def get_user_by_email(email: str):
             """
             SELECT email, is_admin, lifetime_access, pro_active,
                    stripe_customer_id, stripe_subscription_id, subscription_status,
-                   purchase_source, created_at, updated_at
+                   purchase_source, current_session_id, current_session_seen_at,
+                   created_at, updated_at
             FROM users
             WHERE email = ?
             """,
@@ -78,7 +84,8 @@ def get_user_by_stripe_customer_id(customer_id: str):
             """
             SELECT email, is_admin, lifetime_access, pro_active,
                    stripe_customer_id, stripe_subscription_id, subscription_status,
-                   purchase_source, created_at, updated_at
+                   purchase_source, current_session_id, current_session_seen_at,
+                   created_at, updated_at
             FROM users
             WHERE stripe_customer_id = ?
             """,
@@ -93,7 +100,8 @@ def get_user_by_subscription_id(subscription_id: str):
             """
             SELECT email, is_admin, lifetime_access, pro_active,
                    stripe_customer_id, stripe_subscription_id, subscription_status,
-                   purchase_source, created_at, updated_at
+                   purchase_source, current_session_id, current_session_seen_at,
+                   created_at, updated_at
             FROM users
             WHERE stripe_subscription_id = ?
             """,
@@ -224,7 +232,8 @@ def search_users(query: str = "", limit: int = 50):
                 """
                 SELECT email, is_admin, lifetime_access, pro_active,
                        stripe_customer_id, stripe_subscription_id, subscription_status,
-                       purchase_source, created_at, updated_at
+                       purchase_source, current_session_id, current_session_seen_at,
+                       created_at, updated_at
                 FROM users
                 WHERE lower(email) LIKE ?
                 ORDER BY updated_at DESC, created_at DESC
@@ -237,7 +246,8 @@ def search_users(query: str = "", limit: int = 50):
                 """
                 SELECT email, is_admin, lifetime_access, pro_active,
                        stripe_customer_id, stripe_subscription_id, subscription_status,
-                       purchase_source, created_at, updated_at
+                       purchase_source, current_session_id, current_session_seen_at,
+                       created_at, updated_at
                 FROM users
                 ORDER BY updated_at DESC, created_at DESC
                 LIMIT ?
@@ -257,4 +267,61 @@ def set_admin(email: str, value: bool = True):
             """,
             (1 if value else 0, email.lower()),
         )
+        conn.commit()
+
+
+
+def claim_session(email: str, session_id: str):
+    with closing(get_conn()) as conn:
+        conn.execute(
+            """
+            UPDATE users
+            SET current_session_id = ?,
+                current_session_seen_at = CURRENT_TIMESTAMP,
+                updated_at = CURRENT_TIMESTAMP
+            WHERE email = ?
+            """,
+            (session_id, email.lower()),
+        )
+        conn.commit()
+
+
+def touch_session(email: str, session_id: str):
+    with closing(get_conn()) as conn:
+        conn.execute(
+            """
+            UPDATE users
+            SET current_session_seen_at = CURRENT_TIMESTAMP,
+                updated_at = CURRENT_TIMESTAMP
+            WHERE email = ? AND current_session_id = ?
+            """,
+            (email.lower(), session_id),
+        )
+        conn.commit()
+
+
+def clear_session(email: str, session_id: str | None = None):
+    with closing(get_conn()) as conn:
+        if session_id:
+            conn.execute(
+                """
+                UPDATE users
+                SET current_session_id = NULL,
+                    current_session_seen_at = NULL,
+                    updated_at = CURRENT_TIMESTAMP
+                WHERE email = ? AND current_session_id = ?
+                """,
+                (email.lower(), session_id),
+            )
+        else:
+            conn.execute(
+                """
+                UPDATE users
+                SET current_session_id = NULL,
+                    current_session_seen_at = NULL,
+                    updated_at = CURRENT_TIMESTAMP
+                WHERE email = ?
+                """,
+                (email.lower(),),
+            )
         conn.commit()
