@@ -26,6 +26,7 @@ posted_signals.json
 pool_history.json
 signal_history.csv
 x_post_outbox.txt
+signal_task_log.txt
 
 # =========================
 # Test / Temp Files
