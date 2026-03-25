@@ -29,30 +29,6 @@ POOL_LIMIT = 400
 FREE_POOL_LIMIT = 10
 FREE_SORT_OPTIONS = ["Highest APY", "Largest TVL"]
 PRO_SORT_OPTIONS = ["FuruFlow rank", "Lowest risk", "Highest 24h volume", "Largest signal move"]
-PAGE_OPTIONS = [
-    "Home",
-    "Scanner",
-    "Signals",
-    "Market Map",
-    "Pool Explorer",
-    "Watchlist",
-    "Recaps",
-    "Protocol Dashboard",
-    "Strategy Builder",
-    "Arbitrage",
-]
-PAGE_LABELS = {
-    "Home": "🏠 Home",
-    "Scanner": "🔎 Scanner",
-    "Signals": "📡 Signals",
-    "Market Map": "🗺️ Market Map",
-    "Pool Explorer": "🧪 Pool Explorer",
-    "Watchlist": "⭐ Watchlist",
-    "Recaps": "📝 Recaps",
-    "Protocol Dashboard": "🏛️ Protocol Dashboard",
-    "Strategy Builder": "🧱 Strategy Builder",
-    "Arbitrage": "⚡ Arbitrage",
-}
 TIMEOUT = 18
 SIGNAL_SAMPLE = 16
 WATCHLIST_FILE = Path(__file__).with_name("watchlist.json")
@@ -191,75 +167,6 @@ def inject_css() -> None:
             }
             [data-testid="stSidebar"] * { color: var(--text) !important; }
             [data-testid="stSidebar"] .stMarkdown p { color: var(--muted) !important; }
-            [data-testid="stSidebar"] [data-testid="stExpander"] {
-                background: linear-gradient(180deg, rgba(255,255,255,0.035), rgba(255,255,255,0.02));
-                border: 1px solid rgba(255,255,255,0.07);
-                border-radius: 18px;
-                overflow: hidden;
-                margin-bottom: 0.75rem;
-                box-shadow: inset 0 1px 0 rgba(255,255,255,0.025);
-            }
-            [data-testid="stSidebar"] [data-testid="stExpander"] details {
-                background: transparent;
-            }
-            [data-testid="stSidebar"] [data-testid="stExpander"] summary {
-                padding-top: 0.2rem;
-                padding-bottom: 0.2rem;
-            }
-            [data-testid="stSidebar"] .sidebar-group-title {
-                font-size: 0.73rem;
-                font-weight: 900;
-                letter-spacing: 0.11em;
-                text-transform: uppercase;
-                color: var(--accent) !important;
-                margin-bottom: 0.28rem;
-            }
-            [data-testid="stSidebar"] .sidebar-group-copy {
-                font-size: 0.8rem;
-                line-height: 1.45;
-                color: var(--muted) !important;
-                margin-bottom: 0.45rem;
-            }
-            [data-testid="stSidebar"] .sidebar-mini-note {
-                font-size: 0.74rem;
-                line-height: 1.45;
-                color: var(--muted) !important;
-                margin-top: 0.38rem;
-            }
-            [data-testid="stSidebar"] .sidebar-plan {
-                border: 1px solid rgba(255,255,255,0.07);
-                border-radius: 18px;
-                padding: 0.9rem 0.95rem;
-                background: linear-gradient(180deg, rgba(255,255,255,0.04), rgba(255,255,255,0.02));
-                margin-top: 0.25rem;
-            }
-            [data-testid="stSidebar"] .stSelectbox > label,
-            [data-testid="stSidebar"] .stMultiSelect > label,
-            [data-testid="stSidebar"] .stSlider > label,
-            [data-testid="stSidebar"] .stToggle > label {
-                color: #f2f7ff !important;
-                font-weight: 800 !important;
-                font-size: 0.92rem !important;
-            }
-            [data-testid="stSidebar"] .stSlider p,
-            [data-testid="stSidebar"] .stSlider span,
-            [data-testid="stSidebar"] .stSlider div[data-testid="stTickBarMin"],
-            [data-testid="stSidebar"] .stSlider div[data-testid="stTickBarMax"] {
-                color: #d9e6fb !important;
-                opacity: 1 !important;
-            }
-            [data-testid="stSidebar"] .stSlider [data-baseweb="slider"] {
-                padding-top: 0.35rem;
-                padding-bottom: 0.15rem;
-            }
-            [data-testid="stSidebar"] .stMultiSelect [data-baseweb="tag"] {
-                border-radius: 999px !important;
-                padding-left: 0.25rem !important;
-                padding-right: 0.25rem !important;
-            }
-            [data-testid="stSidebar"] .stRadio > div {
-                gap: 0.35rem;
-            }
             [data-testid="stDataFrame"] { border: 1px solid var(--border); border-radius: 18px; overflow: hidden; }
 
             /* Fix all title boxes / dropdowns / tags */
@@ -789,23 +696,6 @@ def section_header(kicker: str, title: str, copy: str) -> None:
     st.markdown(f"<div class='section-kicker'>{kicker}</div><div class='section-title'>{title}</div><div class='section-copy'>{copy}</div>", unsafe_allow_html=True)
 
 
-def sidebar_group(title: str, copy: str) -> None:
-    st.markdown(f"<div class='sidebar-group-title'>{title}</div><div class='sidebar-group-copy'>{copy}</div>", unsafe_allow_html=True)
-
-
-def page_selectbox(default_page: str = "Home") -> str:
-    label_to_page = {PAGE_LABELS[p]: p for p in PAGE_OPTIONS}
-    labels = [PAGE_LABELS[p] for p in PAGE_OPTIONS]
-    default_label = PAGE_LABELS.get(default_page, labels[0])
-    selected_label = st.selectbox(
-        "Workspace",
-        labels,
-        index=labels.index(default_label),
-        key="sidebar_page_select",
-    )
-    return label_to_page[selected_label]
-
-
 def compact_table(df: pd.DataFrame) -> pd.DataFrame:
     table = df[[
         "project", "chain", "symbol", "strategy_type", "apy", "apyBase", "apyReward", "tvlUsd", "risk_score", "signal", "pool_url"
@@ -919,7 +809,24 @@ def strategy_builder_filter(df: pd.DataFrame, stable_only: bool, min_apy: float,
 def require_pro(feature_name: str, preview_df: pd.DataFrame | None = None, preview_note: str | None = None) -> None:
     st.markdown("<div class='panel'>", unsafe_allow_html=True)
     section_header("FuruFlow Pro", f"Unlock {feature_name}", "The public product stays useful on purpose. Pro adds the signal layer, ranked workflows, and faster decision support.")
-    st.warning(f"🔒 {feature_name} is part of FuruFlow Pro.")
+    st.markdown(
+        """
+<div class='signal-card'>
+  <div class='signal-title'>🚫 You're seeing limited signal data</div>
+  <div class='signal-copy'>
+    Free users can scan pools.<br><br>
+    <b>Pro users get:</b><br>
+    • Full signal rankings<br>
+    • Real APY + TVL movement detection<br>
+    • Early-stage opportunity identification<br>
+    • Whale-flow and farm-rotation context<br>
+    • Full dataset access instead of the public top slice
+  </div>
+</div>
+        """,
+        unsafe_allow_html=True,
+    )
+    st.warning(f"⚡ Most profitable {feature_name.lower()} move fast. Pro users see the full board first.")
     if preview_note:
         st.caption(preview_note)
     if preview_df is not None and not preview_df.empty:
@@ -1326,6 +1233,12 @@ for col, default in [("signal", "Steady"), ("apy_delta_7", 0.0), ("tvl_delta_7_p
         df[col] = default
     df[col] = df[col].fillna(default)
 
+df["signal_strength"] = (
+    df["apy_delta_7"].abs() * 0.6
+    + df["tvl_delta_7_pct"].abs() * 0.3
+    + df["apy_volatility"] * 0.1
+).round(1)
+
 watchlist_df = df[df["pool"].isin(st.session_state.watchlist)].copy()
 save_snapshot(df)
 
@@ -1354,42 +1267,33 @@ else:
 with st.sidebar:
     st.markdown(f"## {APP_NAME}")
     st.markdown(APP_TAGLINE)
+    st.markdown("### Navigate")
+    page = st.radio(
+        "Navigation",
+        ["Home", "Scanner", "Signals", "Market Map", "Pool Explorer", "Watchlist", "Recaps", "Protocol Dashboard", "Strategy Builder", "Arbitrage"],
+        index=0,
+    )
 
     chains = sorted(df["chain"].dropna().unique().tolist())
     projects = sorted(df["project"].dropna().unique().tolist())
     strategies = sorted(df["strategy_type"].dropna().unique().tolist())
     signals = sorted(df["signal"].dropna().unique().tolist())
 
-    default_chains = chains[: min(len(chains), 8)] if chains else []
+    default_chains = chains[: min(len(chains), 10)] if chains else []
+    selected_chains = st.multiselect("Chains", chains, default=default_chains)
+    selected_projects = st.multiselect("Protocols", projects)
+    selected_strategies = st.multiselect("Strategy Type", strategies)
+    selected_signals = st.multiselect("Signal Filter", signals)
+    stable_only = st.toggle("Stablecoin pools only", value=False)
+    min_tvl = st.slider("Minimum TVL", min_value=0, max_value=500_000_000, value=5_000_000, step=1_000_000)
+    max_risk = st.slider("Maximum risk score", min_value=1, max_value=100, value=70)
+    min_apy = st.slider("Minimum APY", min_value=0.0, max_value=250.0, value=0.0, step=0.5)
+    sort_options = FREE_SORT_OPTIONS + PRO_SORT_OPTIONS if is_pro else FREE_SORT_OPTIONS
+    sort_by = st.selectbox("Sort by", sort_options, index=0)
+    st.markdown("<div class='note'>Risk score is heuristic. It blends protocol age, TVL stability, audit confidence, reward dependence, and inferred pool volatility. Signals come from recent chart movement when chart data is available.</div>", unsafe_allow_html=True)
 
-    with st.expander("🧭 Navigation", expanded=True):
-        sidebar_group("Workspace", "All product pages are still here, but now they live in a cleaner dropdown instead of one long stack.")
-        page = page_selectbox(st.session_state.get("current_page", "Home"))
-        st.session_state["current_page"] = page
-        st.markdown("<div class='sidebar-mini-note'>Tip: Home is the quickest overview, Scanner is best for discovery, and Pool Explorer is best for single-pool inspection.</div>", unsafe_allow_html=True)
-
-    with st.expander("🧰 Market Filters", expanded=True):
-        sidebar_group("Universe", "Choose the chains and market slices you want in view.")
-        selected_chains = st.multiselect("Chains", chains, default=default_chains)
-        selected_projects = st.multiselect("Protocols", projects, placeholder="Choose protocols")
-        selected_strategies = st.multiselect("Strategy Type", strategies, placeholder="Choose strategy types")
-        selected_signals = st.multiselect("Signal Filter", signals, placeholder="Choose signals")
-        stable_only = st.toggle("Stablecoin pools only", value=False)
-
-    with st.expander("🎚️ Risk & Yield", expanded=True):
-        sidebar_group("Thresholds", "Tighten the opportunity set with TVL, APY, and risk controls.")
-        min_tvl = st.slider("Minimum TVL", min_value=0, max_value=500_000_000, value=5_000_000, step=1_000_000)
-        max_risk = st.slider("Maximum risk score", min_value=1, max_value=100, value=70)
-        min_apy = st.slider("Minimum APY", min_value=0.0, max_value=250.0, value=0.0, step=0.5)
-        st.markdown("<div class='sidebar-mini-note'>Risk score is heuristic. It blends protocol age, TVL stability, audit confidence, reward dependence, and inferred pool volatility. Signals come from recent chart movement when chart data is available.</div>", unsafe_allow_html=True)
-
-    with st.expander("📊 Sorting", expanded=False):
-        sidebar_group("Ranking", "Change how results are ordered without changing the underlying filter set.")
-        sort_options = FREE_SORT_OPTIONS + PRO_SORT_OPTIONS if is_pro else FREE_SORT_OPTIONS
-        sort_by = st.selectbox("Sort by", sort_options, index=0)
-
-    st.markdown("<div class='sidebar-plan'>", unsafe_allow_html=True)
-    sidebar_group("Plan overview", "Free mode stays useful on purpose. Pro adds the intelligence layer and deeper workflows.")
+    st.markdown("---")
+    st.markdown("### Plan overview")
     if is_pro:
         st.success("Pro is active for this account.")
         st.markdown("""- Full signal engine
@@ -1410,8 +1314,7 @@ with st.sidebar:
 - Stronger recap workflows and future alerts
 """)
         st.link_button("Upgrade to FuruFlow Pro — $20/month", get_checkout_link(st.session_state.get("auth_email", "")))
-    st.markdown("<div class='sidebar-mini-note'>Use Home for the fastest read on the market, Signals for ranked conviction, and Recaps for the memory layer.</div>", unsafe_allow_html=True)
-    st.markdown("</div>", unsafe_allow_html=True)
+    st.markdown("<div class='note'>Use Home for the fastest read on the market, Signals for ranked conviction, and Recaps for the memory layer.</div>", unsafe_allow_html=True)
 
 filtered = df.copy()
 if selected_chains:
@@ -1501,21 +1404,54 @@ elif page == "Scanner":
         st.markdown("</div>", unsafe_allow_html=True)
 
 elif page == "Signals":
+    st.markdown(
+        """
+        <section class="hero-shell"><div class="hero-inner">
+            <div class="eyebrow">FuruFlow Intelligence</div>
+            <div class="hero-title">Signals Engine</div>
+            <div class="hero-subtitle">Ranked conviction across DeFi. Detect APY shifts, capital flows, and emerging opportunities before they get crowded.</div>
+        </div></section>
+        """,
+        unsafe_allow_html=True,
+    )
     st.markdown("<div class='panel'>", unsafe_allow_html=True)
     section_header("Signals", "Ranked conviction with context", "This is the flagship intelligence view: signal labels, APY and TVL change, volatility context, and direct pool access for the strongest movers.")
     st.markdown("<div class='note'>Use signals to separate raw APY from actual setup quality. Rising APY with stable or improving TVL is usually more interesting than isolated spikes.</div>", unsafe_allow_html=True)
+    metric_source = full_filtered if not full_filtered.empty else filtered
+    metric_cols = st.columns(3)
+    with metric_cols[0]:
+        stat_card("Active signals", f"{len(metric_source):,}", "Pools currently visible in the signal universe")
+    with metric_cols[1]:
+        high_strength = int((metric_source["signal_strength"] >= 12).sum()) if not metric_source.empty else 0
+        stat_card("High-strength setups", f"{high_strength:,}", "Signals with stronger combined movement and volatility")
+    with metric_cols[2]:
+        avg_strength = metric_source["signal_strength"].mean() if not metric_source.empty else 0.0
+        stat_card("Avg signal strength", f"{avg_strength:,.1f}", "A quick pulse on overall opportunity intensity")
     st.markdown("</div>", unsafe_allow_html=True)
+
+    top_signal_source = full_filtered.sort_values(["signal_strength", "apy_delta_7", "tvl_delta_7_pct"], ascending=[False, False, False]).head(3)
+    if not top_signal_source.empty:
+        st.markdown("<div class='panel'>", unsafe_allow_html=True)
+        section_header("Top signals right now", "The fastest shortlist", "These are the strongest visible setups by combined signal strength, APY movement, and TVL follow-through.")
+        cols = st.columns(3, gap="medium")
+        for idx, (_, row) in enumerate(top_signal_source.iterrows()):
+            with cols[idx]:
+                render_opportunity_card(row, 700 + idx, row["pool"] in st.session_state.watchlist)
+                st.caption(f"Signal strength: {row['signal_strength']:.1f} • 7d APY Δ: {row['apy_delta_7']:.2f} • 7d TVL Δ: {row['tvl_delta_7_pct']:.2f}%")
+        st.markdown("</div>", unsafe_allow_html=True)
+
     if not is_pro:
-        preview = filtered[["project", "chain", "symbol", "signal", "apy_delta_7", "tvl_delta_7_pct"]].copy().head(8)
-        preview.columns = ["Protocol", "Chain", "Asset", "Signal", "7d APY Δ", "7d TVL Δ %"]
-        require_pro("Signals", preview_df=preview, preview_note="Free users can scan pools, but the signal engine is reserved for Pro.")
+        preview = full_filtered[["project", "chain", "symbol", "signal", "signal_strength", "apy_delta_7", "tvl_delta_7_pct"]].copy().head(5)
+        preview.columns = ["Protocol", "Chain", "Asset", "Signal", "Strength", "7d APY Δ", "7d TVL Δ %"]
+        require_pro("Signals", preview_df=preview, preview_note="Free users can scan pools, but the full signal engine is reserved for Pro.")
+
     left, right = st.columns([1.2, 1], gap="large")
     with left:
         st.markdown("<div class='panel'>", unsafe_allow_html=True)
         section_header("Signal engine", "Yield trend AI layer", "Rules-based labels surface APY spikes, farm rotations, emerging pools, and whale inflows from recent pool chart movement.")
-        sig_view = filtered[["project", "chain", "symbol", "signal", "apy_delta_7", "tvl_delta_7_pct", "apy_volatility", "pool_url"]].copy().head(20)
-        sig_view.columns = ["Protocol", "Chain", "Asset", "Signal", "7d APY Δ", "7d TVL Δ %", "APY volatility", "Open"]
-        st.dataframe(sig_view, use_container_width=True, hide_index=True, height=560, column_config={"7d APY Δ": st.column_config.NumberColumn(format="%.2f"), "7d TVL Δ %": st.column_config.NumberColumn(format="%.2f"), "APY volatility": st.column_config.NumberColumn(format="%.2f"), "Open": st.column_config.LinkColumn("Pool link", display_text="Open")})
+        sig_view = filtered[["project", "chain", "symbol", "signal", "signal_strength", "apy_delta_7", "tvl_delta_7_pct", "apy_volatility", "pool_url"]].copy().head(20)
+        sig_view.columns = ["Protocol", "Chain", "Asset", "Signal", "Strength", "7d APY Δ", "7d TVL Δ %", "APY volatility", "Open"]
+        st.dataframe(sig_view, use_container_width=True, hide_index=True, height=560, column_config={"Strength": st.column_config.NumberColumn(format="%.1f"), "7d APY Δ": st.column_config.NumberColumn(format="%.2f"), "7d TVL Δ %": st.column_config.NumberColumn(format="%.2f"), "APY volatility": st.column_config.NumberColumn(format="%.2f"), "Open": st.column_config.LinkColumn("Pool link", display_text="Open")})
         st.markdown("</div>", unsafe_allow_html=True)
     with right:
         st.markdown("<div class='panel'>", unsafe_allow_html=True)
@@ -1529,13 +1465,13 @@ elif page == "Signals":
         for title, copy in guides:
             st.markdown(f"<div class='signal-card'><div class='signal-title'>{title}</div><div class='signal-copy'>{copy}</div></div>", unsafe_allow_html=True)
         if not filtered.empty:
-            sig_plot_df = filtered.groupby("signal", as_index=False).agg(avg_apy=("apy", "mean"), avg_tvl=("tvlUsd", "mean"))
-            fig = px.scatter(sig_plot_df, x="avg_tvl", y="avg_apy", size="avg_tvl", color="signal", hover_name="signal", size_max=42, log_x=True)
+            sig_plot_df = filtered.groupby("signal", as_index=False).agg(avg_apy=("apy", "mean"), avg_tvl=("tvlUsd", "mean"), avg_strength=("signal_strength", "mean"))
+            fig = px.scatter(sig_plot_df, x="avg_tvl", y="avg_apy", size="avg_strength", color="signal", hover_name="signal", size_max=42, log_x=True)
             fig.update_xaxes(title="Average TVL")
             fig.update_yaxes(title="Average APY %")
             st.plotly_chart(plotly_theme(fig, 320), use_container_width=True)
         st.markdown("</div>", unsafe_allow_html=True)
-    render_link_table(filtered.sort_values(["apy_delta_7", "tvl_delta_7_pct"], ascending=[False, False]), "Signals", "Open the strongest recent signal movers directly from the signal view.", limit=10)
+    render_link_table(filtered.sort_values(["signal_strength", "apy_delta_7", "tvl_delta_7_pct"], ascending=[False, False, False]), "Signals", "Open the strongest recent signal movers directly from the signal view.", limit=10)
 
 elif page == "Arbitrage":
     if not is_pro:
