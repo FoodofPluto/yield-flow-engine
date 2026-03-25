@@ -29,6 +29,30 @@ POOL_LIMIT = 400
 FREE_POOL_LIMIT = 10
 FREE_SORT_OPTIONS = ["Highest APY", "Largest TVL"]
 PRO_SORT_OPTIONS = ["FuruFlow rank", "Lowest risk", "Highest 24h volume", "Largest signal move"]
+PAGE_OPTIONS = [
+    "Home",
+    "Scanner",
+    "Signals",
+    "Market Map",
+    "Pool Explorer",
+    "Watchlist",
+    "Recaps",
+    "Protocol Dashboard",
+    "Strategy Builder",
+    "Arbitrage",
+]
+PAGE_LABELS = {
+    "Home": "🏠 Home",
+    "Scanner": "🔎 Scanner",
+    "Signals": "📡 Signals",
+    "Market Map": "🗺️ Market Map",
+    "Pool Explorer": "🧪 Pool Explorer",
+    "Watchlist": "⭐ Watchlist",
+    "Recaps": "📝 Recaps",
+    "Protocol Dashboard": "🏛️ Protocol Dashboard",
+    "Strategy Builder": "🧱 Strategy Builder",
+    "Arbitrage": "⚡ Arbitrage",
+}
 TIMEOUT = 18
 SIGNAL_SAMPLE = 16
 WATCHLIST_FILE = Path(__file__).with_name("watchlist.json")
@@ -167,6 +191,75 @@ def inject_css() -> None:
             }
             [data-testid="stSidebar"] * { color: var(--text) !important; }
             [data-testid="stSidebar"] .stMarkdown p { color: var(--muted) !important; }
+            [data-testid="stSidebar"] [data-testid="stExpander"] {
+                background: linear-gradient(180deg, rgba(255,255,255,0.035), rgba(255,255,255,0.02));
+                border: 1px solid rgba(255,255,255,0.07);
+                border-radius: 18px;
+                overflow: hidden;
+                margin-bottom: 0.75rem;
+                box-shadow: inset 0 1px 0 rgba(255,255,255,0.025);
+            }
+            [data-testid="stSidebar"] [data-testid="stExpander"] details {
+                background: transparent;
+            }
+            [data-testid="stSidebar"] [data-testid="stExpander"] summary {
+                padding-top: 0.2rem;
+                padding-bottom: 0.2rem;
+            }
+            [data-testid="stSidebar"] .sidebar-group-title {
+                font-size: 0.73rem;
+                font-weight: 900;
+                letter-spacing: 0.11em;
+                text-transform: uppercase;
+                color: var(--accent) !important;
+                margin-bottom: 0.28rem;
+            }
+            [data-testid="stSidebar"] .sidebar-group-copy {
+                font-size: 0.8rem;
+                line-height: 1.45;
+                color: var(--muted) !important;
+                margin-bottom: 0.45rem;
+            }
+            [data-testid="stSidebar"] .sidebar-mini-note {
+                font-size: 0.74rem;
+                line-height: 1.45;
+                color: var(--muted) !important;
+                margin-top: 0.38rem;
+            }
+            [data-testid="stSidebar"] .sidebar-plan {
+                border: 1px solid rgba(255,255,255,0.07);
+                border-radius: 18px;
+                padding: 0.9rem 0.95rem;
+                background: linear-gradient(180deg, rgba(255,255,255,0.04), rgba(255,255,255,0.02));
+                margin-top: 0.25rem;
+            }
+            [data-testid="stSidebar"] .stSelectbox > label,
+            [data-testid="stSidebar"] .stMultiSelect > label,
+            [data-testid="stSidebar"] .stSlider > label,
+            [data-testid="stSidebar"] .stToggle > label {
+                color: #f2f7ff !important;
+                font-weight: 800 !important;
+                font-size: 0.92rem !important;
+            }
+            [data-testid="stSidebar"] .stSlider p,
+            [data-testid="stSidebar"] .stSlider span,
+            [data-testid="stSidebar"] .stSlider div[data-testid="stTickBarMin"],
+            [data-testid="stSidebar"] .stSlider div[data-testid="stTickBarMax"] {
+                color: #d9e6fb !important;
+                opacity: 1 !important;
+            }
+            [data-testid="stSidebar"] .stSlider [data-baseweb="slider"] {
+                padding-top: 0.35rem;
+                padding-bottom: 0.15rem;
+            }
+            [data-testid="stSidebar"] .stMultiSelect [data-baseweb="tag"] {
+                border-radius: 999px !important;
+                padding-left: 0.25rem !important;
+                padding-right: 0.25rem !important;
+            }
+            [data-testid="stSidebar"] .stRadio > div {
+                gap: 0.35rem;
+            }
             [data-testid="stDataFrame"] { border: 1px solid var(--border); border-radius: 18px; overflow: hidden; }
 
             /* Fix all title boxes / dropdowns / tags */
@@ -694,6 +787,23 @@ def stat_card(label: str, value: str, note: str) -> None:
 
 def section_header(kicker: str, title: str, copy: str) -> None:
     st.markdown(f"<div class='section-kicker'>{kicker}</div><div class='section-title'>{title}</div><div class='section-copy'>{copy}</div>", unsafe_allow_html=True)
+
+
+def sidebar_group(title: str, copy: str) -> None:
+    st.markdown(f"<div class='sidebar-group-title'>{title}</div><div class='sidebar-group-copy'>{copy}</div>", unsafe_allow_html=True)
+
+
+def page_selectbox(default_page: str = "Home") -> str:
+    label_to_page = {PAGE_LABELS[p]: p for p in PAGE_OPTIONS}
+    labels = [PAGE_LABELS[p] for p in PAGE_OPTIONS]
+    default_label = PAGE_LABELS.get(default_page, labels[0])
+    selected_label = st.selectbox(
+        "Workspace",
+        labels,
+        index=labels.index(default_label),
+        key="sidebar_page_select",
+    )
+    return label_to_page[selected_label]
 
 
 def compact_table(df: pd.DataFrame) -> pd.DataFrame:
@@ -1244,33 +1354,42 @@ else:
 with st.sidebar:
     st.markdown(f"## {APP_NAME}")
     st.markdown(APP_TAGLINE)
-    st.markdown("### Navigate")
-    page = st.radio(
-        "Navigation",
-        ["Home", "Scanner", "Signals", "Market Map", "Pool Explorer", "Watchlist", "Recaps", "Protocol Dashboard", "Strategy Builder", "Arbitrage"],
-        index=0,
-    )
 
     chains = sorted(df["chain"].dropna().unique().tolist())
     projects = sorted(df["project"].dropna().unique().tolist())
     strategies = sorted(df["strategy_type"].dropna().unique().tolist())
     signals = sorted(df["signal"].dropna().unique().tolist())
 
-    default_chains = chains[: min(len(chains), 10)] if chains else []
-    selected_chains = st.multiselect("Chains", chains, default=default_chains)
-    selected_projects = st.multiselect("Protocols", projects)
-    selected_strategies = st.multiselect("Strategy Type", strategies)
-    selected_signals = st.multiselect("Signal Filter", signals)
-    stable_only = st.toggle("Stablecoin pools only", value=False)
-    min_tvl = st.slider("Minimum TVL", min_value=0, max_value=500_000_000, value=5_000_000, step=1_000_000)
-    max_risk = st.slider("Maximum risk score", min_value=1, max_value=100, value=70)
-    min_apy = st.slider("Minimum APY", min_value=0.0, max_value=250.0, value=0.0, step=0.5)
-    sort_options = FREE_SORT_OPTIONS + PRO_SORT_OPTIONS if is_pro else FREE_SORT_OPTIONS
-    sort_by = st.selectbox("Sort by", sort_options, index=0)
-    st.markdown("<div class='note'>Risk score is heuristic. It blends protocol age, TVL stability, audit confidence, reward dependence, and inferred pool volatility. Signals come from recent chart movement when chart data is available.</div>", unsafe_allow_html=True)
+    default_chains = chains[: min(len(chains), 8)] if chains else []
 
-    st.markdown("---")
-    st.markdown("### Plan overview")
+    with st.expander("🧭 Navigation", expanded=True):
+        sidebar_group("Workspace", "All product pages are still here, but now they live in a cleaner dropdown instead of one long stack.")
+        page = page_selectbox(st.session_state.get("current_page", "Home"))
+        st.session_state["current_page"] = page
+        st.markdown("<div class='sidebar-mini-note'>Tip: Home is the quickest overview, Scanner is best for discovery, and Pool Explorer is best for single-pool inspection.</div>", unsafe_allow_html=True)
+
+    with st.expander("🧰 Market Filters", expanded=True):
+        sidebar_group("Universe", "Choose the chains and market slices you want in view.")
+        selected_chains = st.multiselect("Chains", chains, default=default_chains)
+        selected_projects = st.multiselect("Protocols", projects, placeholder="Choose protocols")
+        selected_strategies = st.multiselect("Strategy Type", strategies, placeholder="Choose strategy types")
+        selected_signals = st.multiselect("Signal Filter", signals, placeholder="Choose signals")
+        stable_only = st.toggle("Stablecoin pools only", value=False)
+
+    with st.expander("🎚️ Risk & Yield", expanded=True):
+        sidebar_group("Thresholds", "Tighten the opportunity set with TVL, APY, and risk controls.")
+        min_tvl = st.slider("Minimum TVL", min_value=0, max_value=500_000_000, value=5_000_000, step=1_000_000)
+        max_risk = st.slider("Maximum risk score", min_value=1, max_value=100, value=70)
+        min_apy = st.slider("Minimum APY", min_value=0.0, max_value=250.0, value=0.0, step=0.5)
+        st.markdown("<div class='sidebar-mini-note'>Risk score is heuristic. It blends protocol age, TVL stability, audit confidence, reward dependence, and inferred pool volatility. Signals come from recent chart movement when chart data is available.</div>", unsafe_allow_html=True)
+
+    with st.expander("📊 Sorting", expanded=False):
+        sidebar_group("Ranking", "Change how results are ordered without changing the underlying filter set.")
+        sort_options = FREE_SORT_OPTIONS + PRO_SORT_OPTIONS if is_pro else FREE_SORT_OPTIONS
+        sort_by = st.selectbox("Sort by", sort_options, index=0)
+
+    st.markdown("<div class='sidebar-plan'>", unsafe_allow_html=True)
+    sidebar_group("Plan overview", "Free mode stays useful on purpose. Pro adds the intelligence layer and deeper workflows.")
     if is_pro:
         st.success("Pro is active for this account.")
         st.markdown("""- Full signal engine
@@ -1291,7 +1410,8 @@ with st.sidebar:
 - Stronger recap workflows and future alerts
 """)
         st.link_button("Upgrade to FuruFlow Pro — $20/month", get_checkout_link(st.session_state.get("auth_email", "")))
-    st.markdown("<div class='note'>Use Home for the fastest read on the market, Signals for ranked conviction, and Recaps for the memory layer.</div>", unsafe_allow_html=True)
+    st.markdown("<div class='sidebar-mini-note'>Use Home for the fastest read on the market, Signals for ranked conviction, and Recaps for the memory layer.</div>", unsafe_allow_html=True)
+    st.markdown("</div>", unsafe_allow_html=True)
 
 filtered = df.copy()
 if selected_chains:
