@@ -1,5 +1,2 @@
-$env:TELEGRAM_BOT_TOKEN="7835292866:AAGSFK7NkV0oUY3QhNuhHPNW8tKtwkB79pA"
-$env:TELEGRAM_CHAT_ID="-1003736270024"
-$env:TELEGRAM_ENABLE_POWERSHELL_FALLBACK="true"
-
+Set-Location "C:\Users\andro\Projects\yield-flow-engine"
 python .\post_real_signals.py
