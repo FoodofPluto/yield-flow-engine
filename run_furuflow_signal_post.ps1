@@ -1,9 +1,8 @@
 Set-Location "C:\Users\andro\Projects\yield-flow-engine"
 
-# Required
-$env:TELEGRAM_BOT_TOKEN="YOUR_BOT_TOKEN"
 $env:TELEGRAM_CHAT_ID="-1003736270024"
 $env:TELEGRAM_ENABLE_POWERSHELL_FALLBACK="true"
+
 # Optional only if your Python SSL stack is failing:
 # $env:TELEGRAM_DISABLE_SSL_VERIFY="true"
 

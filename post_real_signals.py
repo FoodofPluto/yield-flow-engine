@@ -20,6 +20,15 @@ from telegram_utils import send_telegram_message
 DEFAULT_CHAINS = {"base", "arbitrum", "optimism", "polygon", "ethereum"}
 POSTED_FILE = Path(os.getenv("FURUFLOW_POSTED_SIGNALS_FILE", "posted_signals.json"))
 
+import os
+from dotenv import load_dotenv
+
+load_dotenv()
+
+BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
+CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
+
+url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage"
 
 def _env_float(name: str, default: float) -> float:
     raw = os.getenv(name, "").strip()

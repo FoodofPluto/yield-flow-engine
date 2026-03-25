@@ -1,0 +1,39 @@
+name: Post Telegram Signals
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "*/15 * * * *"
+
+concurrency:
+  group: telegram-signal-bot
+  cancel-in-progress: false
+
+jobs:
+  run-bot:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Run Telegram signal poster
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          TELEGRAM_ENABLE_POWERSHELL_FALLBACK: "false"
+          FURUFLOW_SIGNAL_SOURCE: "defillama"
+          FURUFLOW_SIGNAL_MIN_TVL: "1000000"
+          FURUFLOW_SIGNAL_MIN_APY: "5"
+        run: |
+          python ./post_real_signals.py
