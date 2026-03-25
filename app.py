@@ -999,6 +999,127 @@ def render_protocol_dashboard(df: pd.DataFrame) -> None:
     st.markdown("</div>", unsafe_allow_html=True)
 
 
+def render_home_page(filtered: pd.DataFrame, full_filtered: pd.DataFrame, watchlist_df: pd.DataFrame, alert_stats: dict[str, Any], history_latest_df: pd.DataFrame, history_trend_df: pd.DataFrame, is_pro: bool) -> None:
+    visible = len(filtered)
+    median_apy = filtered["apy"].median() if visible else 0.0
+    total_tvl = filtered["tvlUsd"].sum() if visible else 0.0
+    signal_share = (filtered["signal"].ne("Steady").mean() * 100) if visible else 0.0
+
+    st.markdown("<div class='panel'>", unsafe_allow_html=True)
+    section_header("Home", "Your fastest read on the market", "Start here to see the current opportunity set, understand what is moving, and decide where to drill in next.")
+    top_left, top_right = st.columns([1.25, 0.9], gap="large")
+    with top_left:
+        stat_cols = st.columns(4)
+        with stat_cols[0]:
+            stat_card("Visible opportunities", f"{visible:,}", "Pools left after your current filters")
+        with stat_cols[1]:
+            stat_card("Median APY", f"{median_apy:,.2f}%", "A steadier center of the current market slice")
+        with stat_cols[2]:
+            stat_card("Aggregate TVL", format_money(total_tvl), "Combined depth across visible pools")
+        with stat_cols[3]:
+            stat_card("Signal density", f"{signal_share:,.0f}%", "Pools with non-steady signal labels")
+
+        st.markdown("<div style='height:0.75rem;'></div>", unsafe_allow_html=True)
+        section_header("Best opportunities now", "Start with the strongest visible pools", "Use this shortlist for fast triage, then move into Signals or Pool Explorer for more conviction.")
+        top_today = full_filtered[["project", "chain", "symbol", "apy", "tvlUsd", "risk_band", "pool_url"]].head(8).copy()
+        if top_today.empty:
+            st.info("No opportunities match the current filters.")
+        else:
+            top_today.columns = ["Protocol", "Chain", "Asset", "APY", "TVL (USD)", "Risk", "Open"]
+            st.dataframe(top_today, use_container_width=True, hide_index=True, height=320, column_config={"APY": st.column_config.NumberColumn(format="%.2f%%"), "TVL (USD)": st.column_config.NumberColumn(format="$%.0f"), "Open": st.column_config.LinkColumn("Pool link", display_text="Open")})
+    with top_right:
+        st.markdown("<div class='signal-card'><div class='signal-title'>What to do next</div><div class='signal-copy'>Use Home for a quick market read, Signals for ranked conviction, Watchlist for your shortlist, and Recaps for the memory layer behind alerts and trend persistence.</div></div>", unsafe_allow_html=True)
+        st.markdown("<div style='height:0.65rem;'></div>", unsafe_allow_html=True)
+        stat_card("Signals logged (24h)", f"{alert_stats['signals_24h']:,}", "Captured for recap and alert workflows")
+        stat_card("Best chain (24h)", str(alert_stats['best_chain']), "Chain with the most qualifying signals today")
+        stat_card("Watchlist", f"{len(watchlist_df):,}", "Pools saved to your persistent tracker")
+        if not is_pro:
+            st.markdown("<div style='height:0.65rem;'></div>", unsafe_allow_html=True)
+            st.markdown("<div class='signal-card'><div class='signal-title'>FuruFlow Pro</div><div class='signal-copy'>Unlock the full signals view, deeper scanner access, advanced ranking, arbitrage, and strategy workflows.</div></div>", unsafe_allow_html=True)
+            if len(full_filtered) > len(filtered):
+                st.caption(f"Free mode currently shows the top {len(filtered):,} of {len(full_filtered):,} matching pools.")
+            st.link_button("Upgrade to FuruFlow Pro — $20/month", get_checkout_link(st.session_state.get("auth_email", "")))
+    st.markdown("</div>", unsafe_allow_html=True)
+
+    bottom_left, bottom_mid, bottom_right = st.columns(3, gap="large")
+    with bottom_left:
+        st.markdown("<div class='panel'>", unsafe_allow_html=True)
+        section_header("Biggest yield changes", "What moved recently", "Big APY moves can signal opportunity, crowding, or emissions changes.")
+        movers = full_filtered.sort_values(["apy_delta_7", "tvl_delta_7_pct"], ascending=[False, False])[["project", "symbol", "apy_delta_7", "tvl_delta_7_pct", "signal"]].head(5).copy()
+        if movers.empty:
+            st.info("No yield changes available yet.")
+        else:
+            movers.columns = ["Protocol", "Asset", "7d APY Δ", "7d TVL Δ %", "Signal"]
+            st.dataframe(movers, use_container_width=True, hide_index=True, height=220, column_config={"7d APY Δ": st.column_config.NumberColumn(format="%.2f"), "7d TVL Δ %": st.column_config.NumberColumn(format="%.2f")})
+        st.markdown("</div>", unsafe_allow_html=True)
+    with bottom_mid:
+        st.markdown("<div class='panel'>", unsafe_allow_html=True)
+        section_header("Safer high APY", "Yield with stronger footing", "Pools above 10% APY with deeper TVL and lower modeled risk.")
+        safest = full_filtered[(full_filtered["apy"] >= 10) & (full_filtered["tvlUsd"] >= 1_000_000) & (full_filtered["risk_score"] <= 45)].sort_values(["risk_score", "apy", "tvlUsd"], ascending=[True, False, False])[["project", "symbol", "apy", "tvlUsd", "risk_score"]].head(5).copy()
+        if safest.empty:
+            st.info("No safer high-APY pools match the current filters.")
+        else:
+            safest.columns = ["Protocol", "Asset", "APY", "TVL (USD)", "Risk"]
+            st.dataframe(safest, use_container_width=True, hide_index=True, height=220, column_config={"APY": st.column_config.NumberColumn(format="%.2f%%"), "TVL (USD)": st.column_config.NumberColumn(format="$%.0f")})
+        st.markdown("</div>", unsafe_allow_html=True)
+    with bottom_right:
+        st.markdown("<div class='panel'>", unsafe_allow_html=True)
+        section_header("Engine intelligence", "Why FuruFlow gets better over time", "History and recap layers turn one-off scans into a memory system.")
+        if history_trend_df.empty:
+            st.info("Trend blocks appear once multiple signals have been logged.")
+        else:
+            st.dataframe(history_trend_df.head(5), use_container_width=True, hide_index=True, height=220, column_config={"APY": st.column_config.NumberColumn(format="%.2f%%"), "TVL (USD)": st.column_config.NumberColumn(format="$%.0f"), "APY Δ": st.column_config.NumberColumn(format="%.2f")})
+        st.markdown("</div>", unsafe_allow_html=True)
+
+
+def render_recaps_page(alert_stats: dict[str, Any], history_latest_df: pd.DataFrame, history_trend_df: pd.DataFrame, is_pro: bool) -> None:
+    st.markdown("<div class='panel'>", unsafe_allow_html=True)
+    section_header("Recaps", "The memory layer behind the signal engine", "Use recaps to review what the engine saw, what kept repeating, and where durable opportunities may be forming.")
+    summary_cols = st.columns(3)
+    with summary_cols[0]:
+        stat_card("Signals logged (24h)", f"{alert_stats['signals_24h']:,}", "Captured into the local signal history")
+    with summary_cols[1]:
+        stat_card("Pro signals (24h)", f"{alert_stats['pro_24h']:,}", "Premium-only signals captured for faster workflows")
+    with summary_cols[2]:
+        stat_card("Best chain (24h)", str(alert_stats['best_chain']), "Chain with the most logged qualifying signals today")
+    st.markdown("</div>", unsafe_allow_html=True)
+
+    recap_left, recap_right = st.columns(2, gap="large")
+    with recap_left:
+        st.markdown("<div class='panel'>", unsafe_allow_html=True)
+        section_header("Daily recap preview", "What the engine saw today", "A compact public summary of the current signal picture.")
+        st.code(build_daily_recap(), language="text")
+        st.markdown("</div>", unsafe_allow_html=True)
+    with recap_right:
+        st.markdown("<div class='panel'>", unsafe_allow_html=True)
+        section_header("Weekly recap preview", "Recurring winners and momentum", "A higher-level summary for repeat behavior and stronger conviction.")
+        st.code(build_weekly_recap(), language="text")
+        st.markdown("</div>", unsafe_allow_html=True)
+
+    history_left, history_right = st.columns([1.1, 1], gap="large")
+    with history_left:
+        st.markdown("<div class='panel'>", unsafe_allow_html=True)
+        section_header("Latest signal history", "Recent logged signals", "Review what the engine actually saw instead of relying on memory.")
+        if history_latest_df.empty:
+            st.info("Run post_real_signals.py once to begin populating signal history.")
+        else:
+            latest_view = history_latest_df[["name", "chain", "apy", "tvl", "strength_score", "tier"]].copy()
+            latest_view.columns = ["Pool", "Chain", "APY", "TVL (USD)", "Score", "Tier"]
+            st.dataframe(latest_view, use_container_width=True, hide_index=True, height=320, column_config={"APY": st.column_config.NumberColumn(format="%.2f%%"), "TVL (USD)": st.column_config.NumberColumn(format="$%.0f")})
+        st.markdown("</div>", unsafe_allow_html=True)
+    with history_right:
+        st.markdown("<div class='panel'>", unsafe_allow_html=True)
+        section_header("Trend snapshot", "Recurring opportunities", "Pools that keep appearing can matter more than one-off spikes.")
+        if history_trend_df.empty:
+            st.info("Trend blocks appear once multiple signals have been logged.")
+        else:
+            st.dataframe(history_trend_df, use_container_width=True, hide_index=True, height=320, column_config={"APY": st.column_config.NumberColumn(format="%.2f%%"), "TVL (USD)": st.column_config.NumberColumn(format="$%.0f"), "APY Δ": st.column_config.NumberColumn(format="%.2f")})
+        if not is_pro:
+            st.markdown("<div class='note'>Free mode can see the recap layer. Pro is where you get the full signal engine, stronger alerts, and faster decision workflows.</div>", unsafe_allow_html=True)
+            st.link_button("Upgrade to FuruFlow Pro — $20/month", get_checkout_link(st.session_state.get("auth_email", "")))
+        st.markdown("</div>", unsafe_allow_html=True)
+
+
 inject_css()
 init_db()
 
@@ -1116,17 +1237,17 @@ st.markdown(
 if guest_mode:
     st.info("🌐 Free mode is open immediately. Explore core pools, the market map, protocol dashboard, and pool explorer without creating an account.")
 elif is_pro:
-    st.info("🔥 Pro is active. You have access to arbitrage signals, whale-flow intelligence, advanced ranking, and full scanner depth.")
+    st.info("🔥 Pro is active. You have access to ranked signals, advanced workflows, and full scanner depth.")
 else:
     st.info("✅ Free account active. Upgrade to Pro for signals, arbitrage, advanced ranking, and the full opportunity set.")
 
 with st.sidebar:
     st.markdown(f"## {APP_NAME}")
     st.markdown(APP_TAGLINE)
-
+    st.markdown("### Navigate")
     page = st.radio(
         "Navigation",
-        ["Scanner", "Signals", "Arbitrage", "Market Map", "Pool Explorer", "Protocol Dashboard", "Strategy Builder", "Watchlist"],
+        ["Home", "Scanner", "Signals", "Market Map", "Pool Explorer", "Watchlist", "Recaps", "Protocol Dashboard", "Strategy Builder", "Arbitrage"],
         index=0,
     )
 
@@ -1149,28 +1270,28 @@ with st.sidebar:
     st.markdown("<div class='note'>Risk score is heuristic. It blends protocol age, TVL stability, audit confidence, reward dependence, and inferred pool volatility. Signals come from recent chart movement when chart data is available.</div>", unsafe_allow_html=True)
 
     st.markdown("---")
+    st.markdown("### Plan overview")
     if is_pro:
-        st.markdown("### ✅ FuruFlow Pro")
-        st.success("Pro access active for this account.")
-        st.markdown("""Arbitrage signals  
-Whale-flow intelligence  
-Advanced ranking  
-Signal engine  
-Strategy builder  
-CSV export
+        st.success("Pro is active for this account.")
+        st.markdown("""- Full signal engine
+- Advanced ranking and deeper scanner depth
+- Arbitrage and strategy workflows
+- Faster decision support with recaps and history
 """)
     else:
-        st.markdown("### 🌐 FuruFlow Free")
-        st.success("Public access is live.")
-        st.markdown("""Basic pools  
-Limited sorting  
-Market map  
-Pool explorer  
-Protocol dashboard
+        st.info("Free mode stays useful on purpose. Pro adds the intelligence layer.")
+        st.markdown("""**Free includes**
+- Scanner, market map, pool explorer, protocol dashboard
+- Basic sorting and top opportunities
+- Watchlist and recap previews
+
+**Pro adds**
+- Full signals view and deeper scanner depth
+- Advanced ranking, arbitrage, and strategy builder
+- Stronger recap workflows and future alerts
 """)
-        st.markdown("<div class='note'>Pro unlocks arbitrage signals, whale flows, advanced ranking, deeper scanner access, and future signal-based alerts.</div>", unsafe_allow_html=True)
         st.link_button("Upgrade to FuruFlow Pro — $20/month", get_checkout_link(st.session_state.get("auth_email", "")))
-    st.markdown("<div class='note'>This account-based entitlement replaces the old shared access-code workflow.</div>", unsafe_allow_html=True)
+    st.markdown("<div class='note'>Use Home for the fastest read on the market, Signals for ranked conviction, and Recaps for the memory layer.</div>", unsafe_allow_html=True)
 
 filtered = df.copy()
 if selected_chains:
@@ -1206,103 +1327,10 @@ if not is_pro:
 watchlist_df = df[df["pool"].isin(st.session_state.watchlist)].copy()
 arb_df = find_arbitrage_candidates(full_filtered if is_pro else filtered)
 
-visible = len(filtered)
-median_apy = filtered["apy"].median() if visible else 0.0
-total_tvl = filtered["tvlUsd"].sum() if visible else 0.0
-signal_share = (filtered["signal"].ne("Steady").mean() * 100) if visible else 0.0
+if page == "Home":
+    render_home_page(filtered, full_filtered, watchlist_df, alert_stats, history_latest_df, history_trend_df, is_pro)
 
-metric_cols = st.columns(5)
-with metric_cols[0]:
-    stat_card("Visible opportunities", f"{visible:,}", "Pools left after your current filters")
-with metric_cols[1]:
-    stat_card("Median APY", f"{median_apy:,.2f}%", "A steadier center of the current market slice")
-with metric_cols[2]:
-    stat_card("Aggregate TVL", format_money(total_tvl), "Combined depth across visible pools")
-with metric_cols[3]:
-    stat_card("Signal density", f"{signal_share:,.0f}%", "Pools with non-steady signal labels")
-with metric_cols[4]:
-    stat_card("Watchlist", f"{len(watchlist_df):,}", "Pools saved to your persistent tracker")
-
-if not is_pro:
-    st.markdown("<div class='panel' style='margin-top:0.75rem;'><strong>Upgrade to FuruFlow Pro — $20/month</strong><div class='tiny' style='margin-top:0.35rem;'>Unlock arbitrage signals, whale flows, advanced ranking, and the full scanner depth.</div></div>", unsafe_allow_html=True)
-    if len(full_filtered) > len(filtered):
-        st.info(f"Free mode shows the top {FREE_POOL_LIMIT} pools from your current filter set. Upgrade to unlock all {len(full_filtered):,} matching pools.")
-
-history_cols = st.columns(3)
-with history_cols[0]:
-    stat_card("Signals logged (24h)", f"{alert_stats['signals_24h']:,}", "Logged to signal_history.csv for recap and alert workflows")
-with history_cols[1]:
-    stat_card("Pro signals (24h)", f"{alert_stats['pro_24h']:,}", "Premium-only signals captured for faster workflows")
-with history_cols[2]:
-    stat_card("Best chain (24h)", str(alert_stats['best_chain']), "Chain with the most logged qualifying signals today")
-
-st.markdown("<div class='panel' style='margin-top:0.75rem;'>", unsafe_allow_html=True)
-section_header("Signal engine recap", "History + distribution layer", "This is the new memory layer behind daily recaps, weekly winners, alerting, and premium tracking.")
-recap_left, recap_right = st.columns(2, gap="large")
-with recap_left:
-    st.markdown("#### Daily recap preview")
-    st.code(build_daily_recap(), language="text")
-with recap_right:
-    st.markdown("#### Weekly recap preview")
-    st.code(build_weekly_recap(), language="text")
-st.markdown("</div>", unsafe_allow_html=True)
-
-history_panel_left, history_panel_right = st.columns([1.15, 1], gap='large')
-with history_panel_left:
-    st.markdown("<div class='panel'>", unsafe_allow_html=True)
-    section_header("Signal history", "Latest logged signals", "Recent signals now persist to signal_history.csv so you can review what the engine saw instead of relying on memory.")
-    if history_latest_df.empty:
-        st.info("Run post_real_signals.py once to begin populating signal history.")
-    else:
-        latest_view = history_latest_df[["name", "chain", "apy", "tvl", "strength_score", "tier"]].copy()
-        latest_view.columns = ["Pool", "Chain", "APY", "TVL (USD)", "Score", "Tier"]
-        st.dataframe(latest_view, use_container_width=True, hide_index=True, height=300, column_config={"APY": st.column_config.NumberColumn(format="%.2f%%"), "TVL (USD)": st.column_config.NumberColumn(format="$%.0f")})
-    st.markdown("</div>", unsafe_allow_html=True)
-with history_panel_right:
-    st.markdown("<div class='panel'>", unsafe_allow_html=True)
-    section_header("Trend snapshot", "Recurring opportunities", "Pools that keep showing up get more valuable over time because you can see repeat behavior and durability.")
-    if history_trend_df.empty:
-        st.info("Trend blocks appear once multiple signals have been logged.")
-    else:
-        st.dataframe(history_trend_df, use_container_width=True, hide_index=True, height=300, column_config={"APY": st.column_config.NumberColumn(format="%.2f%%"), "TVL (USD)": st.column_config.NumberColumn(format="$%.0f"), "APY Δ": st.column_config.NumberColumn(format="%.2f")})
-    if not is_pro:
-        st.markdown("<div class='note'>Free mode can see the recap layer. Pro is where you get the full signal engine, stronger alerts, and faster decision workflows.</div>", unsafe_allow_html=True)
-        st.link_button("Upgrade to FuruFlow Pro — $20/month", get_checkout_link(st.session_state.get("auth_email", "")))
-    st.markdown("</div>", unsafe_allow_html=True)
-
-landing_left, landing_mid, landing_right = st.columns(3, gap="large")
-with landing_left:
-    st.markdown("<div class='panel'>", unsafe_allow_html=True)
-    section_header("Top Opportunities Today", "Fastest high-level scan", "The highest-yield pools in your current market slice.")
-    top_today = full_filtered[["project", "chain", "symbol", "apy", "tvlUsd", "risk_band"]].head(5).copy()
-    if top_today.empty:
-        st.info("No opportunities match the current filters.")
-    else:
-        top_today.columns = ["Protocol", "Chain", "Asset", "APY", "TVL (USD)", "Risk"]
-        st.dataframe(top_today, use_container_width=True, hide_index=True, height=240, column_config={"APY": st.column_config.NumberColumn(format="%.2f%%"), "TVL (USD)": st.column_config.NumberColumn(format="$%.0f")})
-    st.markdown("</div>", unsafe_allow_html=True)
-with landing_mid:
-    st.markdown("<div class='panel'>", unsafe_allow_html=True)
-    section_header("Biggest Yield Changes", "What moved recently", "Big APY moves can mean opportunity, crowding, or emissions changes.")
-    movers = full_filtered.sort_values(["apy_delta_7", "tvl_delta_7_pct"], ascending=[False, False])[["project", "symbol", "apy_delta_7", "tvl_delta_7_pct", "signal"]].head(5).copy()
-    if movers.empty:
-        st.info("No yield changes available yet.")
-    else:
-        movers.columns = ["Protocol", "Asset", "7d APY Δ", "7d TVL Δ %", "Signal"]
-        st.dataframe(movers, use_container_width=True, hide_index=True, height=240, column_config={"7d APY Δ": st.column_config.NumberColumn(format="%.2f"), "7d TVL Δ %": st.column_config.NumberColumn(format="%.2f")})
-    st.markdown("</div>", unsafe_allow_html=True)
-with landing_right:
-    st.markdown("<div class='panel'>", unsafe_allow_html=True)
-    section_header("Safest High APY", "Yield with stronger footing", "Pools above 10% APY, with deeper TVL and lower modeled risk.")
-    safest = full_filtered[(full_filtered["apy"] >= 10) & (full_filtered["tvlUsd"] >= 1_000_000) & (full_filtered["risk_score"] <= 45)].sort_values(["risk_score", "apy", "tvlUsd"], ascending=[True, False, False])[["project", "symbol", "apy", "tvlUsd", "risk_score"]].head(5).copy()
-    if safest.empty:
-        st.info("No safer high-APY pools match the current filters.")
-    else:
-        safest.columns = ["Protocol", "Asset", "APY", "TVL (USD)", "Risk"]
-        st.dataframe(safest, use_container_width=True, hide_index=True, height=240, column_config={"APY": st.column_config.NumberColumn(format="%.2f%%"), "TVL (USD)": st.column_config.NumberColumn(format="$%.0f")})
-    st.markdown("</div>", unsafe_allow_html=True)
-
-if page == "Scanner":
+elif page == "Scanner":
     left, right = st.columns([1.6, 1], gap="large")
     with left:
         st.markdown("<div class='panel'>", unsafe_allow_html=True)
@@ -1353,6 +1381,10 @@ if page == "Scanner":
         st.markdown("</div>", unsafe_allow_html=True)
 
 elif page == "Signals":
+    st.markdown("<div class='panel'>", unsafe_allow_html=True)
+    section_header("Signals", "Ranked conviction with context", "This is the flagship intelligence view: signal labels, APY and TVL change, volatility context, and direct pool access for the strongest movers.")
+    st.markdown("<div class='note'>Use signals to separate raw APY from actual setup quality. Rising APY with stable or improving TVL is usually more interesting than isolated spikes.</div>", unsafe_allow_html=True)
+    st.markdown("</div>", unsafe_allow_html=True)
     if not is_pro:
         preview = filtered[["project", "chain", "symbol", "signal", "apy_delta_7", "tvl_delta_7_pct"]].copy().head(8)
         preview.columns = ["Protocol", "Chain", "Asset", "Signal", "7d APY Δ", "7d TVL Δ %"]
@@ -1526,6 +1558,9 @@ elif page == "Strategy Builder":
             view.columns = ["Protocol", "Chain", "Asset", "APY", "TVL (USD)", "Risk", "Signal", "Open"]
             st.dataframe(view, use_container_width=True, hide_index=True, height=520, column_config={"APY": st.column_config.NumberColumn(format="%.2f%%"), "TVL (USD)": st.column_config.NumberColumn(format="$%.0f"), "Open": st.column_config.LinkColumn("Pool link", display_text="Open")})
         st.markdown("</div>", unsafe_allow_html=True)
+
+elif page == "Recaps":
+    render_recaps_page(alert_stats, history_latest_df, history_trend_df, is_pro)
 
 elif page == "Watchlist":
     left, right = st.columns([1.2, 1], gap="large")

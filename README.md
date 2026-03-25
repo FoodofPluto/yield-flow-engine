@@ -1,42 +1,72 @@
-Merged build note: this package restores the original FuruFlow terminal UI and keeps the account-based Pro access system.
+# FuruFlow
 
-# FuruFlow Pro Production Starter
+**Find the best DeFi yield opportunities fast, with signal context and direct pool access.**
 
-This zip gives you a **production-style starter** for the exact behavior you asked for:
+FuruFlow is a DeFi yield intelligence app built to help users move from raw pool data to faster decisions. Instead of showing only a scanner table, it layers in ranked opportunities, modeled risk, signal context, direct pool links, persistent watchlists, and recap previews that turn one-off browsing into a usable workflow.
 
-- **You** can access FuruFlow Pro without paying yourself
-- A real buyer should **purchase once**
-- After purchase, the buyer should be able to **log in and open Pro directly**
-- The app should **not force repeated paywall loops**
+## What the product does
 
-## What is inside
+FuruFlow helps users:
 
-- `app.py` — Streamlit app with login, paywall gate, session cache, and Pro area
-- `auth.py` — simple email sign-in session helper
+- scan live yield opportunities across protocols and chains
+- sort pools by APY, TVL, risk, and rank-based signal strength
+- open pools directly from the app
+- track pools in a persistent watchlist
+- review recent signal behavior and recap previews
+- use Pro workflows for deeper signal intelligence and advanced filtering
+
+## Product structure
+
+The app is now organized around a clearer user journey:
+
+- **Home** — fastest market read, top opportunities, movers, and a quick intelligence summary
+- **Scanner** — broader pool discovery and table workflows
+- **Signals** — ranked conviction view with APY change, TVL change, volatility context, and direct links
+- **Market Map** — broader market shape by risk, chain, and capital concentration
+- **Pool Explorer** — single-pool inspection with charting, risk factors, and watchlist actions
+- **Watchlist** — lightweight conviction layer for tracked pools
+- **Recaps** — daily/weekly recap previews plus signal history and trend summaries
+- **Protocol Dashboard / Strategy Builder / Arbitrage** — deeper Pro-oriented workflows
+
+## Free vs Pro
+
+### Free
+
+Free mode is intentionally useful. It includes:
+
+- scanner access
+- market map
+- pool explorer
+- protocol dashboard
+- basic sorting
+- watchlist
+- recap previews
+
+### Pro
+
+FuruFlow Pro adds the intelligence layer:
+
+- full signals view
+- deeper scanner depth
+- advanced ranking
+- arbitrage workflows
+- strategy builder
+- stronger recap workflows and future alerts
+
+## Core app files
+
+- `app.py` — Streamlit app UI and product experience
+- `auth.py` — lightweight email sign-in session helper
 - `db.py` — SQLite user database
-- `entitlements.py` — access rules
-- `stripe_stub.py` — demo one-time unlock flow
-- `stripe_webhook_example.py` — example backend webhook handler for real Stripe fulfillment
-- `.env.example` — environment variable template
-- `requirements.txt` — Python packages
-
-## Core architecture
-
-The app uses this access logic:
-
-1. User signs in with email
-2. App checks the database for that user
-3. Access is granted if any of the following are true:
-   - user is admin
-   - `DEV_MODE=true`
-   - `lifetime_access=True`
-   - `pro_active=True`
-
-That means your real customers should **not** get stuck re-buying. Their entitlement lives in the database, not only in a temporary session.
+- `entitlements.py` — access rules for free/admin/pro accounts
+- `history_store.py` — local snapshot history support
+- `engine/` — scanner, scoring, recap, link, tier, and performance logic
+- `post_real_signals.py` — Telegram-facing signal posting and signal history workflow
+- `post_to_x.py` — X post generation for signals and recaps
 
 ## Quick start
 
-Create and activate a virtual environment if you want, then install:
+Install dependencies:
 
 ```bash
 pip install -r requirements.txt
@@ -48,121 +78,61 @@ Run the app:
 streamlit run app.py
 ```
 
+## Account and entitlement model
+
+The app uses account-based access instead of the old shared access-code workflow.
+
+Access is granted when any of the following are true:
+
+- user is admin
+- `DEV_MODE=true`
+- `lifetime_access=True`
+- `pro_active=True`
+
+That means real customers should not get stuck in repeat paywall loops. Their entitlement is stored in the database, not only in a temporary session.
+
 ## Give yourself permanent access
 
-Open `.env.example`, copy it to `.env`, then set:
+Copy `.env.example` to `.env`, then set:
 
 ```env
 ADMIN_EMAILS=yourrealemail@example.com
 ```
 
-You can also set the variable directly in your environment.
+## Stripe / Pro activation notes
 
-## How this avoids repeat paywall friction
+Your current Stripe buy link is a monthly Pro offer, so the production webhook should update `pro_active` based on Stripe subscription events.
 
-This starter does **not** rely on “did the checkout just happen right now?”
+This build includes:
 
-Instead it stores access in the database.  
-That is the key difference.
+- `stripe_subscription_id` and `subscription_status` fields in the user database
+- a webhook example that handles `checkout.session.completed`
+- subscription lifecycle syncing for `customer.subscription.created`, `updated`, and `deleted`
+- automatic activation/deactivation of Pro based on Stripe subscription state
 
-When someone pays, your production flow should:
+## Recommended deployment split
 
-- complete Stripe Checkout
-- receive a Stripe webhook on your backend
-- locate the user by email or Stripe customer ID
-- set `lifetime_access = True`
+- **Frontend:** Streamlit app on Community Cloud
+- **Backend webhook:** a small Flask app on Render, Railway, Fly.io, or another backend host
+- **Secrets:** keep Stripe secrets on the backend only
 
-After that, every future login opens Pro directly.
+## Important limitation
 
-## Recommended production flow for FuruFlow
+The current sign-in flow is lightweight email-based app access, not a full password or magic-link auth system. It is good for an MVP gate, but it is not the same as hardened production authentication.
 
-### For you
-- admin email bypass
+## Signal engine notes
 
-### For customers
-- sign in once
-- buy once
-- entitlement saved permanently
-- return later and open Pro via login
+Recent additions include:
 
-### For the app
-- check access once on load
-- store the result in session state
-- let Pro users move around freely
-
-## Important note
-
-This zip includes a **demo checkout button** for testing.  
-It does **not** include a live hosted backend or real Stripe secret handling in the Streamlit app.
-
-That is deliberate.
-
-For production:
-- keep Stripe secrets on the backend
-- use `stripe_webhook_example.py` as the starting pattern
-- do not trust the frontend alone for granting paid access
-
-## Best next integration step
-
-Wire this into your existing FuruFlow / Yield Flow Streamlit app by:
-
-1. moving your current dashboard into the `if access_granted:` area
-2. replacing the demo checkout UI with a real Stripe Checkout button
-3. deploying the webhook separately
-4. persisting users in a real hosted database later if needed
-
-## Minimal implementation checklist
-
-- [ ] Set your admin email
-- [ ] Test login
-- [ ] Test demo purchase
-- [ ] Confirm repeat login opens Pro
-- [ ] Replace demo purchase with Stripe Checkout
-- [ ] Deploy Stripe webhook
-- [ ] Mark paid users in DB automatically
+- signal history logging
+- stronger public score and risk labels
+- free vs Pro signal splitting
+- Telegram posting support
+- X post generation for live signals, daily recaps, and weekly winners
+- recap previews and trend snapshots inside the app
 
 ## Files to edit first
 
 - `app.py`
 - `.env.example`
 - `stripe_webhook_example.py`
-
-
-## Added in this build
-
-- Paywall offer appears on the logged-out landing page.
-- Admins can grant or remove lifetime access, Pro access, and admin status for accounts.
-
-
-## Remove demo free unlocks
-
-The demo self-unlock buttons were removed so non-Pro users can no longer grant themselves access.
-
-
-## Subscription tracking notes
-
-Your current Stripe buy link is a monthly Pro offer, so the production webhook should update `pro_active` based on Stripe subscription events.
-
-This build now includes:
-
-- `stripe_subscription_id` and `subscription_status` fields in the user database
-- a webhook example that handles `checkout.session.completed`
-- subscription lifecycle syncing for `customer.subscription.created`, `updated`, and `deleted`
-- automatic activation/deactivation of Pro based on the Stripe subscription state
-
-### Recommended deployment split
-
-- **Frontend:** Streamlit app on Community Cloud
-- **Backend webhook:** a small Flask app on Render, Railway, Fly.io, or another backend host
-- **Secrets:** set `STRIPE_SECRET_KEY` and `STRIPE_WEBHOOK_SECRET` on the backend only
-
-### Important limitation
-
-The current sign-in flow is lightweight email-based app access, not a full password or magic-link auth system. It is fine for an MVP gate, but it is not the same as hardened authentication.
-
-
-## FuruFlow signal engine next phase
-
-- `post_real_signals.py` now logs signal history, computes stronger public score/risk labels, splits Free vs Pro signals, and can send Telegram strong-signal alerts.
-- `post_to_x.py` generates X-ready posts for live signals, daily recaps, and weekly winners. Keep `FURUFLOW_X_POST_LIVE=false` until you review `x_post_outbox.txt`.
-- The Streamlit app now surfaces signal history, recap previews, and trend snapshots to support conversion into Pro.
