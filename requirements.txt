@@ -2,3 +2,6 @@ streamlit>=1.40
 stripe>=11.0.0
 flask>=3.0.0
 plotly
+
+requests>=2.32.0
+pandas>=2.2.0

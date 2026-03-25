@@ -159,3 +159,10 @@ This build now includes:
 ### Important limitation
 
 The current sign-in flow is lightweight email-based app access, not a full password or magic-link auth system. It is fine for an MVP gate, but it is not the same as hardened authentication.
+
+
+## FuruFlow signal engine next phase
+
+- `post_real_signals.py` now logs signal history, computes stronger public score/risk labels, splits Free vs Pro signals, and can send Telegram strong-signal alerts.
+- `post_to_x.py` generates X-ready posts for live signals, daily recaps, and weekly winners. Keep `FURUFLOW_X_POST_LIVE=false` until you review `x_post_outbox.txt`.
+- The Streamlit app now surfaces signal history, recap previews, and trend snapshots to support conversion into Pro.

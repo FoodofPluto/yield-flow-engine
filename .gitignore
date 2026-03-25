@@ -1,7 +1,39 @@
+# =========================
+# Python
+# =========================
 __pycache__/
 *.pyc
+
+# =========================
+# Environment / Secrets
+# =========================
 .env
-.env.txt
+.env.*
 .venv/
 .poetry/
-.streamlit/
+
+# =========================
+# Logs / Runtime
+# =========================
+*.log
+runs/
+hourly_log.txt
+
+# =========================
+# Local Data / State (DO NOT TRACK)
+# =========================
+posted_signals.json
+pool_history.json
+signal_history.csv
+x_post_outbox.txt
+
+# =========================
+# Test / Temp Files
+# =========================
+test_*.py
+
+# =========================
+# OS / Misc
+# =========================
+.DS_Store
+Thumbs.db

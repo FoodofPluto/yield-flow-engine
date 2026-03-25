@@ -19,6 +19,8 @@ from db import claim_session, clear_session, get_user_by_email, init_db, search_
 from entitlements import can_access_pro
 from stripe_stub import render_checkout_section
 from history_store import load_history, save_snapshot
+from engine.performance import alert_snapshot, latest_signal_history, trend_summary_df
+from engine.recap import build_daily_recap, build_weekly_recap
 
 APP_NAME = "FuruFlow"
 APP_VERSION = "v8.1"
@@ -1096,6 +1098,10 @@ for col, default in [("signal", "Steady"), ("apy_delta_7", 0.0), ("tvl_delta_7_p
 watchlist_df = df[df["pool"].isin(st.session_state.watchlist)].copy()
 save_snapshot(df)
 
+history_latest_df = latest_signal_history(limit=12)
+history_trend_df = trend_summary_df(limit=10)
+alert_stats = alert_snapshot()
+
 st.markdown(
     f"""
     <section class="hero-shell"><div class="hero-inner">
@@ -1221,6 +1227,48 @@ if not is_pro:
     st.markdown("<div class='panel' style='margin-top:0.75rem;'><strong>Upgrade to FuruFlow Pro — $20/month</strong><div class='tiny' style='margin-top:0.35rem;'>Unlock arbitrage signals, whale flows, advanced ranking, and the full scanner depth.</div></div>", unsafe_allow_html=True)
     if len(full_filtered) > len(filtered):
         st.info(f"Free mode shows the top {FREE_POOL_LIMIT} pools from your current filter set. Upgrade to unlock all {len(full_filtered):,} matching pools.")
+
+history_cols = st.columns(3)
+with history_cols[0]:
+    stat_card("Signals logged (24h)", f"{alert_stats['signals_24h']:,}", "Logged to signal_history.csv for recap and alert workflows")
+with history_cols[1]:
+    stat_card("Pro signals (24h)", f"{alert_stats['pro_24h']:,}", "Premium-only signals captured for faster workflows")
+with history_cols[2]:
+    stat_card("Best chain (24h)", str(alert_stats['best_chain']), "Chain with the most logged qualifying signals today")
+
+st.markdown("<div class='panel' style='margin-top:0.75rem;'>", unsafe_allow_html=True)
+section_header("Signal engine recap", "History + distribution layer", "This is the new memory layer behind daily recaps, weekly winners, alerting, and premium tracking.")
+recap_left, recap_right = st.columns(2, gap="large")
+with recap_left:
+    st.markdown("#### Daily recap preview")
+    st.code(build_daily_recap(), language="text")
+with recap_right:
+    st.markdown("#### Weekly recap preview")
+    st.code(build_weekly_recap(), language="text")
+st.markdown("</div>", unsafe_allow_html=True)
+
+history_panel_left, history_panel_right = st.columns([1.15, 1], gap='large')
+with history_panel_left:
+    st.markdown("<div class='panel'>", unsafe_allow_html=True)
+    section_header("Signal history", "Latest logged signals", "Recent signals now persist to signal_history.csv so you can review what the engine saw instead of relying on memory.")
+    if history_latest_df.empty:
+        st.info("Run post_real_signals.py once to begin populating signal history.")
+    else:
+        latest_view = history_latest_df[["name", "chain", "apy", "tvl", "strength_score", "tier"]].copy()
+        latest_view.columns = ["Pool", "Chain", "APY", "TVL (USD)", "Score", "Tier"]
+        st.dataframe(latest_view, use_container_width=True, hide_index=True, height=300, column_config={"APY": st.column_config.NumberColumn(format="%.2f%%"), "TVL (USD)": st.column_config.NumberColumn(format="$%.0f")})
+    st.markdown("</div>", unsafe_allow_html=True)
+with history_panel_right:
+    st.markdown("<div class='panel'>", unsafe_allow_html=True)
+    section_header("Trend snapshot", "Recurring opportunities", "Pools that keep showing up get more valuable over time because you can see repeat behavior and durability.")
+    if history_trend_df.empty:
+        st.info("Trend blocks appear once multiple signals have been logged.")
+    else:
+        st.dataframe(history_trend_df, use_container_width=True, hide_index=True, height=300, column_config={"APY": st.column_config.NumberColumn(format="%.2f%%"), "TVL (USD)": st.column_config.NumberColumn(format="$%.0f"), "APY Δ": st.column_config.NumberColumn(format="%.2f")})
+    if not is_pro:
+        st.markdown("<div class='note'>Free mode can see the recap layer. Pro is where you get the full signal engine, stronger alerts, and faster decision workflows.</div>", unsafe_allow_html=True)
+        st.link_button("Upgrade to FuruFlow Pro — $20/month", get_checkout_link(st.session_state.get("auth_email", "")))
+    st.markdown("</div>", unsafe_allow_html=True)
 
 landing_left, landing_mid, landing_right = st.columns(3, gap="large")
 with landing_left:

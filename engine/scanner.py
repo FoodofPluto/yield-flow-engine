@@ -150,8 +150,8 @@ def compute_risk(meta: Dict[str, Any]) -> Dict[str, Any]:
 def _passes_filters(item: YieldItem, filt: FilterOptions) -> bool:
     tvl = float((item.meta or {}).get("tvlUsd") or 0.0)
     stable = bool((item.meta or {}).get("stablecoin") or False)
-    chain = (item.meta or {}).get("chain")
-    project = (item.meta or {}).get("project")
+    chain = str((item.meta or {}).get("chain") or "").strip().lower()
+    project = str((item.meta or {}).get("project") or "").strip().lower()
 
     if tvl < filt.min_tvl:
         return False
@@ -159,9 +159,9 @@ def _passes_filters(item: YieldItem, filt: FilterOptions) -> bool:
         return False
     if filt.stablecoin_only and not stable:
         return False
-    if filt.chains and chain not in filt.chains:
+    if filt.chains and chain not in {c.strip().lower() for c in filt.chains}:
         return False
-    if filt.projects and project not in filt.projects:
+    if filt.projects and project not in {p.strip().lower() for p in filt.projects}:
         return False
     return True
 
