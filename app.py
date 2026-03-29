@@ -71,6 +71,104 @@ AFFILIATE_LINKS = {
     "uniswap-v3": "https://app.uniswap.org/?ref=furuflow",
 }
 
+UNISWAP_CHAIN_IDS = {
+    "ethereum": 1,
+    "polygon": 137,
+    "optimism": 10,
+    "arbitrum": 42161,
+    "base": 8453,
+    "avalanche": 43114,
+}
+
+GENERIC_DEX_URLS = {
+    "https://app.uniswap.org",
+    "https://app.uniswap.org/",
+    "https://app.uniswap.org/?ref=furuflow",
+    "https://uniswap.org",
+    "https://uniswap.org/",
+    "https://aerodrome.finance",
+    "https://aerodrome.finance/",
+    "https://app.merkl.xyz",
+    "https://app.merkl.xyz/",
+    "https://merkl.xyz",
+    "https://merkl.xyz/",
+}
+
+
+def clean_value(value: Any) -> str:
+    if value is None:
+        return ""
+    if pd.isna(value):
+        return ""
+    return str(value).strip()
+
+
+def parse_pair_symbols(row: pd.Series) -> tuple[str, str]:
+    for field in ("symbol", "underlyingTokens", "symbols"):
+        raw = row.get(field)
+        if isinstance(raw, list) and len(raw) >= 2:
+            items = [clean_value(v) for v in raw if clean_value(v)]
+            if len(items) >= 2:
+                return items[0], items[1]
+
+    symbol = clean_value(row.get("symbol"))
+    if not symbol:
+        return "", ""
+
+    normalized = symbol.replace("-", "/").replace("_", "/").replace(":", "/")
+    parts = [part.strip() for part in normalized.split("/") if part.strip()]
+    if len(parts) >= 2:
+        return parts[0], parts[1]
+    return "", ""
+
+
+def is_specific_url(url: str) -> bool:
+    url = clean_value(url)
+    if not (url.startswith("http://") or url.startswith("https://")):
+        return False
+    lower = url.lower().rstrip("/")
+    return lower not in {u.rstrip("/") for u in GENERIC_DEX_URLS}
+
+
+def build_protocol_deeplink(row: pd.Series) -> str:
+    project_key = clean_value(row.get("project_key", row.get("project", ""))).lower()
+    chain = clean_value(row.get("chain")).lower()
+    token_a = clean_value(row.get("token0") or row.get("tokenA"))
+    token_b = clean_value(row.get("token1") or row.get("tokenB"))
+
+    if not token_a or not token_b:
+        token_a, token_b = parse_pair_symbols(row)
+
+    if "uniswap" in project_key:
+        chain_id = UNISWAP_CHAIN_IDS.get(chain)
+        if chain_id and token_a and token_b:
+            return (
+                "https://app.uniswap.org/positions/create/v3"
+                f"?chain={chain_id}&currencyA={quote(token_a)}&currencyB={quote(token_b)}&ref=furuflow"
+            )
+
+    if "aerodrome" in project_key:
+        pool_address = clean_value(row.get("poolMeta"))
+        if pool_address and pool_address != "Unknown":
+            return f"https://aerodrome.finance/liquidity?pool={quote(pool_address)}"
+        return "https://aerodrome.finance/liquidity"
+
+    if "merkl" in project_key:
+        opportunity_id = clean_value(row.get("campaignId") or row.get("opportunityId"))
+        if opportunity_id:
+            return f"https://app.merkl.xyz/opportunities/{quote(opportunity_id)}"
+        return "https://app.merkl.xyz/opportunities"
+
+    return ""
+
+
+def build_defillama_pool_url(row: pd.Series) -> str:
+    for field in ("pool", "pool_id", "defillama_pool_id"):
+        pool_value = clean_value(row.get(field))
+        if pool_value and pool_value != "Unknown":
+            return f"https://defillama.com/yields/pool/{quote(pool_value)}"
+    return ""
+
 st.set_page_config(
     page_title=APP_NAME,
     page_icon="🐸",
@@ -686,13 +784,30 @@ def label_risk(score: int) -> str:
 
 
 def build_pool_url(row: pd.Series) -> str:
-    project_key = str(row.get("project_key", row.get("project", ""))).lower().strip()
+    existing_candidates = [
+        row.get("pool_url"),
+        row.get("url"),
+        row.get("link"),
+        row.get("urlMain"),
+    ]
+    for candidate in existing_candidates:
+        candidate_url = clean_value(candidate)
+        if is_specific_url(candidate_url):
+            return candidate_url
+
+    protocol_deeplink = build_protocol_deeplink(row)
+    if protocol_deeplink:
+        return protocol_deeplink
+
+    defillama_url = build_defillama_pool_url(row)
+    if defillama_url:
+        return defillama_url
+
+    project_key = clean_value(row.get("project_key", row.get("project", ""))).lower()
     for key, link in AFFILIATE_LINKS.items():
         if key in project_key:
             return link
-    pool = row.get("pool", "")
-    if isinstance(pool, str) and pool and pool != "Unknown":
-        return f"https://defillama.com/yields/pool/{pool}"
+
     return "https://defillama.com/yields"
 
 
