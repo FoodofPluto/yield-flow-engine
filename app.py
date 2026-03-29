@@ -25,6 +25,7 @@ from engine.recap import build_daily_recap, build_weekly_recap
 APP_NAME = "FuruFlow"
 APP_VERSION = "v8.1"
 APP_TAGLINE = "Find the smartest yields. Avoid the dumb ones."
+LINK_RESOLVER_VERSION = "2026-03-28-linkfix-2"
 POOL_LIMIT = 400
 FREE_POOL_LIMIT = 10
 FREE_SORT_OPTIONS = ["Highest APY", "Largest TVL"]
@@ -60,15 +61,15 @@ FURUFLOW_STRIPE_LINK = os.getenv("FURUFLOW_STRIPE_LINK", "https://buy.stripe.com
 AFFILIATE_LINKS = {
     "aave": "https://app.aave.com/?ref=furuflow",
     "aave-v3": "https://app.aave.com/?ref=furuflow",
-    "pendle": "https://app.pendle.finance/trade/markets?ref=furuflow",
+
     "gmx": "https://app.gmx.io/#/?ref=furuflow",
     "curve": "https://curve.fi/#/ethereum/pools?ref=furuflow",
     "beefy": "https://app.beefy.com/?ref=furuflow",
     "yearn": "https://yearn.fi/?ref=furuflow",
     "morpho": "https://app.morpho.org/?ref=furuflow",
     "morpho-v1": "https://app.morpho.org/?ref=furuflow",
-    "uniswap": "https://app.uniswap.org/?ref=furuflow",
-    "uniswap-v3": "https://app.uniswap.org/?ref=furuflow",
+
+
 }
 
 st.set_page_config(
@@ -557,7 +558,7 @@ def derive_chart_signal(pool_id: str, chart: pd.DataFrame) -> dict[str, Any]:
 
 
 @st.cache_data(show_spinner=False)
-def enrich(df: pd.DataFrame) -> pd.DataFrame:
+def enrich(df: pd.DataFrame, resolver_version: str = LINK_RESOLVER_VERSION) -> pd.DataFrame:
     data = df.copy()
 
     for column in ["apy", "apyBase", "apyReward", "tvlUsd", "volumeUsd1d", "volumeUsd7d"]:
@@ -725,7 +726,6 @@ def build_pool_url(row: pd.Series) -> str:
             return link
 
     return "https://defillama.com/yields"
-
 
 def build_scorecard(row: pd.Series) -> str:
     parts = []
@@ -1357,7 +1357,16 @@ if db_user.get('is_admin'):
     render_admin_access_panel(db_user)
 
 raw_df = fetch_pools()
-df = enrich(raw_df)
+df = enrich(raw_df, resolver_version=LINK_RESOLVER_VERSION)
+
+pendle_debug = df[
+    (df["project"].astype(str).str.lower() == "pendle")
+    & (df["chain"].astype(str) == "Arbitrum")
+    & (df["symbol"].astype(str) == "SUSDAI")
+][["pool", "project", "chain", "symbol", "pool_url"]].head(10)
+
+with st.expander("Debug: Pendle link resolver", expanded=False):
+    st.dataframe(pendle_debug, use_container_width=True, hide_index=True)
 
 if "watchlist" not in st.session_state:
     st.session_state.watchlist = load_watchlist()
@@ -1797,3 +1806,4 @@ elif page == "Watchlist":
         else:
             st.info("Add a few pools to see watchlist comparisons.")
         st.markdown("</div>", unsafe_allow_html=True)
+
