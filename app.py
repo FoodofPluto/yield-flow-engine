@@ -686,95 +686,40 @@ def label_risk(score: int) -> str:
 
 
 def build_pool_url(row: pd.Series) -> str:
-    """
-    Resolve the most specific pool URL available.
+    upstream_url_fields = [
+        "url",
+        "poolUrl",
+        "pool_url",
+        "projectUrl",
+        "project_url",
+        "link",
+    ]
 
-    Priority:
-    1) Explicit pool-level URLs already present in upstream data.
-    2) DefiLlama pool detail page using the pool id.
-    3) Protocol-specific deeplink only when we have strong identifiers.
-    4) Protocol homepage fallback last.
-    """
-    def _clean(val: Any) -> str:
-        if val is None:
-            return ""
-        try:
-            if pd.isna(val):
-                return ""
-        except Exception:
-            pass
-        return str(val).strip()
-
-    def _is_http(url: str) -> bool:
-        url = _clean(url).lower()
-        return url.startswith("http://") or url.startswith("https://")
-
-    def _is_generic(url: str) -> bool:
-        url = _clean(url).lower().rstrip("/")
-        generic = {
-            "https://app.uniswap.org",
-            "https://uniswap.org",
-            "https://aerodrome.finance",
-            "https://app.merkl.xyz",
-            "https://merkl.xyz",
-            "https://app.aave.com",
-            "https://app.pendle.finance",
-            "https://app.gmx.io/#",
-            "https://curve.fi/#/ethereum/pools",
-            "https://app.beefy.com",
-            "https://yearn.fi",
-            "https://app.morpho.org",
-        }
-        return url in generic
-
-    def _looks_like_address(value: str) -> bool:
-        value = _clean(value)
-        return value.startswith("0x") and len(value) >= 10
-
-    # 1) honor any existing pool-specific URL from upstream data
-    for field in ("pool_url", "url", "link", "urlMain"):
-        candidate = _clean(row.get(field))
-        if _is_http(candidate) and not _is_generic(candidate):
-            return candidate
-
-    # 2) safest universal fallback: DefiLlama pool page
-    for field in ("pool", "pool_id", "defillama_pool_id"):
-        pool_id = _clean(row.get(field))
-        if pool_id and pool_id != "Unknown":
-            return f"https://defillama.com/yields/pool/{quote(pool_id)}"
-
-    # 3) only build protocol deeplink if the identifiers look strong enough
-    project_key = _clean(row.get("project_key", row.get("project", ""))).lower()
-    chain = _clean(row.get("chain")).lower()
-    token_a = _clean(row.get("token0") or row.get("tokenA"))
-    token_b = _clean(row.get("token1") or row.get("tokenB"))
-    pool_meta = _clean(row.get("poolMeta"))
-    campaign_id = _clean(row.get("campaignId") or row.get("opportunityId"))
-
-    uniswap_chain_ids = {
-        "ethereum": 1,
-        "polygon": 137,
-        "optimism": 10,
-        "arbitrum": 42161,
-        "base": 8453,
-        "avalanche": 43114,
+    generic_urls = {
+        "https://defillama.com/yields",
+        "https://app.pendle.finance/trade/markets?ref=furuflow",
+        "https://app.uniswap.org/?ref=furuflow",
+        "https://app.aave.com/?ref=furuflow",
+        "https://curve.fi/#/ethereum/pools?ref=furuflow",
+        "https://app.beefy.com/?ref=furuflow",
+        "https://yearn.fi/?ref=furuflow",
+        "https://app.morpho.org/?ref=furuflow",
+        "https://app.gmx.io/#/?ref=furuflow",
     }
 
-    if "uniswap" in project_key:
-        chain_id = uniswap_chain_ids.get(chain)
-        if chain_id and _looks_like_address(token_a) and _looks_like_address(token_b):
-            return (
-                "https://app.uniswap.org/positions/create/v3"
-                f"?chain={chain_id}&currencyA={quote(token_a)}&currencyB={quote(token_b)}"
-            )
+    for field in upstream_url_fields:
+        value = row.get(field, "")
+        if isinstance(value, str):
+            value = value.strip()
+            if value.startswith("http://") or value.startswith("https://"):
+                if value not in generic_urls:
+                    return value
 
-    if "aerodrome" in project_key and _looks_like_address(pool_meta):
-        return f"https://aerodrome.finance/liquidity?pool={quote(pool_meta)}"
+    pool = str(row.get("pool", "")).strip()
+    if pool and pool != "Unknown":
+        return f"https://defillama.com/yields/pool/{pool}"
 
-    if "merkl" in project_key and campaign_id:
-        return f"https://app.merkl.xyz/opportunities/{quote(campaign_id)}"
-
-    # 4) homepage fallback only if we truly have nothing better
+    project_key = str(row.get("project_key", row.get("project", ""))).lower().strip()
     for key, link in AFFILIATE_LINKS.items():
         if key in project_key:
             return link
