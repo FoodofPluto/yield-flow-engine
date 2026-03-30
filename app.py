@@ -1804,7 +1804,7 @@ elif page == "Pool Explorer":
                         )
                         preview_col_left, preview_col_mid, preview_col_right = st.columns([0.2, 0.6, 0.2], gap="small")
                         with preview_col_mid:
-                            st.image(str(preview_path), width=360)
+                            st.image(str(export_path), width=320)
                         st.markdown("</div>", unsafe_allow_html=True)
 
                     with open(export_path, "rb") as f:

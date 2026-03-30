@@ -192,9 +192,9 @@ def _mode_config(mode: str):
     mode = str(mode).lower()
     if mode == "preview":
         return {
-            "size": 900,
-            "font_scale": 2.6,
-            "wrap_width": 24,
+            "size": 1600,
+            "font_scale": 1.0,
+            "wrap_width": 56,
         }
     return {
         "size": 1600,
@@ -218,8 +218,8 @@ def build_signal_card(
     mode="export",
 ):
     config = _mode_config(mode)
-    W = H = config["size"]
-    is_preview = str(mode).lower() == "preview"
+    geometry_scale = W / 1600.0
+    fonts = _fonts(scale=config["font_scale"])
 
     if is_preview:
         geometry_scale = 1.0   # 🔥 NO SHRINKING
