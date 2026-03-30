@@ -1757,9 +1757,14 @@ elif page == "Pool Explorer":
                 )
 
                 with preview_slot.container():
-                    card_col, spacer_col = st.columns([0.72, 1.28], gap="small")
+                    st.markdown(
+                        "<div style='margin-top:0.35rem; padding:12px; background:rgba(255,255,255,0.03); border:1px solid rgba(255,255,255,0.08); border-radius:16px;'>",
+                        unsafe_allow_html=True,
+                    )
+                    card_col, spacer_col = st.columns([0.9, 1.1], gap="small")
                     with card_col:
-                        st.image(str(out_path), width=420)
+                        st.image(str(out_path), width=480)
+                    st.markdown("</div>", unsafe_allow_html=True)
 
                 with open(out_path, "rb") as f:
                     download_slot.download_button(
