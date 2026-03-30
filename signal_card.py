@@ -193,8 +193,8 @@ def _mode_config(mode: str):
     if mode == "preview":
         return {
             "size": 720,
-            "font_scale": 1.22,
-            "wrap_width": 36,
+            "font_scale": 1.9,
+            "wrap_width": 30,
         }
     return {
         "size": 1600,
@@ -220,7 +220,7 @@ def build_signal_card(
     config = _mode_config(mode)
     W = H = config["size"]
     scale = W / 1600.0
-    font_scale = config["font_scale"] * scale
+    font_scale = config["font_scale"]
     fonts = _fonts(scale=font_scale)
 
     if sparkline_values is None:
