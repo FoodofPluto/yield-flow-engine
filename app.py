@@ -1802,9 +1802,7 @@ elif page == "Pool Explorer":
                             "<div style='margin-top:0.35rem; padding:12px; background:rgba(255,255,255,0.03); border:1px solid rgba(255,255,255,0.08); border-radius:16px;'>",
                             unsafe_allow_html=True,
                         )
-                        preview_col_left, preview_col_mid, preview_col_right = st.columns([0.2, 0.6, 0.2], gap="small")
-                        with preview_col_mid:
-                            st.image(str(export_path), width=320)
+                        st.image(str(preview_path), use_container_width=True)
                         st.markdown("</div>", unsafe_allow_html=True)
 
                     with open(export_path, "rb") as f:
