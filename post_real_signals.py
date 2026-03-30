@@ -132,6 +132,10 @@ def get_real_furuflow_signals() -> List[Dict[str, Any]]:
     min_tvl = _env_float("FURUFLOW_SIGNAL_MIN_TVL", 1_000_000)
     min_apy = _env_float("FURUFLOW_SIGNAL_MIN_APY", 8.0)
     max_apy = _env_float("FURUFLOW_SIGNAL_MAX_APY", 200.0)
+    min_risk = _env_float("FURUFLOW_SIGNAL_MIN_RISK", 0.0)
+    max_risk = _env_float("FURUFLOW_SIGNAL_MAX_RISK", 100.0)
+    min_strength = _env_float("FURUFLOW_SIGNAL_MIN_STRENGTH", 0.0)
+    max_strength = _env_float("FURUFLOW_SIGNAL_MAX_STRENGTH", 100.0)
     top_n = _env_int("FURUFLOW_SIGNAL_TOP_N", 5)
     stablecoin_only = _env_bool("FURUFLOW_SIGNAL_STABLECOIN_ONLY", False)
     requested_chains = _env_chain_set()
@@ -178,7 +182,18 @@ def get_real_furuflow_signals() -> List[Dict[str, Any]]:
 
     signals = enrich_signals(signals)
     signals = _attach_phase_two_fields(signals)
-    return signals[:top_n]
+
+    filtered_signals: List[Dict[str, Any]] = []
+    for signal in signals:
+        risk_score = float(signal.get("risk_score") or 0.0)
+        strength_score = float(signal.get("strength_score") or 0.0)
+        if risk_score < min_risk or risk_score > max_risk:
+            continue
+        if strength_score < min_strength or strength_score > max_strength:
+            continue
+        filtered_signals.append(signal)
+
+    return filtered_signals[:top_n]
 
 
 def get_new_signals(signals: List[Dict[str, Any]], dedupe_hours: int) -> List[Dict[str, Any]]:

@@ -1,0 +1,23 @@
+Set-Location "C:\Users\andro\Projects\yield-flow-engine"
+
+$env:FURUFLOW_SIGNAL_SOURCE="defillama"
+$env:FURUFLOW_SIGNAL_MIN_TVL="250000"
+$env:FURUFLOW_SIGNAL_MIN_APY="80"
+$env:FURUFLOW_SIGNAL_MAX_APY="1000000"
+$env:FURUFLOW_SIGNAL_MIN_RISK="90"
+$env:FURUFLOW_SIGNAL_MAX_RISK="100"
+$env:FURUFLOW_SIGNAL_MIN_STRENGTH="0"
+$env:FURUFLOW_SIGNAL_MAX_STRENGTH="100"
+$env:FURUFLOW_SIGNAL_TOP_N="10"
+$env:FURUFLOW_SIGNAL_MAX_POSTS="10"
+$env:FURUFLOW_SIGNAL_CHAINS="base,arbitrum,optimism,polygon,ethereum"
+$env:FURUFLOW_SIGNAL_STABLECOIN_ONLY="false"
+$env:FURUFLOW_SIGNAL_ALLOW_REPOSTS="true"
+$env:FURUFLOW_SIGNAL_DEDUPE_HOURS="0"
+$env:FURUFLOW_SIGNAL_DRY_RUN="true"
+
+Write-Host ""
+Write-Host "==============================="
+Write-Host "FURUFLOW DEGEN SIGNALS"
+Write-Host "==============================="
+python .\post_real_signals.py
