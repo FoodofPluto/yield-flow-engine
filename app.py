@@ -1,5 +1,6 @@
 from __future__ import annotations
 from signal_card import build_signal_card
+from inspect import signature
 import tempfile
 
 import json
@@ -750,6 +751,33 @@ def sample_pool_data(errors: list[str]) -> pd.DataFrame:
     )
     demo.attrs["errors"] = errors
     return demo
+
+
+def build_signal_card_assets(*, pool_name: str, chain: str, apy: str, tvl: str, strength: str, risk: str, signal: str, why_text: str, cta: str, sparkline_values: list[float], preview_path: str, export_path: str) -> dict[str, str]:
+    common_kwargs = {
+        "pool_name": pool_name,
+        "chain": chain,
+        "apy": apy,
+        "tvl": tvl,
+        "strength": strength,
+        "risk": risk,
+        "signal": signal,
+        "why_text": why_text,
+        "cta": cta,
+        "sparkline_values": sparkline_values,
+    }
+
+    sig = signature(build_signal_card)
+    supports_mode = "mode" in sig.parameters
+
+    if supports_mode:
+        build_signal_card(**common_kwargs, mode="preview", out_path=preview_path)
+        build_signal_card(**common_kwargs, mode="export", out_path=export_path)
+    else:
+        build_signal_card(**common_kwargs, out_path=export_path)
+        build_signal_card(**common_kwargs, out_path=preview_path)
+
+    return {"preview_path": preview_path, "export_path": export_path}
 
 
 def get_checkout_link(current_email: str = "") -> str:
@@ -1741,9 +1769,10 @@ elif page == "Pool Explorer":
 
             if st.button("Generate Card", key="generate_pool_card", use_container_width=True):
                 temp_dir = Path(tempfile.gettempdir())
+                preview_path = temp_dir / f"card_preview_{current_pool_id}.png"
                 export_path = temp_dir / f"card_export_{current_pool_id}.png"
 
-                build_signal_card(
+                card_assets = build_signal_card_assets(
                     pool_name=f"{row['project']} — {row['symbol']}",
                     chain=row["chain"],
                     apy=f"{row['apy']:.2f}%",
@@ -1754,18 +1783,20 @@ elif page == "Pool Explorer":
                     why_text=f"{row['signal']} • {row['scorecard']}",
                     cta="Farm or fade?",
                     sparkline_values=[20, 22, 21, 23, 24, 26, 25, 27],
-                    out_path=str(export_path),
+                    preview_path=str(preview_path),
+                    export_path=str(export_path),
                 )
 
                 st.session_state[card_state_key] = {
                     "pool_id": current_pool_id,
-                    "export_path": str(export_path),
+                    **card_assets,
                 }
 
             card_assets = st.session_state.get(card_state_key)
             if card_assets and card_assets.get("pool_id") == current_pool_id:
+                preview_path = Path(card_assets["preview_path"])
                 export_path = Path(card_assets["export_path"])
-                if export_path.exists():
+                if preview_path.exists() and export_path.exists():
                     with st.container():
                         st.markdown(
                             "<div style='margin-top:0.35rem; padding:12px; background:rgba(255,255,255,0.03); border:1px solid rgba(255,255,255,0.08); border-radius:16px;'>",
@@ -1773,7 +1804,7 @@ elif page == "Pool Explorer":
                         )
                         preview_col_left, preview_col_mid, preview_col_right = st.columns([0.2, 0.6, 0.2], gap="small")
                         with preview_col_mid:
-                            st.image(str(export_path), width=360)
+                            st.image(str(preview_path), width=360)
                         st.markdown("</div>", unsafe_allow_html=True)
 
                     with open(export_path, "rb") as f:
