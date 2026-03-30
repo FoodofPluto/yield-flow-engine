@@ -1734,13 +1734,14 @@ elif page == "Pool Explorer":
             st.dataframe(stats, use_container_width=True, hide_index=True, height=360)
 
             st.markdown("### 📸 Shareable Signal Card")
+            st.caption("In-app preview is intentionally compact. Download the full-size PNG for posting.")
 
-            preview_slot = st.empty()
-            download_slot = st.empty()
+            card_state_key = "pool_card_assets"
+            current_pool_id = str(row["pool"])
 
             if st.button("Generate Card", key="generate_pool_card", use_container_width=True):
                 temp_dir = Path(tempfile.gettempdir())
-                out_path = temp_dir / f"card_{row['pool']}.png"
+                export_path = temp_dir / f"card_export_{current_pool_id}.png"
 
                 build_signal_card(
                     pool_name=f"{row['project']} — {row['symbol']}",
@@ -1753,28 +1754,37 @@ elif page == "Pool Explorer":
                     why_text=f"{row['signal']} • {row['scorecard']}",
                     cta="Farm or fade?",
                     sparkline_values=[20, 22, 21, 23, 24, 26, 25, 27],
-                    out_path=str(out_path),
+                    out_path=str(export_path),
                 )
 
-                with preview_slot.container():
-                    st.markdown(
-                        "<div style='margin-top:0.35rem; padding:12px; background:rgba(255,255,255,0.03); border:1px solid rgba(255,255,255,0.08); border-radius:16px;'>",
-                        unsafe_allow_html=True,
-                    )
-                    card_col, spacer_col = st.columns([0.9, 1.1], gap="small")
-                    with card_col:
-                        st.image(str(out_path), width=480)
-                    st.markdown("</div>", unsafe_allow_html=True)
+                st.session_state[card_state_key] = {
+                    "pool_id": current_pool_id,
+                    "export_path": str(export_path),
+                }
 
-                with open(out_path, "rb") as f:
-                    download_slot.download_button(
-                        "Download Card",
-                        data=f.read(),
-                        file_name="furuflow_signal.png",
-                        mime="image/png",
-                        use_container_width=True,
-                        key="download_pool_card",
-                    )
+            card_assets = st.session_state.get(card_state_key)
+            if card_assets and card_assets.get("pool_id") == current_pool_id:
+                export_path = Path(card_assets["export_path"])
+                if export_path.exists():
+                    with st.container():
+                        st.markdown(
+                            "<div style='margin-top:0.35rem; padding:12px; background:rgba(255,255,255,0.03); border:1px solid rgba(255,255,255,0.08); border-radius:16px;'>",
+                            unsafe_allow_html=True,
+                        )
+                        preview_col_left, preview_col_mid, preview_col_right = st.columns([0.2, 0.6, 0.2], gap="small")
+                        with preview_col_mid:
+                            st.image(str(export_path), width=360)
+                        st.markdown("</div>", unsafe_allow_html=True)
+
+                    with open(export_path, "rb") as f:
+                        st.download_button(
+                            "Download Full-Size Card",
+                            data=f.read(),
+                            file_name="furuflow_signal.png",
+                            mime="image/png",
+                            use_container_width=True,
+                            key="download_pool_card",
+                        )
 
             c1, c2 = st.columns(2)
             with c1:
