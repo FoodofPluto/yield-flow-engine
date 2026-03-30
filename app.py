@@ -1730,11 +1730,11 @@ elif page == "Pool Explorer":
             
             st.dataframe(stats, use_container_width=True, hide_index=True, height=360)
             # --- SIGNAL CARD GENERATOR ---
-st.markdown("### 📸 Shareable Signal Card")
+        st.markdown("### 📸 Shareable Signal Card")
 
-if st.button("Generate Card", use_container_width=True):
-    temp_dir = Path(tempfile.gettempdir())
-    out_path = temp_dir / f"card_{row['pool']}.png"
+        if st.button("Generate Card", use_container_width=True):
+            temp_dir = Path(tempfile.gettempdir())
+            out_path = temp_dir / f"card_{row['pool']}.png"
 
     build_signal_card(
         pool_name=f"{row['project']} — {row['symbol']}",
