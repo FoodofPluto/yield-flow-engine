@@ -1,6 +1,4 @@
 from __future__ import annotations
-from signal_card import build_signal_card
-import tempfile
 
 import json
 import os
@@ -15,7 +13,6 @@ import plotly.graph_objects as go
 import requests
 import streamlit as st
 from streamlit.components.v1 import html as st_html
-
 
 from auth import get_current_user, login_form, logout_button
 from db import claim_session, clear_session, get_user_by_email, init_db, search_users, set_admin, set_lifetime_access, set_pro_active, touch_session, upsert_user
@@ -1715,7 +1712,6 @@ elif page == "Pool Explorer":
                 st.caption("Live chart history loaded from the upstream pool endpoint.")
         with cols[1]:
             st.markdown(f"<div class='signal-card'><div class='signal-title'>{row['project']} • {row['symbol']}</div><div class='signal-copy'>{row['chain']} • {row['strategy_type']} • {row['signal']}</div></div>", unsafe_allow_html=True)
-            
             stats = pd.DataFrame([
                 ["APY", f"{row['apy']:.2f}%"],
                 ["TVL", format_money(row['tvlUsd'])],
@@ -1727,48 +1723,16 @@ elif page == "Pool Explorer":
                 ["7d APY change", f"{float(row['apy_delta_7']):.2f}"],
                 ["7d TVL change", f"{float(row['tvl_delta_7_pct']):.2f}%"],
             ], columns=["Metric", "Value"])
-            
             st.dataframe(stats, use_container_width=True, hide_index=True, height=360)
-            # --- SIGNAL CARD GENERATOR ---
-st.markdown("### 📸 Shareable Signal Card")
-
-if st.button("Generate Card", use_container_width=True):
-    temp_dir = Path(tempfile.gettempdir())
-    out_path = temp_dir / f"card_{row['pool']}.png"
-
-    build_signal_card(
-        pool_name=f"{row['project']} — {row['symbol']}",
-        chain=row["chain"],
-        apy=f"{row['apy']:.2f}%",
-        tvl=format_money(row["tvlUsd"]),
-        strength=f"{int(row['signal_strength'])}/100",
-        risk=row["risk_band"],
-        signal=row["signal"],
-        why_text=f"{row['signal']} • {row['scorecard']}",
-        cta="Farm or fade?",
-        sparkline_values=[20, 22, 21, 23, 24, 26, 25, 27],
-        out_path=str(out_path),
-    )
-
-    st.image(str(out_path), use_container_width=True)
-
-    with open(out_path, "rb") as f:
-        st.download_button(
-            "Download Card",
-            data=f,
-            file_name="furuflow_signal.png",
-            mime="image/png",
-            use_container_width=True,
-        )
-        c1, c2 = st.columns(2)
-        with c1:
+            c1, c2 = st.columns(2)
+            with c1:
                 watched = row["pool"] in st.session_state.watchlist
                 st.markdown("<div class='watch-wrap'>", unsafe_allow_html=True)
                 if st.button("Remove from watchlist" if watched else "Add to watchlist", key="drill_watch", use_container_width=True):
                     watch_toggle(str(row["pool"]))
                     st.rerun()
                 st.markdown("</div>", unsafe_allow_html=True)
-        with c2:
+            with c2:
                 st.markdown("<div class='pool-wrap'>", unsafe_allow_html=True)
                 st.link_button("Open Pool", row["pool_url"], use_container_width=True)
                 st.markdown("</div>", unsafe_allow_html=True)
