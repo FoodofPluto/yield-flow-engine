@@ -83,7 +83,7 @@ def _fonts(scale: float = 1.0):
                 windows_font_dir / "segoeuib.ttf",
                 linux_font_dir / "DejaVuSans-Bold.ttf",
             ],
-            sz(116),
+            sz(160),
         ),
     }
 
@@ -192,14 +192,14 @@ def _mode_config(mode: str):
     mode = str(mode).lower()
     if mode == "preview":
         return {
-            "size": 720,
-            "font_scale": 2.6,
-            "wrap_width": 24,
+            "size": 800,
+            "font_scale": 3.2,
+            "wrap_width": 20,
         }
     return {
-        "size": 1600,
-        "font_scale": 1.0,
-        "wrap_width": 56,
+        "size": 500,
+        "font_scale": 4.0,
+        "wrap_width": 20,
     }
 
 
@@ -219,7 +219,7 @@ def build_signal_card(
 ):
     config = _mode_config(mode)
     W = H = config["size"]
-    geometry_scale = W / 1600.0
+    geometry_scale = W / 1200.0
     fonts = _fonts(scale=config["font_scale"])
 
     if sparkline_values is None:
