@@ -192,14 +192,16 @@ def _mode_config(mode: str):
     mode = str(mode).lower()
     if mode == "preview":
         return {
-            "size": 1600,
+            "canvas": (1600, 900),
             "font_scale": 1.0,
-            "wrap_width": 56,
+            "wrap_width": 44,
+            "compact": True,
         }
     return {
-        "size": 1600,
+        "canvas": (1600, 1600),
         "font_scale": 1.0,
         "wrap_width": 56,
+        "compact": False,
     }
 
 
@@ -218,14 +220,9 @@ def build_signal_card(
     mode="export",
 ):
     config = _mode_config(mode)
+    W, H = config["canvas"]
+    is_preview = config["compact"]
     geometry_scale = W / 1600.0
-    fonts = _fonts(scale=config["font_scale"])
-
-    if is_preview:
-        geometry_scale = 1.0   # 🔥 NO SHRINKING
-    else:
-        geometry_scale = W / 1600.0
-    
     fonts = _fonts(scale=config["font_scale"])
 
     if sparkline_values is None:
@@ -274,48 +271,13 @@ def build_signal_card(
     pill_r = max(12, int(21 * geometry_scale))
 
     if is_preview:
-        _draw_pill(draw, int(96 * geometry_scale), pill_y, f"Risk: {risk}", rf, ro, rt, fonts, pill_pad_x, pill_h, pill_r, pill_outline)
-        _draw_pill(draw, int(96 * geometry_scale), pill_y + pill_h + int(16 * geometry_scale), f"Signal: {signal}", sf, so, st, fonts, pill_pad_x, pill_h, pill_r, pill_outline)
-    else:
         w1 = _draw_pill(draw, int(96 * geometry_scale), pill_y, f"Risk: {risk}", rf, ro, rt, fonts, pill_pad_x, pill_h, pill_r, pill_outline)
         _draw_pill(draw, int(112 * geometry_scale) + w1, pill_y, f"Signal: {signal}", sf, so, st, fonts, pill_pad_x, pill_h, pill_r, pill_outline)
+    else:
+        _draw_pill(draw, int(96 * geometry_scale), pill_y, f"Risk: {risk}", rf, ro, rt, fonts, pill_pad_x, pill_h, pill_r, pill_outline)
+        _draw_pill(draw, int(96 * geometry_scale), pill_y + pill_h + int(16 * geometry_scale), f"Signal: {signal}", sf, so, st, fonts, pill_pad_x, pill_h, pill_r, pill_outline)
 
     if is_preview:
-        metric_x = int(790 * geometry_scale)
-        metric_w = int(710 * geometry_scale)
-        metric_h = int(152 * geometry_scale)
-
-        _draw_metric(
-            draw,
-            metric_x,
-            int(214 * geometry_scale),
-            metric_w,
-            metric_h,
-            "TVL",
-            tvl,
-            fonts,
-            pad_x=max(16, int(24 * geometry_scale)),
-            pad_y=max(14, int(20 * geometry_scale)),
-        )
-        _draw_metric(
-            draw,
-            metric_x,
-            int(392 * geometry_scale),
-            metric_w,
-            metric_h,
-            "Strength",
-            strength,
-            fonts,
-            pad_x=max(16, int(24 * geometry_scale)),
-            pad_y=max(14, int(20 * geometry_scale)),
-        )
-        spark_box = (
-            metric_x,
-            int(572 * geometry_scale),
-            int(1500 * geometry_scale),
-            int(900 * geometry_scale),
-        )
-    else:
         _draw_metric(
             draw,
             int(884 * geometry_scale),
@@ -346,26 +308,72 @@ def build_signal_card(
             int(1504 * geometry_scale),
             int(760 * geometry_scale),
         )
+        summary_box = (
+            int(96 * geometry_scale),
+            int(714 * geometry_scale),
+            int(844 * geometry_scale),
+            int(840 * geometry_scale),
+        )
+        summary_title_y = summary_box[1] + int(22 * geometry_scale)
+        summary_text_y = summary_box[1] + int(64 * geometry_scale)
+        footer_y = int(840 * geometry_scale)
+    else:
+        _draw_metric(
+            draw,
+            int(790 * geometry_scale),
+            int(214 * geometry_scale),
+            int(710 * geometry_scale),
+            int(152 * geometry_scale),
+            "TVL",
+            tvl,
+            fonts,
+            pad_x=max(16, int(24 * geometry_scale)),
+            pad_y=max(14, int(20 * geometry_scale)),
+        )
+        _draw_metric(
+            draw,
+            int(790 * geometry_scale),
+            int(392 * geometry_scale),
+            int(710 * geometry_scale),
+            int(152 * geometry_scale),
+            "Strength",
+            strength,
+            fonts,
+            pad_x=max(16, int(24 * geometry_scale)),
+            pad_y=max(14, int(20 * geometry_scale)),
+        )
+        spark_box = (
+            int(790 * geometry_scale),
+            int(572 * geometry_scale),
+            int(1500 * geometry_scale),
+            int(900 * geometry_scale),
+        )
+        summary_box = (
+            int(96 * geometry_scale),
+            int(980 * geometry_scale),
+            int(1400 * geometry_scale),
+            int(1320 * geometry_scale),
+        )
+        summary_title_y = summary_box[1] + int(36 * geometry_scale)
+        summary_text_y = summary_box[1] + int(98 * geometry_scale)
+        footer_y = int(1420 * geometry_scale)
 
     _draw_sparkline(draw, spark_box, sparkline_values, line_color="#78A6FF", fill_color="#10233F")
     draw.text((spark_box[0] + int(30 * geometry_scale), spark_box[1] + int(30 * geometry_scale)), "Trend", font=fonts["xs"], fill="#8D99A8")
     draw.text((spark_box[0] + int(30 * geometry_scale), spark_box[1] + int(68 * geometry_scale)), "APY / TVL sparkline", font=fonts["sm_b"], fill="#EAF0F7")
 
-    summary_box = (int(96 * geometry_scale), int(980 * geometry_scale) if is_preview else int(794 * geometry_scale), int(1400 * geometry_scale), int(1320 * geometry_scale) if is_preview else int(1078 * geometry_scale))
     _rr(draw, summary_box, max(16, int(30 * geometry_scale)), "#10161D", outline="#202A35", width=max(1, int(2 * geometry_scale)))
-    draw.text((summary_box[0] + int(32 * geometry_scale), summary_box[1] + int(36 * geometry_scale)), "Summary", font=fonts["md_b"], fill="#F1F5FA")
-
+    draw.text((summary_box[0] + int(32 * geometry_scale), summary_title_y), "Summary", font=fonts["md_b"], fill="#F1F5FA")
     wrapped = textwrap.fill(why_text, width=config["wrap_width"])
     draw.text(
-        (summary_box[0] + int(32 * geometry_scale), summary_box[1] + int(98 * geometry_scale)),
+        (summary_box[0] + int(32 * geometry_scale), summary_text_y),
         wrapped,
         font=fonts["md"],
         fill="#B6C0CC",
         spacing=max(6, int(12 * geometry_scale)),
     )
 
-    footer_y = int(1420 * geometry_scale) if is_preview else int(1160 * geometry_scale)
-    footer_text_y = footer_y + int(38 * geometry_scale)
+    footer_text_y = footer_y + int(18 * geometry_scale)
     draw.line((int(96 * geometry_scale), footer_y, int(1504 * geometry_scale), footer_y), fill="#1B2430", width=max(1, int(2 * geometry_scale)))
     draw.text((int(96 * geometry_scale), footer_text_y), cta, font=fonts["md_b"], fill="#F4F7FB")
     draw.text((int(1318 * geometry_scale), footer_text_y), "furuflow", font=fonts["md_b"], fill="#6F7C8B")
@@ -374,4 +382,5 @@ def build_signal_card(
 
 
 if __name__ == "__main__":
-    build_signal_card()
+    build_signal_card(mode="preview", out_path="signal_card_preview.png")
+    build_signal_card(mode="export", out_path="signal_card_export.png")
