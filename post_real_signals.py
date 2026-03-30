@@ -244,7 +244,7 @@ def main() -> None:
 
     free_signals, pro_signals = split_signal_tiers(signals)
 
-    telegram_candidates = []
+    telegram_candidates: List[Dict[str, Any]] = []
     if post_free:
         telegram_candidates.extend(free_signals)
     if post_pro:
@@ -280,7 +280,6 @@ def main() -> None:
     print(f"Posted {len(fresh_signals)} signal(s) to Telegram.")
     print(f"Strong alerts sent: {len(alerts_sent)}")
     print(result)
-
 
 if __name__ == "__main__":
     main()
