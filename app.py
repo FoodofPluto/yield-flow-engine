@@ -1761,17 +1761,60 @@ elif page == "Pool Explorer":
 
             st.dataframe(stats, use_container_width=True, hide_index=True, height=360)
 
-            st.markdown("### 📸 Shareable Signal Card")
-            st.caption("In-app preview is intentionally compact. Download the full-size PNG for posting.")
+            if db_user.get("is_admin", False):
+                st.markdown("### 📸 Shareable Signal Card")
+                st.caption("Admin-only feature.")
 
-            card_state_key = "pool_card_assets"
-            current_pool_id = str(row["pool"])
+    card_state_key = "pool_card_assets"
+    current_pool_id = str(row["pool"])
 
-            if st.button("Generate Card", key="generate_pool_card", use_container_width=True):
-                temp_dir = Path(tempfile.gettempdir())
-                preview_path = temp_dir / f"card_preview_{current_pool_id}.png"
-                export_path = temp_dir / f"card_export_{current_pool_id}.png"
+    if st.button("Generate Card", key="generate_pool_card", use_container_width=True):
+        temp_dir = Path(tempfile.gettempdir())
+        preview_path = temp_dir / f"card_preview_{current_pool_id}.png"
+        export_path = temp_dir / f"card_export_{current_pool_id}.png"
 
+        card_assets = build_signal_card_assets(
+            pool_name=f"{row['project']} — {row['symbol']}",
+            chain=row["chain"],
+            apy=f"{row['apy']:.2f}%",
+            tvl=format_money(row["tvlUsd"]),
+            strength=f"{int(row['signal_strength'])}/100",
+            risk=row["risk_band"],
+            signal=row["signal"],
+            why_text=f"{row['signal']} • {row['scorecard']}",
+            cta="Farm or fade?",
+            sparkline_values=[20, 22, 21, 23, 24, 26, 25, 27],
+            preview_path=str(preview_path),
+            export_path=str(export_path),
+        )
+
+        st.session_state[card_state_key] = {
+            "pool_id": current_pool_id,
+            **card_assets,
+        }
+
+    card_assets = st.session_state.get(card_state_key)
+    if card_assets and card_assets.get("pool_id") == current_pool_id:
+        preview_path = Path(card_assets["preview_path"])
+        export_path = Path(card_assets["export_path"])
+        if preview_path.exists() and export_path.exists():
+            with st.container():
+                st.markdown(
+                    "<div style='margin-top:0.35rem; padding:12px; background:rgba(255,255,255,0.03); border:1px solid rgba(255,255,255,0.08); border-radius:16px;'>",
+                    unsafe_allow_html=True,
+                )
+                st.image(str(preview_path), use_container_width=True)
+                st.markdown("</div>", unsafe_allow_html=True)
+
+            with open(export_path, "rb") as f:
+                st.download_button(
+                    "Download Full-Size Card",
+                    data=f.read(),
+                    file_name="furuflow_signal.png",
+                    mime="image/png",
+                    use_container_width=True,
+                    key="download_pool_card",
+                )
                 card_assets = build_signal_card_assets(
                     pool_name=f"{row['project']} — {row['symbol']}",
                     chain=row["chain"],
