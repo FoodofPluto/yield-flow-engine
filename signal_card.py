@@ -193,8 +193,8 @@ def _mode_config(mode: str):
     if mode == "preview":
         return {
             "size": 720,
-            "font_scale": 1.9,
-            "wrap_width": 30,
+            "font_scale": 2.6,
+            "wrap_width": 24,
         }
     return {
         "size": 1600,
@@ -219,9 +219,8 @@ def build_signal_card(
 ):
     config = _mode_config(mode)
     W = H = config["size"]
-    scale = W / 1600.0
-    font_scale = config["font_scale"]
-    fonts = _fonts(scale=font_scale)
+    geometry_scale = W / 1600.0
+    fonts = _fonts(scale=config["font_scale"])
 
     if sparkline_values is None:
         sparkline_values = [19, 22, 21, 24, 23, 26, 25, 27]
@@ -229,66 +228,66 @@ def build_signal_card(
     img = Image.new("RGB", (W, H), "#090C10")
     draw = ImageDraw.Draw(img)
 
-    grid_step = max(42, int(96 * scale))
+    grid_step = max(42, int(96 * geometry_scale))
     for y in range(0, H, grid_step):
         draw.line((0, y, W, y), fill="#0E1319", width=1)
     for x in range(0, W, grid_step):
         draw.line((x, 0, x, H), fill="#0C1117", width=1)
 
-    outer_m = int(52 * scale)
-    outer_r = max(18, int(36 * scale))
-    _rr(draw, (outer_m, outer_m, W - outer_m, H - outer_m), outer_r, "#0D1117", outline="#1A2330", width=max(1, int(2 * scale)))
+    outer_m = int(52 * geometry_scale)
+    outer_r = max(18, int(36 * geometry_scale))
+    _rr(draw, (outer_m, outer_m, W - outer_m, H - outer_m), outer_r, "#0D1117", outline="#1A2330", width=max(1, int(2 * geometry_scale)))
 
-    badge_x1 = int(96 * scale)
-    badge_y1 = int(96 * scale)
-    badge_x2 = int(380 * scale)
-    badge_y2 = int(156 * scale)
-    _rr(draw, (badge_x1, badge_y1, badge_x2, badge_y2), max(12, int(20 * scale)), "#10161D", outline="#202A35", width=max(1, int(2 * scale)))
-    draw.text((int(122 * scale), int(113 * scale)), "FuruFlow Alert", font=fonts["xs"], fill="#DCE5EF")
+    badge_x1 = int(96 * geometry_scale)
+    badge_y1 = int(96 * geometry_scale)
+    badge_x2 = int(380 * geometry_scale)
+    badge_y2 = int(156 * geometry_scale)
+    _rr(draw, (badge_x1, badge_y1, badge_x2, badge_y2), max(12, int(20 * geometry_scale)), "#10161D", outline="#202A35", width=max(1, int(2 * geometry_scale)))
+    draw.text((int(122 * geometry_scale), int(113 * geometry_scale)), "FuruFlow Alert", font=fonts["xs"], fill="#DCE5EF")
 
     token_fill, token_outline, token_glyph = _token_colors(pool_name)
     chain_fill, chain_outline, chain_glyph = _chain_colors(chain)
-    icon_size = int(64 * scale)
-    icon_y = int(92 * scale)
-    _draw_badge(draw, int(1260 * scale), icon_y, icon_size, token_fill, token_outline, token_glyph, "#F4F7FB", fonts, max(12, icon_size // 2))
-    _draw_badge(draw, int(1338 * scale), icon_y, icon_size, chain_fill, chain_outline, chain_glyph, "#F4F7FB", fonts, max(12, icon_size // 2))
+    icon_size = int(64 * geometry_scale)
+    icon_y = int(92 * geometry_scale)
+    _draw_badge(draw, int(1260 * geometry_scale), icon_y, icon_size, token_fill, token_outline, token_glyph, "#F4F7FB", fonts, max(12, icon_size // 2))
+    _draw_badge(draw, int(1338 * geometry_scale), icon_y, icon_size, chain_fill, chain_outline, chain_glyph, "#F4F7FB", fonts, max(12, icon_size // 2))
 
-    draw.text((int(96 * scale), int(214 * scale)), pool_name, font=fonts["lg_b"], fill="#F4F7FB")
+    draw.text((int(96 * geometry_scale), int(214 * geometry_scale)), pool_name, font=fonts["lg_b"], fill="#F4F7FB")
 
-    apy_box = (int(96 * scale), int(300 * scale), int(844 * scale), int(584 * scale))
-    _rr(draw, apy_box, max(16, int(30 * scale)), "#10161D", outline="#202A35", width=max(1, int(2 * scale)))
-    draw.text((int(132 * scale), int(340 * scale)), apy, font=fonts["xl_b"], fill="#F7FAFD")
-    draw.text((int(138 * scale), int(478 * scale)), "Annual percentage yield", font=fonts["sm"], fill="#8D99A8")
+    apy_box = (int(96 * geometry_scale), int(300 * geometry_scale), int(844 * geometry_scale), int(584 * geometry_scale))
+    _rr(draw, apy_box, max(16, int(30 * geometry_scale)), "#10161D", outline="#202A35", width=max(1, int(2 * geometry_scale)))
+    draw.text((int(132 * geometry_scale), int(340 * geometry_scale)), apy, font=fonts["xl_b"], fill="#F7FAFD")
+    draw.text((int(138 * geometry_scale), int(478 * geometry_scale)), "Annual percentage yield", font=fonts["sm"], fill="#8D99A8")
 
     rf, ro, rt = _risk_colors(risk)
     sf, so, st = _signal_colors(signal)
-    pill_y = int(618 * scale)
-    pill_h = max(34, int(42 * scale))
-    pill_pad_x = max(12, int(17 * scale))
-    pill_outline = max(1, int(2 * scale))
-    pill_r = max(12, int(21 * scale))
-    w1 = _draw_pill(draw, int(96 * scale), pill_y, f"Risk: {risk}", rf, ro, rt, fonts, pill_pad_x, pill_h, pill_r, pill_outline)
-    _draw_pill(draw, int(112 * scale) + w1, pill_y, f"Signal: {signal}", sf, so, st, fonts, pill_pad_x, pill_h, pill_r, pill_outline)
+    pill_y = int(618 * geometry_scale)
+    pill_h = max(34, int(42 * geometry_scale))
+    pill_pad_x = max(12, int(17 * geometry_scale))
+    pill_outline = max(1, int(2 * geometry_scale))
+    pill_r = max(12, int(21 * geometry_scale))
+    w1 = _draw_pill(draw, int(96 * geometry_scale), pill_y, f"Risk: {risk}", rf, ro, rt, fonts, pill_pad_x, pill_h, pill_r, pill_outline)
+    _draw_pill(draw, int(112 * geometry_scale) + w1, pill_y, f"Signal: {signal}", sf, so, st, fonts, pill_pad_x, pill_h, pill_r, pill_outline)
 
-    _draw_metric(draw, int(884 * scale), int(214 * scale), int(620 * scale), int(130 * scale), "TVL", tvl, fonts, pad_x=max(16, int(24 * scale)), pad_y=max(14, int(20 * scale)))
-    _draw_metric(draw, int(884 * scale), int(364 * scale), int(620 * scale), int(130 * scale), "Strength", strength, fonts, pad_x=max(16, int(24 * scale)), pad_y=max(14, int(20 * scale)))
+    _draw_metric(draw, int(884 * geometry_scale), int(214 * geometry_scale), int(620 * geometry_scale), int(130 * geometry_scale), "TVL", tvl, fonts, pad_x=max(16, int(24 * geometry_scale)), pad_y=max(14, int(20 * geometry_scale)))
+    _draw_metric(draw, int(884 * geometry_scale), int(364 * geometry_scale), int(620 * geometry_scale), int(130 * geometry_scale), "Strength", strength, fonts, pad_x=max(16, int(24 * geometry_scale)), pad_y=max(14, int(20 * geometry_scale)))
 
-    spark_box = (int(884 * scale), int(514 * scale), int(1504 * scale), int(760 * scale))
+    spark_box = (int(884 * geometry_scale), int(514 * geometry_scale), int(1504 * geometry_scale), int(760 * geometry_scale))
     _draw_sparkline(draw, spark_box, sparkline_values, line_color="#78A6FF", fill_color="#10233F")
-    draw.text((int(914 * scale), int(544 * scale)), "Trend", font=fonts["xs"], fill="#8D99A8")
-    draw.text((int(914 * scale), int(582 * scale)), "APY / TVL sparkline", font=fonts["sm_b"], fill="#EAF0F7")
+    draw.text((int(914 * geometry_scale), int(544 * geometry_scale)), "Trend", font=fonts["xs"], fill="#8D99A8")
+    draw.text((int(914 * geometry_scale), int(582 * geometry_scale)), "APY / TVL sparkline", font=fonts["sm_b"], fill="#EAF0F7")
 
-    summary_box = (int(96 * scale), int(794 * scale), int(1400 * scale), int(1078 * scale))
-    _rr(draw, summary_box, max(16, int(30 * scale)), "#10161D", outline="#202A35", width=max(1, int(2 * scale)))
-    draw.text((int(128 * scale), int(830 * scale)), "Summary", font=fonts["md_b"], fill="#F1F5FA")
+    summary_box = (int(96 * geometry_scale), int(794 * geometry_scale), int(1400 * geometry_scale), int(1078 * geometry_scale))
+    _rr(draw, summary_box, max(16, int(30 * geometry_scale)), "#10161D", outline="#202A35", width=max(1, int(2 * geometry_scale)))
+    draw.text((int(128 * geometry_scale), int(830 * geometry_scale)), "Summary", font=fonts["md_b"], fill="#F1F5FA")
 
     wrapped = textwrap.fill(why_text, width=config["wrap_width"])
-    draw.text((int(128 * scale), int(892 * scale)), wrapped, font=fonts["md"], fill="#B6C0CC", spacing=max(6, int(12 * scale)))
+    draw.text((int(128 * geometry_scale), int(892 * geometry_scale)), wrapped, font=fonts["md"], fill="#B6C0CC", spacing=max(6, int(12 * geometry_scale)))
 
-    footer_y = int(1160 * scale)
-    draw.line((int(96 * scale), footer_y, int(1504 * scale), footer_y), fill="#1B2430", width=max(1, int(2 * scale)))
-    draw.text((int(96 * scale), int(1198 * scale)), cta, font=fonts["md_b"], fill="#F4F7FB")
-    draw.text((int(1318 * scale), int(1198 * scale)), "furuflow", font=fonts["md_b"], fill="#6F7C8B")
+    footer_y = int(1160 * geometry_scale)
+    draw.line((int(96 * geometry_scale), footer_y, int(1504 * geometry_scale), footer_y), fill="#1B2430", width=max(1, int(2 * geometry_scale)))
+    draw.text((int(96 * geometry_scale), int(1198 * geometry_scale)), cta, font=fonts["md_b"], fill="#F4F7FB")
+    draw.text((int(1318 * geometry_scale), int(1198 * geometry_scale)), "furuflow", font=fonts["md_b"], fill="#6F7C8B")
 
     img.save(out_path, quality=95)
 
