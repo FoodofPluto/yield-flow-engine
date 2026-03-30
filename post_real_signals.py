@@ -232,6 +232,9 @@ def main() -> None:
     dedupe_hours = _env_int("FURUFLOW_SIGNAL_DEDUPE_HOURS", 24)
     max_posts = _env_int("FURUFLOW_SIGNAL_MAX_POSTS", 3)
 
+    post_free = _env_bool("FURUFLOW_POST_FREE_SIGNALS", True)
+    post_pro = _env_bool("FURUFLOW_POST_PRO_SIGNALS", False)
+
     signals = get_real_furuflow_signals()
     if not signals:
         print("No qualifying signals found.")
@@ -240,13 +243,29 @@ def main() -> None:
     append_signal_history(signals)
 
     free_signals, pro_signals = split_signal_tiers(signals)
-    fresh_signals = signals if allow_reposts else get_new_signals(free_signals, dedupe_hours=dedupe_hours)
+
+    telegram_candidates = []
+    if post_free:
+        telegram_candidates.extend(free_signals)
+    if post_pro:
+        telegram_candidates.extend(pro_signals)
+
+    if not telegram_candidates:
+        print("No Telegram-eligible signals found for the current tier settings.")
+        return
+
+    fresh_signals = telegram_candidates if allow_reposts else get_new_signals(
+        telegram_candidates,
+        dedupe_hours=dedupe_hours,
+    )
+
     if max_posts > 0:
         fresh_signals = fresh_signals[:max_posts]
+
     if not fresh_signals:
-        print("No new FuruFlow free-tier signals to post.")
+        print("No new Telegram-eligible signals to post.")
         if pro_signals:
-            print(f"{len(pro_signals)} Pro-tier signal(s) captured for app/premium workflows.")
+            print(f"{len(pro_signals)} Pro-tier signal(s) captured.")
         return
 
     message = format_multiple_signals(fresh_signals)
@@ -255,8 +274,9 @@ def main() -> None:
         return
 
     result = send_telegram_message(message)
-    alerts_sent = send_strong_alerts(fresh_signals + pro_signals)
+    alerts_sent = send_strong_alerts(fresh_signals)
     remember_signals(fresh_signals)
+
     print(f"Posted {len(fresh_signals)} signal(s) to Telegram.")
     print(f"Strong alerts sent: {len(alerts_sent)}")
     print(result)
