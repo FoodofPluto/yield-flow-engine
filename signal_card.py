@@ -193,8 +193,8 @@ def _mode_config(mode: str):
     if mode == "preview":
         return {
             "size": 900,
-            "font_scale": 2.8,
-            "wrap_width": 22,
+            "font_scale": 2.6,
+            "wrap_width": 24,
         }
     return {
         "size": 1600,
@@ -220,7 +220,12 @@ def build_signal_card(
     config = _mode_config(mode)
     W = H = config["size"]
     is_preview = str(mode).lower() == "preview"
-    geometry_scale = W / 1600.0
+
+    if is_preview:
+        geometry_scale = 1.0   # 🔥 NO SHRINKING
+    else:
+        geometry_scale = W / 1600.0
+    
     fonts = _fonts(scale=config["font_scale"])
 
     if sparkline_values is None:
