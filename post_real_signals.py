@@ -17,18 +17,12 @@ from signal_formatter import format_multiple_signals
 from signal_intelligence import enrich_signals
 from telegram_utils import send_telegram_message
 
+from dotenv import load_dotenv
+
 DEFAULT_CHAINS = {"base", "arbitrum", "optimism", "polygon", "ethereum"}
 POSTED_FILE = Path(os.getenv("FURUFLOW_POSTED_SIGNALS_FILE", "posted_signals.json"))
 
-import os
-from dotenv import load_dotenv
-
 load_dotenv()
-
-BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
-CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
-
-url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage"
 
 def _env_float(name: str, default: float) -> float:
     raw = os.getenv(name, "").strip()
@@ -137,19 +131,23 @@ def get_real_furuflow_signals() -> List[Dict[str, Any]]:
     min_strength = _env_float("FURUFLOW_SIGNAL_MIN_STRENGTH", 0.0)
     max_strength = _env_float("FURUFLOW_SIGNAL_MAX_STRENGTH", 100.0)
     top_n = _env_int("FURUFLOW_SIGNAL_TOP_N", 5)
+    scan_depth = _env_int("FURUFLOW_SIGNAL_SCAN_DEPTH", 250)
     stablecoin_only = _env_bool("FURUFLOW_SIGNAL_STABLECOIN_ONLY", False)
     requested_chains = _env_chain_set()
+    debug = _env_bool("FURUFLOW_SIGNAL_DEBUG", False)
 
     _capture_market_history(source)
 
     candidates = rank_top_yields(
-        top=max(top_n * 8, 40),
+        top=max(scan_depth, top_n * 8, 40),
         source=source,
         min_tvl=min_tvl,
         max_apy=max_apy,
         stablecoin_only=stablecoin_only,
         chains=list(requested_chains) if requested_chains else None,
     )
+    if debug:
+        print(f"[debug] ranked candidates: {len(candidates)}")
 
     signals: List[Dict[str, Any]] = []
     for item in candidates:
@@ -158,10 +156,16 @@ def get_real_furuflow_signals() -> List[Dict[str, Any]]:
         tvl = float(meta.get("tvlUsd") or 0.0)
         chain = str(meta.get("chain") or "").strip()
         chain_norm = chain.lower()
-        if apy < min_apy or apy > max_apy or tvl < min_tvl:
+
+        if apy < min_apy:
+            continue
+        if apy > max_apy:
+            continue
+        if tvl < min_tvl:
             continue
         if requested_chains and chain_norm not in requested_chains:
             continue
+
         signals.append({
             "name": item.name,
             "chain": chain,
@@ -180,6 +184,9 @@ def get_real_furuflow_signals() -> List[Dict[str, Any]]:
             "llama_pool_url": meta.get("llama_pool_url") or "",
         })
 
+    if debug:
+        print(f"[debug] pre-enrichment signals: {len(signals)}")
+
     signals = enrich_signals(signals)
     signals = _attach_phase_two_fields(signals)
 
@@ -192,6 +199,10 @@ def get_real_furuflow_signals() -> List[Dict[str, Any]]:
         if strength_score < min_strength or strength_score > max_strength:
             continue
         filtered_signals.append(signal)
+
+    if debug:
+        print(f"[debug] post-enrichment signals: {len(signals)}")
+        print(f"[debug] filtered signals: {len(filtered_signals)}")
 
     return filtered_signals[:top_n]
 
