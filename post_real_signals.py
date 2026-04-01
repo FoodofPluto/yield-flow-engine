@@ -4,7 +4,7 @@ import json
 import os
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Tuple
 
 from engine.alerts import send_strong_alerts
 from engine.history import append_signal_history
@@ -20,9 +20,10 @@ from telegram_utils import send_telegram_message
 from dotenv import load_dotenv
 
 DEFAULT_CHAINS = {"base", "arbitrum", "optimism", "polygon", "ethereum"}
-POSTED_FILE = Path(os.getenv("FURUFLOW_POSTED_SIGNALS_FILE", "posted_signals.json"))
 
 load_dotenv()
+POSTED_FILE = Path(os.getenv("FURUFLOW_POSTED_SIGNALS_FILE", "posted_signals.json"))
+
 
 def _env_float(name: str, default: float) -> float:
     raw = os.getenv(name, "").strip()
@@ -121,6 +122,32 @@ def _attach_phase_two_fields(signals: List[Dict[str, Any]]) -> List[Dict[str, An
     return out
 
 
+def _summarize_signals(signals: List[Dict[str, Any]]) -> Dict[str, int]:
+    summary = {
+        "total": len(signals),
+        "free": 0,
+        "pro": 0,
+        "strong": 0,
+        "watch": 0,
+        "speculative": 0,
+    }
+    for signal in signals:
+        tier = str(signal.get("tier") or "").strip().lower()
+        label = str(signal.get("strength_label") or "").strip().lower()
+        if tier == "free":
+            summary["free"] += 1
+        elif tier == "pro":
+            summary["pro"] += 1
+
+        if label == "strong":
+            summary["strong"] += 1
+        elif label == "watch":
+            summary["watch"] += 1
+        elif label == "speculative":
+            summary["speculative"] += 1
+    return summary
+
+
 def get_real_furuflow_signals() -> List[Dict[str, Any]]:
     source = os.getenv("FURUFLOW_SIGNAL_SOURCE", "defillama").strip() or "defillama"
     min_tvl = _env_float("FURUFLOW_SIGNAL_MIN_TVL", 1_000_000)
@@ -201,8 +228,14 @@ def get_real_furuflow_signals() -> List[Dict[str, Any]]:
         filtered_signals.append(signal)
 
     if debug:
+        summary = _summarize_signals(filtered_signals)
         print(f"[debug] post-enrichment signals: {len(signals)}")
         print(f"[debug] filtered signals: {len(filtered_signals)}")
+        print(
+            "[debug] filtered summary: "
+            f"free={summary['free']} pro={summary['pro']} "
+            f"strong={summary['strong']} watch={summary['watch']} speculative={summary['speculative']}"
+        )
 
     return filtered_signals[:top_n]
 
@@ -237,11 +270,30 @@ def remember_signals(signals: List[Dict[str, Any]]) -> None:
     save_posted_signals(posted)
 
 
+def _collect_telegram_candidates(
+    free_signals: List[Dict[str, Any]],
+    pro_signals: List[Dict[str, Any]],
+    *,
+    post_free: bool,
+    post_pro: bool,
+) -> Tuple[List[Dict[str, Any]], Dict[str, int]]:
+    telegram_candidates: List[Dict[str, Any]] = []
+    eligibility = {"free_enabled": int(post_free), "pro_enabled": int(post_pro)}
+
+    if post_free:
+        telegram_candidates.extend(free_signals)
+    if post_pro:
+        telegram_candidates.extend(pro_signals)
+
+    return telegram_candidates, eligibility
+
+
 def main() -> None:
     dry_run = _env_bool("FURUFLOW_SIGNAL_DRY_RUN", False)
     allow_reposts = _env_bool("FURUFLOW_SIGNAL_ALLOW_REPOSTS", False)
     dedupe_hours = _env_int("FURUFLOW_SIGNAL_DEDUPE_HOURS", 24)
     max_posts = _env_int("FURUFLOW_SIGNAL_MAX_POSTS", 3)
+    debug = _env_bool("FURUFLOW_SIGNAL_DEBUG", False)
 
     post_free = _env_bool("FURUFLOW_POST_FREE_SIGNALS", True)
     post_pro = _env_bool("FURUFLOW_POST_PRO_SIGNALS", False)
@@ -254,15 +306,36 @@ def main() -> None:
     append_signal_history(signals)
 
     free_signals, pro_signals = split_signal_tiers(signals)
+    summary = _summarize_signals(signals)
 
-    telegram_candidates: List[Dict[str, Any]] = []
-    if post_free:
-        telegram_candidates.extend(free_signals)
-    if post_pro:
-        telegram_candidates.extend(pro_signals)
+    if debug:
+        print(
+            "[debug] signal summary: "
+            f"total={summary['total']} free={summary['free']} pro={summary['pro']} "
+            f"strong={summary['strong']} watch={summary['watch']} speculative={summary['speculative']}"
+        )
+        print(
+            "[debug] telegram tier switches: "
+            f"post_free={post_free} post_pro={post_pro} dry_run={dry_run} "
+            f"allow_reposts={allow_reposts} dedupe_hours={dedupe_hours} max_posts={max_posts}"
+        )
+
+    telegram_candidates, _ = _collect_telegram_candidates(
+        free_signals,
+        pro_signals,
+        post_free=post_free,
+        post_pro=post_pro,
+    )
 
     if not telegram_candidates:
         print("No Telegram-eligible signals found for the current tier settings.")
+        print(
+            f"Available signals -> total: {summary['total']} | free: {summary['free']} | pro: {summary['pro']} | "
+            f"strong: {summary['strong']} | watch: {summary['watch']} | speculative: {summary['speculative']}"
+        )
+        print(
+            f"Posting switches -> FURUFLOW_POST_FREE_SIGNALS={post_free} | FURUFLOW_POST_PRO_SIGNALS={post_pro}"
+        )
         return
 
     fresh_signals = telegram_candidates if allow_reposts else get_new_signals(
@@ -275,6 +348,10 @@ def main() -> None:
 
     if not fresh_signals:
         print("No new Telegram-eligible signals to post.")
+        print(
+            f"Eligible signals -> {len(telegram_candidates)} | free eligible: {len(free_signals) if post_free else 0} | "
+            f"pro eligible: {len(pro_signals) if post_pro else 0}"
+        )
         if pro_signals:
             print(f"{len(pro_signals)} Pro-tier signal(s) captured.")
         return
@@ -291,6 +368,7 @@ def main() -> None:
     print(f"Posted {len(fresh_signals)} signal(s) to Telegram.")
     print(f"Strong alerts sent: {len(alerts_sent)}")
     print(result)
+
 
 if __name__ == "__main__":
     main()
