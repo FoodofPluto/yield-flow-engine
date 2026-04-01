@@ -35,5 +35,28 @@ jobs:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
           TELEGRAM_ENABLE_POWERSHELL_FALLBACK: "false"
+
+          FURUFLOW_SIGNAL_SOURCE: "defillama"
+          FURUFLOW_SIGNAL_MIN_TVL: "1000000"
+          FURUFLOW_SIGNAL_MIN_APY: "20"
+          FURUFLOW_SIGNAL_MAX_APY: "60"
+          FURUFLOW_SIGNAL_MIN_RISK: "3"
+          FURUFLOW_SIGNAL_MAX_RISK: "5"
+          FURUFLOW_SIGNAL_MIN_STRENGTH: "60"
+          FURUFLOW_SIGNAL_MAX_STRENGTH: "65"
+          FURUFLOW_SIGNAL_TOP_N: "5"
+          FURUFLOW_SIGNAL_SCAN_DEPTH: "250"
+          FURUFLOW_SIGNAL_STABLECOIN_ONLY: "false"
+          FURUFLOW_SIGNAL_CHAINS: "ethereum,base,arbitrum,optimism,polygon"
+
+          FURUFLOW_POST_FREE_SIGNALS: "true"
+          FURUFLOW_POST_PRO_SIGNALS: "true"
+          FURUFLOW_SIGNAL_ALLOW_REPOSTS: "true"
+          FURUFLOW_SIGNAL_DEDUPE_HOURS: "1"
+          FURUFLOW_SIGNAL_MAX_POSTS: "3"
+          FURUFLOW_SIGNAL_DRY_RUN: "false"
+          FURUFLOW_SIGNAL_DEBUG: "true"
+
+          FURUFLOW_POSTED_SIGNALS_FILE: "posted_signals_moderate.json"
         run: |
           python ./post_real_signals.py
