@@ -177,6 +177,18 @@ def get_real_furuflow_signals() -> List[Dict[str, Any]]:
         print(f"[debug] ranked candidates: {len(candidates)}")
 
     signals: List[Dict[str, Any]] = []
+    filter_stats = {
+        "below_min_apy": 0,
+        "above_max_apy": 0,
+        "below_min_tvl": 0,
+        "chain_mismatch": 0,
+        "passed_initial": 0,
+        "below_min_risk": 0,
+        "above_max_risk": 0,
+        "below_min_strength": 0,
+        "above_max_strength": 0,
+    }
+
     for item in candidates:
         meta = item.meta or {}
         apy = float(meta.get("apy") or item.apy or 0.0)
@@ -185,14 +197,19 @@ def get_real_furuflow_signals() -> List[Dict[str, Any]]:
         chain_norm = chain.lower()
 
         if apy < min_apy:
+            filter_stats["below_min_apy"] += 1
             continue
         if apy > max_apy:
+            filter_stats["above_max_apy"] += 1
             continue
         if tvl < min_tvl:
+            filter_stats["below_min_tvl"] += 1
             continue
         if requested_chains and chain_norm not in requested_chains:
+            filter_stats["chain_mismatch"] += 1
             continue
 
+        filter_stats["passed_initial"] += 1
         signals.append({
             "name": item.name,
             "chain": chain,
@@ -221,21 +238,55 @@ def get_real_furuflow_signals() -> List[Dict[str, Any]]:
     for signal in signals:
         risk_score = float(signal.get("risk_score") or 0.0)
         strength_score = float(signal.get("strength_score") or 0.0)
-        if risk_score < min_risk or risk_score > max_risk:
+        if risk_score < min_risk:
+            filter_stats["below_min_risk"] += 1
             continue
-        if strength_score < min_strength or strength_score > max_strength:
+        if risk_score > max_risk:
+            filter_stats["above_max_risk"] += 1
+            continue
+        if strength_score < min_strength:
+            filter_stats["below_min_strength"] += 1
+            continue
+        if strength_score > max_strength:
+            filter_stats["above_max_strength"] += 1
             continue
         filtered_signals.append(signal)
+
+    filtered_signals.sort(
+        key=lambda s: (
+            float(s.get("strength_score") or 0.0),
+            float(s.get("apy") or 0.0),
+            float(s.get("tvl") or 0.0),
+        ),
+        reverse=True,
+    )
 
     if debug:
         summary = _summarize_signals(filtered_signals)
         print(f"[debug] post-enrichment signals: {len(signals)}")
         print(f"[debug] filtered signals: {len(filtered_signals)}")
         print(
+            "[debug] rejection counts: "
+            f"below_min_apy={filter_stats['below_min_apy']} "
+            f"above_max_apy={filter_stats['above_max_apy']} "
+            f"below_min_tvl={filter_stats['below_min_tvl']} "
+            f"chain_mismatch={filter_stats['chain_mismatch']} "
+            f"below_min_risk={filter_stats['below_min_risk']} "
+            f"above_max_risk={filter_stats['above_max_risk']} "
+            f"below_min_strength={filter_stats['below_min_strength']} "
+            f"above_max_strength={filter_stats['above_max_strength']}"
+        )
+        print(
             "[debug] filtered summary: "
             f"free={summary['free']} pro={summary['pro']} "
             f"strong={summary['strong']} watch={summary['watch']} speculative={summary['speculative']}"
         )
+        if filtered_signals:
+            preview = ", ".join(
+                f"{(s.get('project') or s.get('name') or 'unknown')}[{int(float(s.get('strength_score') or 0.0))}]"
+                for s in filtered_signals[: min(5, len(filtered_signals))]
+            )
+            print(f"[debug] top filtered signals: {preview}")
 
     return filtered_signals[:top_n]
 
