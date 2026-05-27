@@ -22,11 +22,17 @@ hourly_log.txt
 # =========================
 # Local Data / State (DO NOT TRACK)
 # =========================
+*.db
+*.sqlite
+*.sqlite3
 posted_signals.json
+posted_signals_*.json
 pool_history.json
 signal_history.csv
 x_post_outbox.txt
 signal_task_log.txt
+YieldFlow_Tracker.xlsx
+.streamlit_state/
 
 # =========================
 # Test / Temp Files
