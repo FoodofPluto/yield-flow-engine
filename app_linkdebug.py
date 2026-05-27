@@ -21,6 +21,13 @@ from stripe_stub import render_checkout_section
 from history_store import load_history, save_snapshot
 from engine.performance import alert_snapshot, latest_signal_history, trend_summary_df
 from engine.recap import build_daily_recap, build_weekly_recap
+from engine.scoring import (
+    label_pool_risk as label_risk,
+    score_pool,
+    score_pool_volatility,
+    score_signal_movement,
+    score_tvl_stability,
+)
 
 APP_NAME = "FuruFlow"
 APP_VERSION = "v8.1"
@@ -612,78 +619,6 @@ def badge_from_project(project: str) -> str:
     parts = [p for p in str(project).replace("_", "-").split("-") if p]
     letters = "".join(part[0] for part in parts[:2]).upper()
     return letters[:2] if letters else "??"
-
-
-def score_tvl_stability(tvl: float) -> int:
-    tvl = float(tvl or 0)
-    if tvl >= 1_000_000_000:
-        return 95
-    if tvl >= 250_000_000:
-        return 86
-    if tvl >= 100_000_000:
-        return 78
-    if tvl >= 25_000_000:
-        return 65
-    if tvl >= 10_000_000:
-        return 54
-    if tvl >= 1_000_000:
-        return 38
-    return 24
-
-
-def score_pool_volatility(row: pd.Series) -> int:
-    apy = float(row.get("apy", 0) or 0)
-    rewards = float(row.get("apyReward", 0) or 0)
-    stablecoin = bool(row.get("stablecoin", False))
-    exposure = str(row.get("exposure", "")).lower()
-    strategy = str(row.get("poolMeta", "")).lower()
-    vol = 22
-    if apy > 120:
-        vol += 42
-    elif apy > 60:
-        vol += 28
-    elif apy > 25:
-        vol += 14
-    if rewards > 10:
-        vol += 10
-    if not stablecoin:
-        vol += 8
-    if exposure in {"multi", "lp"}:
-        vol += 6
-    if any(word in strategy for word in ["farm", "loop", "lever", "dex", "vault"]):
-        vol += 8
-    return max(5, min(100, int(round(vol))))
-
-
-def score_pool(row: pd.Series) -> int:
-    apy = float(row.get("apy", 0) or 0)
-    tvl_stability = int(row.get("tvl_stability_score", 50) or 50)
-    audit = int(row.get("audit_score", 55) or 55)
-    age = int(row.get("protocol_age_score", 55) or 55)
-    volatility = int(row.get("pool_volatility_score", 45) or 45)
-    stablecoin = bool(row.get("stablecoin", False))
-    rewards = float(row.get("apyReward", 0) or 0)
-
-    risk = 58
-    risk += max(0, min(28, apy / 5))
-    risk += max(0, min(12, rewards / 2))
-    risk += (100 - tvl_stability) * 0.22
-    risk += (100 - audit) * 0.18
-    risk += (100 - age) * 0.10
-    risk += volatility * 0.22
-    if stablecoin:
-        risk -= 8
-    return max(1, min(100, int(round(risk))))
-
-
-def label_risk(score: int) -> str:
-    if score <= 28:
-        return "Low"
-    if score <= 45:
-        return "Moderate"
-    if score <= 65:
-        return "High"
-    return "Speculative"
 
 
 def build_pool_url(row: pd.Series) -> str:
@@ -1380,11 +1315,14 @@ for col, default in [("signal", "Steady"), ("apy_delta_7", 0.0), ("tvl_delta_7_p
         df[col] = default
     df[col] = df[col].fillna(default)
 
-df["signal_strength"] = (
-    df["apy_delta_7"].abs() * 0.6
-    + df["tvl_delta_7_pct"].abs() * 0.3
-    + df["apy_volatility"] * 0.1
-).round(1)
+df["signal_strength"] = df.apply(
+    lambda row: score_signal_movement(
+        row["apy_delta_7"],
+        row["tvl_delta_7_pct"],
+        row["apy_volatility"],
+    ),
+    axis=1,
+)
 
 watchlist_df = df[df["pool"].isin(st.session_state.watchlist)].copy()
 save_snapshot(df)
@@ -1806,4 +1744,3 @@ elif page == "Watchlist":
         else:
             st.info("Add a few pools to see watchlist comparisons.")
         st.markdown("</div>", unsafe_allow_html=True)
-

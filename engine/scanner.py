@@ -5,6 +5,7 @@ from datetime import datetime, timezone
 from typing import Any, Dict, Iterable, List, Optional, Set
 
 from engine.providers import demo
+from engine.scoring import compute_provider_risk
 
 try:
     from engine.providers import defillama
@@ -41,110 +42,8 @@ class FilterOptions:
     projects: Optional[Set[str]] = None
 
 
-RISK_LABELS = {
-    range(0, 3): "Low",
-    range(3, 6): "Moderate",
-    range(6, 8): "Elevated",
-    range(8, 11): "High",
-}
-
-
-def _risk_label(score: int) -> str:
-    for score_range, label in RISK_LABELS.items():
-        if score in score_range:
-            return label
-    return "High"
-
-
-MAJOR_CHAINS = {
-    "ethereum": 0,
-    "bitcoin": 0,
-    "base": 1,
-    "arbitrum": 1,
-    "optimism": 1,
-    "polygon": 1,
-    "avalanche": 1,
-    "solana": 1,
-    "bnb chain": 2,
-    "bsc": 2,
-    "fantom": 2,
-}
-
-
-EXOTIC_CATEGORY_PENALTIES = {
-    "leveraged": 3,
-    "options": 2,
-    "delta neutral": 2,
-    "basis trading": 2,
-    "yield looping": 3,
-    "lsd": 1,
-    "lst": 1,
-    "lp": 1,
-}
-
-
 def compute_risk(meta: Dict[str, Any]) -> Dict[str, Any]:
-    tvl = float(meta.get("tvlUsd") or 0.0)
-    apy = float(meta.get("apy") or 0.0)
-    stable = bool(meta.get("stablecoin") or False)
-    il_risk = str(meta.get("ilRisk") or "").lower()
-    chain = str(meta.get("chain") or "").lower()
-    category = str(meta.get("category") or "").lower()
-    project = str(meta.get("project") or "")
-
-    score = 1
-    reasons: List[str] = []
-
-    chain_penalty = MAJOR_CHAINS.get(chain, 2)
-    score += chain_penalty
-    if chain_penalty >= 2 and chain:
-        reasons.append(f"less battle-tested chain: {meta.get('chain')}")
-
-    if tvl < 1_000_000:
-        score += 3
-        reasons.append("very low TVL")
-    elif tvl < 10_000_000:
-        score += 2
-        reasons.append("modest TVL")
-    elif tvl < 100_000_000:
-        score += 1
-        reasons.append("mid TVL")
-
-    if apy >= 80:
-        score += 3
-        reasons.append("very high APY")
-    elif apy >= 30:
-        score += 2
-        reasons.append("high APY")
-    elif apy >= 15:
-        score += 1
-        reasons.append("above-market APY")
-
-    if not stable:
-        score += 1
-        reasons.append("volatile asset exposure")
-
-    if il_risk and il_risk not in {"no", "none", "n/a"}:
-        score += 1
-        reasons.append(f"impermanent loss risk: {meta.get('ilRisk')}")
-
-    for key, penalty in EXOTIC_CATEGORY_PENALTIES.items():
-        if key in category:
-            score += penalty
-            reasons.append(f"strategy category: {meta.get('category')}")
-            break
-
-    if not project:
-        score += 1
-        reasons.append("missing protocol metadata")
-
-    score = max(1, min(int(score), 10))
-    label = _risk_label(score)
-    return {
-        "risk_score": score,
-        "risk_label": label,
-        "risk_reasons": "; ".join(reasons[:4]) if reasons else "Large-chain, high-liquidity pool profile.",
-    }
+    return compute_provider_risk(meta)
 
 
 def _passes_filters(item: YieldItem, filt: FilterOptions) -> bool:
