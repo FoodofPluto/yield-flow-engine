@@ -33,6 +33,7 @@ x_post_outbox.txt
 signal_task_log.txt
 YieldFlow_Tracker.xlsx
 .streamlit_state/
+.streamlit/secrets.toml
 
 # =========================
 # Test / Temp Files
