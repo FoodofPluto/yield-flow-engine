@@ -18,9 +18,9 @@ import streamlit as st
 from streamlit.components.v1 import html as st_html
 
 
-from auth import get_current_user, login_form, logout_button
-from db import claim_session, clear_session, get_user_by_email, init_db, search_users, set_admin, set_lifetime_access, set_pro_active, touch_session, upsert_user
-from entitlements import can_access_pro
+from auth import login_form
+from auth_service import can_access_pro, claim_session, get_current_identity, get_current_user, is_admin, logout, validate_session
+from db import get_user_by_email, init_db, record_admin_audit, search_users, set_admin, set_lifetime_access, set_pro_active, upsert_user
 from stripe_stub import render_checkout_section
 from history_store import load_history, save_snapshot
 from engine.performance import alert_snapshot, latest_signal_history, trend_summary_df
@@ -715,14 +715,20 @@ def build_signal_card_assets(*, pool_name: str, chain: str, apy: str, tvl: str, 
     return {"preview_path": preview_path, "export_path": export_path}
 
 
-def get_checkout_link(current_email: str = "") -> str:
+def get_checkout_link(current_user: dict[str, Any] | None = None) -> str:
     base = FURUFLOW_STRIPE_LINK.strip()
-    if not current_email:
+    current_user = current_user or get_current_user()
+    if not current_user:
         return base
     sep = "&" if "?" in base else "?"
-    safe_email = quote(current_email)
-    safe_ref = quote(f"furuflow:{current_email}")
-    return f"{base}{sep}prefilled_email={safe_email}&client_reference_id={safe_ref}"
+    params = []
+    current_email = (current_user.get("email") or "").strip().lower()
+    if current_email:
+        params.append(f"prefilled_email={quote(current_email)}")
+    if current_user.get("_identity_verified") and current_user.get("user_id"):
+        client_reference_id = f"furuflow_user:{current_user['user_id']}"
+        params.append(f"client_reference_id={quote(client_reference_id)}")
+    return f"{base}{sep}{'&'.join(params)}" if params else base
 
 
 def render_link_table(source_df: pd.DataFrame, title: str, description: str, *, limit: int = 8, sort_cols: list[str] | None = None) -> None:
@@ -952,7 +958,7 @@ def require_pro(feature_name: str, preview_df: pd.DataFrame | None = None, previ
     else:
         st.info("Keep browsing in free mode, or sign in when you're ready to unlock Pro.")
     render_checkout_section(current_email=st.session_state.get("auth_email", ""))
-    st.link_button("Upgrade to FuruFlow Pro — $20/month", get_checkout_link(st.session_state.get("auth_email", "")))
+    st.link_button("Upgrade to FuruFlow Pro — $20/month", get_checkout_link())
     st.markdown("</div>", unsafe_allow_html=True)
     st.stop()
 
@@ -1003,11 +1009,13 @@ def render_admin_access_panel(current_user: dict) -> None:
         if target_user["lifetime_access"]:
             if st.button("Remove lifetime access", key=f"remove_lifetime_{selected_email}"):
                 set_lifetime_access(selected_email, False)
+                record_admin_audit(actor_user_id=current_user["user_id"], target_user_id=target_user["user_id"], action="remove_lifetime_access", reason="admin_panel")
                 st.success(f"Removed lifetime access from {selected_email}.")
                 st.rerun()
         else:
             if st.button("Grant lifetime access", key=f"grant_lifetime_{selected_email}"):
                 set_lifetime_access(selected_email, True)
+                record_admin_audit(actor_user_id=current_user["user_id"], target_user_id=target_user["user_id"], action="grant_lifetime_access", reason="admin_panel")
                 st.success(f"Granted lifetime access to {selected_email}.")
                 st.rerun()
 
@@ -1015,11 +1023,13 @@ def render_admin_access_panel(current_user: dict) -> None:
         if target_user["pro_active"]:
             if st.button("Deactivate Pro", key=f"deactivate_pro_{selected_email}"):
                 set_pro_active(selected_email, False)
+                record_admin_audit(actor_user_id=current_user["user_id"], target_user_id=target_user["user_id"], action="deactivate_pro", reason="admin_panel")
                 st.success(f"Deactivated Pro for {selected_email}.")
                 st.rerun()
         else:
             if st.button("Activate Pro", key=f"activate_pro_{selected_email}"):
                 set_pro_active(selected_email, True)
+                record_admin_audit(actor_user_id=current_user["user_id"], target_user_id=target_user["user_id"], action="activate_pro", reason="admin_panel")
                 st.success(f"Activated Pro for {selected_email}.")
                 st.rerun()
 
@@ -1028,11 +1038,13 @@ def render_admin_access_panel(current_user: dict) -> None:
         if target_user["is_admin"]:
             if st.button("Remove admin", key=f"remove_admin_{selected_email}", disabled=not can_edit_admin):
                 set_admin(selected_email, False)
+                record_admin_audit(actor_user_id=current_user["user_id"], target_user_id=target_user["user_id"], action="remove_admin", reason="admin_panel")
                 st.success(f"Removed admin from {selected_email}.")
                 st.rerun()
         else:
             if st.button("Make admin", key=f"make_admin_{selected_email}"):
                 set_admin(selected_email, True)
+                record_admin_audit(actor_user_id=current_user["user_id"], target_user_id=target_user["user_id"], action="make_admin", reason="admin_panel")
                 st.success(f"Made {selected_email} an admin.")
                 st.rerun()
 
@@ -1159,7 +1171,7 @@ def render_home_page(filtered: pd.DataFrame, full_filtered: pd.DataFrame, watchl
             st.markdown("<div class='signal-card'><div class='signal-title'>FuruFlow Pro</div><div class='signal-copy'>Unlock the full signals view, deeper scanner access, advanced ranking, arbitrage, and strategy workflows.</div></div>", unsafe_allow_html=True)
             if len(full_filtered) > len(filtered):
                 st.caption(f"Free mode currently shows the top {len(filtered):,} of {len(full_filtered):,} matching pools.")
-            st.link_button("Upgrade to FuruFlow Pro — $20/month", get_checkout_link(st.session_state.get("auth_email", "")))
+            st.link_button("Upgrade to FuruFlow Pro — $20/month", get_checkout_link())
     st.markdown("</div>", unsafe_allow_html=True)
 
     bottom_left, bottom_mid, bottom_right = st.columns(3, gap="large")
@@ -1237,29 +1249,24 @@ def render_recaps_page(alert_stats: dict[str, Any], history_latest_df: pd.DataFr
             st.dataframe(history_trend_df, use_container_width=True, hide_index=True, height=320, column_config={"APY": st.column_config.NumberColumn(format="%.2f%%"), "TVL (USD)": st.column_config.NumberColumn(format="$%.0f"), "APY Δ": st.column_config.NumberColumn(format="%.2f")})
         if not is_pro:
             st.markdown("<div class='note'>Free mode can see the recap layer. Pro is where you get the full signal engine, stronger alerts, and faster decision workflows.</div>", unsafe_allow_html=True)
-            st.link_button("Upgrade to FuruFlow Pro — $20/month", get_checkout_link(st.session_state.get("auth_email", "")))
+            st.link_button("Upgrade to FuruFlow Pro — $20/month", get_checkout_link())
         st.markdown("</div>", unsafe_allow_html=True)
 
 
 inject_css()
 init_db()
 
-ADMIN_EMAILS = {
-    email.strip().lower()
-    for email in os.getenv("ADMIN_EMAILS", "d.arvelop93@gmail.com").split(",")
-    if email.strip()
-}
-
 with st.sidebar:
     st.markdown("## Account")
     if st.session_state.get("auth_email"):
-        st.caption("Signed in for saved access and Pro features.")
+        st.caption("Legacy email session active. Verified auth is required for Pro and admin access.")
     else:
         st.caption("Public mode is live. Sign in only for saved account features or Pro.")
     login_form()
 
-user = get_current_user()
-guest_mode = user is None
+identity = get_current_identity()
+db_user = get_current_user()
+guest_mode = db_user is None
 
 if guest_mode:
     db_user = {
@@ -1267,38 +1274,15 @@ if guest_mode:
         "is_admin": False,
         "lifetime_access": False,
         "pro_active": False,
+        "email_verified": False,
     }
     is_pro = False
 else:
-    email = user["email"].lower()
-    db_user = get_user_by_email(email)
-    if not db_user:
-        db_user = upsert_user(email=email, is_admin=(email in ADMIN_EMAILS))
-    elif email in ADMIN_EMAILS and not db_user.get("is_admin", False):
-        db_user = upsert_user(email=email, is_admin=True)
-
-    session_id = st.session_state.get("auth_session_id")
-    if not session_id:
-        session_id = os.urandom(16).hex()
-        st.session_state["auth_session_id"] = session_id
-        st.session_state["auth_session_claimed"] = False
-
-    if not st.session_state.get("auth_session_claimed", False):
-        claim_session(email, session_id)
-        st.session_state["auth_session_claimed"] = True
-    else:
-        db_user = get_user_by_email(email)
-        active_session_id = db_user.get("current_session_id") if db_user else None
-        if active_session_id and active_session_id != session_id:
-            st.session_state.pop("auth_email", None)
-            st.session_state.pop("auth_session_id", None)
-            st.session_state.pop("auth_session_claimed", None)
-            st.session_state.pop("access_granted", None)
-            st.warning("This account was opened in another browser session, so this session was signed out to keep FuruFlow to one active login at a time.")
-            st.stop()
-        touch_session(email, session_id)
-
-    db_user = get_user_by_email(email)
+    claim_session()
+    if not validate_session():
+        st.warning("This account was opened in another browser session, so this session was signed out to keep FuruFlow to one active login at a time.")
+        st.stop()
+    db_user = get_current_user()
     is_pro = can_access_pro(db_user)
 
 st.session_state["access_granted"] = is_pro
@@ -1307,19 +1291,15 @@ with st.sidebar:
     st.write(f"Session: **{db_user['email']}**")
     st.write(f"Plan: **{'Pro' if is_pro else 'Free'}**")
     if not guest_mode:
-        st.write(f"Admin: **{'Yes' if db_user['is_admin'] else 'No'}**")
+        st.write(f"Admin: **{'Yes' if is_admin(db_user) else 'No'}**")
         st.write(f"Lifetime access: **{'Yes' if db_user['lifetime_access'] else 'No'}**")
         st.write(f"Pro active: **{'Yes' if db_user['pro_active'] else 'No'}**")
         st.caption("Single-active-session lock is on for email-only sign-in.")
         if st.button("Log out", key="logout_button"):
-            clear_session(db_user["email"], st.session_state.get("auth_session_id"))
-            st.session_state.pop("auth_email", None)
-            st.session_state.pop("auth_session_id", None)
-            st.session_state.pop("auth_session_claimed", None)
-            st.session_state.pop("access_granted", None)
+            logout()
             st.rerun()
 
-if db_user.get('is_admin'):
+if is_admin(db_user):
     render_admin_access_panel(db_user)
 
 raw_df = fetch_pools()
@@ -1438,7 +1418,7 @@ with st.sidebar:
 - Advanced ranking, arbitrage, and strategy builder
 - Stronger recap workflows and future alerts
 """)
-        st.link_button("Upgrade to FuruFlow Pro — $20/month", get_checkout_link(st.session_state.get("auth_email", "")))
+        st.link_button("Upgrade to FuruFlow Pro — $20/month", get_checkout_link())
     st.markdown("<div class='sidebar-mini-note'>Use Home for the fastest read on the market, Signals for ranked conviction, and Recaps for the memory layer.</div>", unsafe_allow_html=True)
     st.markdown("</div>", unsafe_allow_html=True)
 
@@ -1511,7 +1491,7 @@ elif page == "Scanner":
             st.download_button("Download current table as CSV", csv, file_name="furuflow_scanner.csv", mime="text/csv")
         else:
             st.markdown("<div class='signal-card'><div class='signal-title'>CSV export is Pro</div><div class='signal-copy'>Keep the scanner open to everyone, then charge for export workflows and deeper decision tools.</div></div>", unsafe_allow_html=True)
-            st.link_button("Unlock CSV export", get_checkout_link(st.session_state.get("auth_email", "")), use_container_width=True)
+            st.link_button("Unlock CSV export", get_checkout_link(), use_container_width=True)
         st.markdown("</div>", unsafe_allow_html=True)
     with right:
         st.markdown("<div class='panel'>", unsafe_allow_html=True)

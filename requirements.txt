@@ -1,5 +1,6 @@
 streamlit>=1.40
 stripe>=11.0.0
+supabase>=2.10.0
 flask>=3.0.0
 plotly
 

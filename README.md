@@ -82,26 +82,43 @@ streamlit run app.py
 
 The app uses account-based access instead of the old shared access-code workflow.
 
-Access is granted when any of the following are true:
+Pro access is granted only after the app has a verified identity context and one of the following entitlement flags is true:
 
-- user is admin
-- `DEV_MODE=true`
+- user has an explicit admin DB role
 - `lifetime_access=True`
 - `pro_active=True`
 
-That means real customers should not get stuck in repeat paywall loops. Their entitlement is stored in the database, not only in a temporary session.
+Typed email sessions are treated as legacy, unverified sessions. They can preserve the free browsing flow, but they do not unlock admin or Pro access. `DEV_MODE=true` is blocked in production.
 
-## Give yourself permanent access
+## Admin access
 
-Copy `.env.example` to `.env`, then set:
+Admin access must be assigned explicitly in the user database and must be paired with a verified identity. The app no longer promotes users to admin from typed email matching.
+
+## Production auth environment
+
+Production startup fails closed when required auth or billing settings are missing.
+
+Required auth variables:
 
 ```env
-ADMIN_EMAILS=yourrealemail@example.com
+ENVIRONMENT=production
+SUPABASE_URL=https://your-project.supabase.co
+SUPABASE_ANON_KEY=your-public-anon-key
+SUPABASE_JWT_SECRET=your-jwt-secret
 ```
+
+Required billing variables:
+
+```env
+STRIPE_SECRET_KEY=sk_live_...
+STRIPE_WEBHOOK_SECRET=whsec_...
+```
+
+`DEV_MODE=true` is rejected when `ENVIRONMENT=production`.
 
 ## Stripe / Pro activation notes
 
-Your current Stripe buy link is a monthly Pro offer, so the production webhook should update `pro_active` based on Stripe subscription events.
+Your current Stripe buy link is a monthly Pro offer, so the production webhook should update `pro_active` based on Stripe subscription events. Fulfillment should use the internal `user_id` in `client_reference_id` or metadata, not a customer-entered email address.
 
 This build includes:
 
@@ -109,6 +126,7 @@ This build includes:
 - a webhook example that handles `checkout.session.completed`
 - subscription lifecycle syncing for `customer.subscription.created`, `updated`, and `deleted`
 - automatic activation/deactivation of Pro based on Stripe subscription state
+- webhook idempotency storage for processed Stripe event IDs
 
 ## Recommended deployment split
 
@@ -118,7 +136,19 @@ This build includes:
 
 ## Important limitation
 
-The current sign-in flow is lightweight email-based app access, not a full password or magic-link auth system. It is good for an MVP gate, but it is not the same as hardened production authentication.
+The legacy email form is a temporary free-session bridge during migration. Supabase Auth is now the verified identity boundary for privileged access. Legacy sessions cannot unlock admin, lifetime, or Pro entitlements.
+
+## Rollout sequence
+
+1. Add Supabase and Stripe production secrets.
+2. Deploy with `ENVIRONMENT=production` and `DEV_MODE=false`.
+3. Run the app once to apply additive SQLite migrations.
+4. Verify Supabase password login or magic-link flow.
+5. Migrate paid users by having them sign in with the same verified Supabase email.
+6. Assign admin roles only through explicit DB mutation after verified identity exists.
+7. Move Stripe checkout creation to a backend endpoint that writes internal `user_id` into Stripe metadata.
+
+Rollback is safe by reverting the auth migration commit. The DB changes are additive nullable columns and new audit/idempotency tables; no existing users are deleted.
 
 ## Signal engine notes
 
