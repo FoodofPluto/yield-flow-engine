@@ -33,6 +33,27 @@ def _token(secret: str, *, sub: str = "supabase-user-1", email: str = "user@exam
     return f"{signing_input}.{_b64url(signature)}"
 
 
+def _unsigned_token(
+    *,
+    alg: str = "ES256",
+    kid: str = "test-key",
+    sub: str = "supabase-user-1",
+    email: str = "user@example.com",
+    exp: int | None = None,
+    verified: bool = True,
+) -> str:
+    header = {"alg": alg, "typ": "JWT", "kid": kid}
+    payload = {
+        "aud": "authenticated",
+        "sub": sub,
+        "email": email,
+        "exp": exp or int(time.time()) + 3600,
+        "user_metadata": {"email_verified": verified},
+    }
+    signing_input = f"{_b64url(json.dumps(header, separators=(',', ':')).encode())}.{_b64url(json.dumps(payload, separators=(',', ':')).encode())}"
+    return f"{signing_input}.invalid-signature"
+
+
 class SupabaseAuthMigrationTests(unittest.TestCase):
     def setUp(self):
         fd, self.db_path = tempfile.mkstemp(suffix=".db")
@@ -84,6 +105,34 @@ class SupabaseAuthMigrationTests(unittest.TestCase):
 
         with self.assertRaises(self.supabase_auth.AuthSessionError):
             self.supabase_auth.validate_supabase_session(bad_token)
+
+    def test_ecc_jwks_configuration_accepts_verified_token(self):
+        token = _unsigned_token(alg="ES256", sub="jwks-user", email="jwks@example.com")
+        claims = {
+            "aud": "authenticated",
+            "sub": "jwks-user",
+            "email": "jwks@example.com",
+            "exp": int(time.time()) + 3600,
+            "user_metadata": {"email_verified": True},
+        }
+
+        with patch.dict(os.environ, {"SUPABASE_JWT_SECRET": "", "SUPABASE_URL": "https://example.supabase.co"}, clear=False):
+            with patch.object(self.supabase_auth, "_validate_jwks_jwt", return_value=claims) as validate_jwks:
+                auth_user = self.supabase_auth.validate_supabase_session(token)
+
+        self.assertEqual(auth_user["provider_user_id"], "jwks-user")
+        validate_jwks.assert_called_once_with(token, "https://example.supabase.co/auth/v1/.well-known/jwks.json")
+
+    def test_invalid_jwks_token_fails_closed(self):
+        token = _unsigned_token(alg="ES256")
+
+        with patch.dict(os.environ, {"SUPABASE_JWT_SECRET": "", "SUPABASE_URL": "https://example.supabase.co"}, clear=False):
+            with patch.object(self.supabase_auth, "_validate_jwks_jwt", side_effect=self.supabase_auth.AuthSessionError("bad jwks")):
+                with patch.object(self.supabase_auth, "get_supabase_client") as get_client:
+                    with self.assertRaises(self.supabase_auth.AuthSessionError):
+                        self.supabase_auth.validate_supabase_session(token)
+
+        get_client.assert_not_called()
 
     def test_expired_session_forces_logout_when_refresh_is_unavailable(self):
         st.session_state[self.supabase_auth.ACCESS_TOKEN_KEY] = _token("test-secret", exp=int(time.time()) - 10)

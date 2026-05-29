@@ -104,8 +104,15 @@ Required auth variables:
 ENVIRONMENT=production
 SUPABASE_URL=https://your-project.supabase.co
 SUPABASE_ANON_KEY=your-public-anon-key
-SUPABASE_JWT_SECRET=your-jwt-secret
 ```
+
+Supabase JWT verification uses the project's JWKS endpoint by default:
+
+```env
+SUPABASE_JWKS_URL=https://your-project.supabase.co/auth/v1/.well-known/jwks.json
+```
+
+`SUPABASE_JWKS_URL` is optional when `SUPABASE_URL` is set, because the app derives the default JWKS URL from `SUPABASE_URL`. Legacy HS256 projects can still set `SUPABASE_JWT_SECRET`; ECC/P-256 signing-key projects should leave `SUPABASE_JWT_SECRET` unset.
 
 Required billing variables:
 

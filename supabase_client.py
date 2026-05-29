@@ -7,7 +7,7 @@ from typing import Any
 
 logger = logging.getLogger(__name__)
 
-REQUIRED_PRODUCTION_AUTH_ENV = ("SUPABASE_URL", "SUPABASE_ANON_KEY", "SUPABASE_JWT_SECRET")
+REQUIRED_PRODUCTION_AUTH_ENV = ("SUPABASE_URL", "SUPABASE_ANON_KEY")
 REQUIRED_PRODUCTION_BILLING_ENV = ("STRIPE_SECRET_KEY", "STRIPE_WEBHOOK_SECRET")
 
 
@@ -19,6 +19,17 @@ def _truthy_env(name: str) -> bool:
     return os.getenv(name, "").strip().lower() in {"1", "true", "yes", "on"}
 
 
+def get_supabase_jwks_url() -> str | None:
+    configured = os.getenv("SUPABASE_JWKS_URL", "").strip()
+    if configured:
+        return configured
+
+    supabase_url = os.getenv("SUPABASE_URL", "").strip().rstrip("/")
+    if not supabase_url:
+        return None
+    return f"{supabase_url}/auth/v1/.well-known/jwks.json"
+
+
 def require_production_auth_config() -> None:
     if _environment() != "production":
         return
@@ -27,6 +38,9 @@ def require_production_auth_config() -> None:
         raise RuntimeError("Unsafe auth configuration: DEV_MODE=true is forbidden in production.")
 
     missing = [name for name in REQUIRED_PRODUCTION_AUTH_ENV if not os.getenv(name)]
+    has_jwt_signing_config = bool(os.getenv("SUPABASE_JWT_SECRET") or get_supabase_jwks_url())
+    if not has_jwt_signing_config:
+        missing.append("SUPABASE_JWT_SECRET or SUPABASE_JWKS_URL")
     if missing:
         logger.critical("Refusing production startup: missing Supabase auth vars: %s", ",".join(missing))
         raise RuntimeError(f"Missing production Supabase auth configuration: {', '.join(missing)}")
@@ -43,6 +57,9 @@ def require_production_billing_config() -> None:
 
 def healthcheck_auth() -> dict[str, Any]:
     missing = [name for name in REQUIRED_PRODUCTION_AUTH_ENV if not os.getenv(name)]
+    has_jwt_signing_config = bool(os.getenv("SUPABASE_JWT_SECRET") or get_supabase_jwks_url())
+    if not has_jwt_signing_config:
+        missing.append("SUPABASE_JWT_SECRET or SUPABASE_JWKS_URL")
     configured = not missing
     return {
         "ok": configured,

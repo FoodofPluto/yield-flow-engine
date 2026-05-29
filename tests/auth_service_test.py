@@ -33,9 +33,82 @@ class AuthServiceHardeningTests(unittest.TestCase):
         self.assertFalse(auth_service.can_access_pro(legacy_user))
 
     def test_dev_mode_crashes_production_boot(self):
-        with patch.dict(os.environ, {"ENVIRONMENT": "production", "DEV_MODE": "true"}, clear=False):
+        with patch.dict(
+            os.environ,
+            {
+                "ENVIRONMENT": "production",
+                "DEV_MODE": "true",
+                "SUPABASE_URL": "https://example.supabase.co",
+                "SUPABASE_ANON_KEY": "anon",
+                "STRIPE_SECRET_KEY": "sk_test_placeholder",
+                "STRIPE_WEBHOOK_SECRET": "whsec_placeholder",
+            },
+            clear=False,
+        ):
             with self.assertRaises(RuntimeError):
                 importlib.reload(auth_service)
+
+        with patch.dict(os.environ, {"ENVIRONMENT": "test", "DEV_MODE": "false"}, clear=False):
+            importlib.reload(auth_service)
+
+    def test_production_accepts_ecc_jwks_config_without_legacy_jwt_secret(self):
+        env = {
+            "ENVIRONMENT": "production",
+            "DEV_MODE": "false",
+            "SUPABASE_URL": "https://example.supabase.co",
+            "SUPABASE_ANON_KEY": "anon",
+            "SUPABASE_JWT_SECRET": "",
+            "STRIPE_SECRET_KEY": "sk_test_placeholder",
+            "STRIPE_WEBHOOK_SECRET": "whsec_placeholder",
+        }
+
+        with patch.dict(os.environ, env, clear=False):
+            import supabase_client
+
+            client = importlib.reload(supabase_client)
+            self.assertTrue(client.healthcheck_auth()["ok"])
+
+        with patch.dict(os.environ, {"ENVIRONMENT": "test", "DEV_MODE": "false"}, clear=False):
+            importlib.reload(auth_service)
+
+    def test_production_missing_both_jwt_secret_and_jwks_config_fails_boot(self):
+        env = {
+            "ENVIRONMENT": "production",
+            "DEV_MODE": "false",
+            "SUPABASE_URL": "",
+            "SUPABASE_ANON_KEY": "anon",
+            "SUPABASE_JWT_SECRET": "",
+            "SUPABASE_JWKS_URL": "",
+            "STRIPE_SECRET_KEY": "sk_test_placeholder",
+            "STRIPE_WEBHOOK_SECRET": "whsec_placeholder",
+        }
+
+        with patch.dict(os.environ, env, clear=False):
+            import supabase_client
+
+            with self.assertRaises(RuntimeError):
+                importlib.reload(supabase_client)
+
+        with patch.dict(os.environ, {"ENVIRONMENT": "test", "DEV_MODE": "false"}, clear=False):
+            importlib.reload(auth_service)
+
+    def test_production_accepts_legacy_jwt_secret_config(self):
+        env = {
+            "ENVIRONMENT": "production",
+            "DEV_MODE": "false",
+            "SUPABASE_URL": "https://example.supabase.co",
+            "SUPABASE_ANON_KEY": "anon",
+            "SUPABASE_JWT_SECRET": "legacy-secret",
+            "SUPABASE_JWKS_URL": "",
+            "STRIPE_SECRET_KEY": "sk_test_placeholder",
+            "STRIPE_WEBHOOK_SECRET": "whsec_placeholder",
+        }
+
+        with patch.dict(os.environ, env, clear=False):
+            import supabase_client
+
+            client = importlib.reload(supabase_client)
+            self.assertTrue(client.healthcheck_auth()["ok"])
 
         with patch.dict(os.environ, {"ENVIRONMENT": "test", "DEV_MODE": "false"}, clear=False):
             importlib.reload(auth_service)

@@ -13,7 +13,7 @@ from typing import Any
 import streamlit as st
 
 from db import get_user_by_email, get_user_by_provider_user_id, upsert_user
-from supabase_client import get_supabase_client
+from supabase_client import get_supabase_client, get_supabase_jwks_url
 
 logger = logging.getLogger(__name__)
 
@@ -33,13 +33,21 @@ def _b64url_decode(value: str) -> bytes:
 
 
 def _decode_jwt_unverified(token: str) -> dict[str, Any]:
+    return _decode_jwt_part(token, 1, "payload")
+
+
+def _decode_jwt_header_unverified(token: str) -> dict[str, Any]:
+    return _decode_jwt_part(token, 0, "header")
+
+
+def _decode_jwt_part(token: str, index: int, label: str) -> dict[str, Any]:
     parts = token.split(".")
     if len(parts) != 3:
         raise AuthSessionError("Invalid Supabase access token format.")
     try:
-        return json.loads(_b64url_decode(parts[1]))
+        return json.loads(_b64url_decode(parts[index]))
     except Exception as exc:
-        raise AuthSessionError("Invalid Supabase access token payload.") from exc
+        raise AuthSessionError(f"Invalid Supabase access token {label}.") from exc
 
 
 def _validate_hs256_jwt(token: str, secret: str) -> dict[str, Any]:
@@ -64,6 +72,39 @@ def _validate_hs256_jwt(token: str, secret: str) -> dict[str, Any]:
     return claims
 
 
+def _validate_jwks_jwt(token: str, jwks_url: str) -> dict[str, Any]:
+    try:
+        import jwt
+
+        signing_key = jwt.PyJWKClient(jwks_url).get_signing_key_from_jwt(token)
+        return jwt.decode(
+            token,
+            signing_key.key,
+            algorithms=["ES256"],
+            audience=["authenticated", "supabase"],
+            options={"require": ["exp", "sub"]},
+        )
+    except Exception as exc:
+        logger.warning("Supabase JWKS token validation failed: %s", exc)
+        raise AuthSessionError("Supabase JWKS token validation failed.") from exc
+
+
+def _verified_identity_from_claims(token: str, claims: dict[str, Any]) -> dict[str, Any]:
+    provider_user_id = claims.get("sub")
+    email = (claims.get("email") or "").strip().lower()
+    if not provider_user_id or not email:
+        raise AuthSessionError("Supabase token is missing required identity claims.")
+    if not _email_verified_from_claims(claims):
+        raise AuthSessionError("Supabase identity email is not verified.")
+    return {
+        "provider_user_id": provider_user_id,
+        "email": email,
+        "email_verified": True,
+        "access_token": token,
+        "claims": claims,
+    }
+
+
 def _email_verified_from_claims(claims: dict[str, Any]) -> bool:
     user_metadata = claims.get("user_metadata") or {}
     app_metadata = claims.get("app_metadata") or {}
@@ -79,22 +120,18 @@ def validate_supabase_session(token: str | None = None) -> dict[str, Any] | None
     if not token:
         return None
 
+    header = _decode_jwt_header_unverified(token)
+    alg = header.get("alg")
     jwt_secret = os.getenv("SUPABASE_JWT_SECRET")
-    if jwt_secret:
-        claims = _validate_hs256_jwt(token, jwt_secret)
-        provider_user_id = claims.get("sub")
-        email = (claims.get("email") or "").strip().lower()
-        if not provider_user_id or not email:
-            raise AuthSessionError("Supabase token is missing required identity claims.")
-        if not _email_verified_from_claims(claims):
-            raise AuthSessionError("Supabase identity email is not verified.")
-        return {
-            "provider_user_id": provider_user_id,
-            "email": email,
-            "email_verified": True,
-            "access_token": token,
-            "claims": claims,
-        }
+    if alg == "HS256" and jwt_secret:
+        return _verified_identity_from_claims(token, _validate_hs256_jwt(token, jwt_secret))
+
+    jwks_url = get_supabase_jwks_url()
+    if alg == "ES256" and jwks_url:
+        return _verified_identity_from_claims(token, _validate_jwks_jwt(token, jwks_url))
+
+    if jwt_secret or jwks_url:
+        raise AuthSessionError("Supabase token uses an unsupported signing algorithm or signing configuration.")
 
     client = get_supabase_client()
     if not client:

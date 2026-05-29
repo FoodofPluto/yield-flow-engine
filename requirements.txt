@@ -3,6 +3,7 @@ stripe>=11.0.0
 supabase>=2.10.0
 flask>=3.0.0
 plotly
+PyJWT[crypto]>=2.10.1
 
 requests>=2.32.0
 pandas>=2.2.0
