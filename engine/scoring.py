@@ -163,7 +163,7 @@ def score_pool(row: Dict[str, Any]) -> int:
     stablecoin = bool(row.get("stablecoin", False))
     rewards = float(row.get("apyReward", 0) or 0)
 
-    risk = 58
+    risk: float = 58
     risk += max(0, min(28, apy / 5))
     risk += max(0, min(12, rewards / 2))
     risk += (100 - tvl_stability) * 0.22

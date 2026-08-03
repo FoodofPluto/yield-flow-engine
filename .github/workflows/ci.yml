@@ -1,0 +1,74 @@
+name: Repository Baseline
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  baseline:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      DEV_MODE: "false"
+      ENVIRONMENT: "test"
+      FURUFLOW_DISABLE_EXTERNAL_SIDE_EFFECTS: "true"
+      POETRY_VIRTUALENVS_IN_PROJECT: "true"
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v6
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+
+      - name: Install pinned Poetry toolchain
+        run: |
+          pipx install poetry==2.2.1
+          pipx inject poetry poetry-plugin-export==1.9.0
+
+      - name: Validate and install locked dependencies
+        run: |
+          poetry check --lock
+          poetry install --with dev --no-interaction
+
+      - name: Verify deployment requirements export
+        run: |
+          poetry export --only main --format requirements.txt --without-hashes --output "$RUNNER_TEMP/requirements.generated.txt"
+          diff --unified requirements.txt "$RUNNER_TEMP/requirements.generated.txt"
+
+      - name: Run unit and characterization tests
+        run: poetry run python -m pytest
+
+      - name: Validate Python syntax
+        run: poetry run python scripts/check_python_syntax.py
+
+      - name: Lint correctness issues
+        run: poetry run ruff check .
+
+      - name: Run practical type checks
+        run: >-
+          poetry run mypy
+          engine/scanner.py
+          engine/scoring.py
+          engine/tier.py
+          engine/x_format.py
+          signal_formatter.py
+          signal_intelligence.py
+          utils/external_side_effects.py
+
+      - name: Smoke-test CLI with local demo data
+        run: poetry run engine --source demo --top 1
+
+      - name: Smoke-test Streamlit boot
+        run: poetry run python scripts/streamlit_smoke.py
+
+      - name: Scan tracked files for credentials
+        run: poetry run python scripts/check_tracked_secrets.py
+
+      - name: Audit locked runtime dependencies
+        run: poetry run pip-audit --requirement requirements.txt

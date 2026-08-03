@@ -10,6 +10,8 @@ try:
 except Exception as e:
     raise SystemExit("Missing dependency 'requests'. Run: poetry add requests") from e
 
+from utils.external_side_effects import require_external_side_effects_allowed
+
 
 ROW_SPLIT = re.compile(r"\s{2,}")  # 2+ spaces as column delimiter
 
@@ -123,6 +125,7 @@ def format_for_discord(rows: List[Dict[str, Any]], title: str, limit: int = 10) 
 
 
 def post_to_discord(webhook_url: str, content: str, *, username="Yield Flow Bot", retries=3) -> None:
+    require_external_side_effects_allowed("Discord")
     payload = {"content": content, "username": username}
     backoff = 1.0
     for attempt in range(1, retries + 1):

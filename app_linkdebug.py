@@ -725,7 +725,7 @@ def render_link_table(source_df: pd.DataFrame, title: str, description: str, *, 
         })
         st.dataframe(
             link_view,
-            use_container_width=True,
+            width="stretch",
             hide_index=True,
             height=min(120 + 42 * len(link_view), 420),
             column_config={
@@ -910,7 +910,7 @@ def require_pro(feature_name: str, preview_df: pd.DataFrame | None = None, previ
         st.caption(preview_note)
     if preview_df is not None and not preview_df.empty:
         st.markdown("### Preview")
-        st.dataframe(preview_df.head(3), use_container_width=True, hide_index=True, height=180)
+        st.dataframe(preview_df.head(3), width="stretch", hide_index=True, height=180)
     st.markdown(
         """
 **FuruFlow Pro includes:**
@@ -1071,13 +1071,13 @@ def render_opportunity_card(row: pd.Series, idx: int, watched: bool) -> None:
     with c1:
         st.markdown("<div class='watch-wrap'>", unsafe_allow_html=True)
         label = "Remove" if watched else "Watch"
-        if st.button(label, key=f"watch_{idx}", use_container_width=True):
+        if st.button(label, key=f"watch_{idx}", width="stretch"):
             watch_toggle(str(row["pool"]))
             st.rerun()
         st.markdown("</div>", unsafe_allow_html=True)
     with c2:
         st.markdown("<div class='pool-wrap'>", unsafe_allow_html=True)
-        st.link_button("Open Pool", row["pool_url"], use_container_width=True)
+        st.link_button("Open Pool", row["pool_url"], width="stretch")
         st.markdown("</div>", unsafe_allow_html=True)
 
 
@@ -1092,12 +1092,12 @@ def render_protocol_dashboard(df: pd.DataFrame) -> None:
     top_protocols = top_protocols.rename(columns={"project": "Protocol", "total_tvl": "TVL (USD)", "median_apy": "Median APY", "pools": "Pools", "avg_risk": "Avg Risk"})
     left, right = st.columns([1.15, 1], gap="large")
     with left:
-        st.dataframe(top_protocols, use_container_width=True, hide_index=True, height=420, column_config={"TVL (USD)": st.column_config.NumberColumn(format="$%.0f"), "Median APY": st.column_config.NumberColumn(format="%.2f%%"), "Avg Risk": st.column_config.NumberColumn(format="%.0f")})
+        st.dataframe(top_protocols, width="stretch", hide_index=True, height=420, column_config={"TVL (USD)": st.column_config.NumberColumn(format="$%.0f"), "Median APY": st.column_config.NumberColumn(format="%.2f%%"), "Avg Risk": st.column_config.NumberColumn(format="%.0f")})
     with right:
         bar = px.bar(top_protocols.head(10), x="Protocol", y="TVL (USD)", color="Median APY", hover_data={"Pools": True, "Avg Risk": ':.1f'})
         bar.update_xaxes(title="Protocol")
         bar.update_yaxes(title="TVL")
-        st.plotly_chart(plotly_theme(bar, 420), use_container_width=True)
+        st.plotly_chart(plotly_theme(bar, 420), width="stretch")
     st.markdown("</div>", unsafe_allow_html=True)
 
 
@@ -1128,7 +1128,7 @@ def render_home_page(filtered: pd.DataFrame, full_filtered: pd.DataFrame, watchl
             st.info("No opportunities match the current filters.")
         else:
             top_today.columns = ["Protocol", "Chain", "Asset", "APY", "TVL (USD)", "Risk", "Open"]
-            st.dataframe(top_today, use_container_width=True, hide_index=True, height=320, column_config={"APY": st.column_config.NumberColumn(format="%.2f%%"), "TVL (USD)": st.column_config.NumberColumn(format="$%.0f"), "Open": st.column_config.LinkColumn("Pool link", display_text="Open")})
+            st.dataframe(top_today, width="stretch", hide_index=True, height=320, column_config={"APY": st.column_config.NumberColumn(format="%.2f%%"), "TVL (USD)": st.column_config.NumberColumn(format="$%.0f"), "Open": st.column_config.LinkColumn("Pool link", display_text="Open")})
     with top_right:
         st.markdown("<div class='signal-card'><div class='signal-title'>What to do next</div><div class='signal-copy'>Use Home for a quick market read, Signals for ranked conviction, Watchlist for your shortlist, and Recaps for the memory layer behind alerts and trend persistence.</div></div>", unsafe_allow_html=True)
         st.markdown("<div style='height:0.65rem;'></div>", unsafe_allow_html=True)
@@ -1152,7 +1152,7 @@ def render_home_page(filtered: pd.DataFrame, full_filtered: pd.DataFrame, watchl
             st.info("No yield changes available yet.")
         else:
             movers.columns = ["Protocol", "Asset", "7d APY Δ", "7d TVL Δ %", "Signal"]
-            st.dataframe(movers, use_container_width=True, hide_index=True, height=220, column_config={"7d APY Δ": st.column_config.NumberColumn(format="%.2f"), "7d TVL Δ %": st.column_config.NumberColumn(format="%.2f")})
+            st.dataframe(movers, width="stretch", hide_index=True, height=220, column_config={"7d APY Δ": st.column_config.NumberColumn(format="%.2f"), "7d TVL Δ %": st.column_config.NumberColumn(format="%.2f")})
         st.markdown("</div>", unsafe_allow_html=True)
     with bottom_mid:
         st.markdown("<div class='panel'>", unsafe_allow_html=True)
@@ -1162,7 +1162,7 @@ def render_home_page(filtered: pd.DataFrame, full_filtered: pd.DataFrame, watchl
             st.info("No safer high-APY pools match the current filters.")
         else:
             safest.columns = ["Protocol", "Asset", "APY", "TVL (USD)", "Risk"]
-            st.dataframe(safest, use_container_width=True, hide_index=True, height=220, column_config={"APY": st.column_config.NumberColumn(format="%.2f%%"), "TVL (USD)": st.column_config.NumberColumn(format="$%.0f")})
+            st.dataframe(safest, width="stretch", hide_index=True, height=220, column_config={"APY": st.column_config.NumberColumn(format="%.2f%%"), "TVL (USD)": st.column_config.NumberColumn(format="$%.0f")})
         st.markdown("</div>", unsafe_allow_html=True)
     with bottom_right:
         st.markdown("<div class='panel'>", unsafe_allow_html=True)
@@ -1170,7 +1170,7 @@ def render_home_page(filtered: pd.DataFrame, full_filtered: pd.DataFrame, watchl
         if history_trend_df.empty:
             st.info("Trend blocks appear once multiple signals have been logged.")
         else:
-            st.dataframe(history_trend_df.head(5), use_container_width=True, hide_index=True, height=220, column_config={"APY": st.column_config.NumberColumn(format="%.2f%%"), "TVL (USD)": st.column_config.NumberColumn(format="$%.0f"), "APY Δ": st.column_config.NumberColumn(format="%.2f")})
+            st.dataframe(history_trend_df.head(5), width="stretch", hide_index=True, height=220, column_config={"APY": st.column_config.NumberColumn(format="%.2f%%"), "TVL (USD)": st.column_config.NumberColumn(format="$%.0f"), "APY Δ": st.column_config.NumberColumn(format="%.2f")})
         st.markdown("</div>", unsafe_allow_html=True)
 
 
@@ -1207,7 +1207,7 @@ def render_recaps_page(alert_stats: dict[str, Any], history_latest_df: pd.DataFr
         else:
             latest_view = history_latest_df[["name", "chain", "apy", "tvl", "strength_score", "tier"]].copy()
             latest_view.columns = ["Pool", "Chain", "APY", "TVL (USD)", "Score", "Tier"]
-            st.dataframe(latest_view, use_container_width=True, hide_index=True, height=320, column_config={"APY": st.column_config.NumberColumn(format="%.2f%%"), "TVL (USD)": st.column_config.NumberColumn(format="$%.0f")})
+            st.dataframe(latest_view, width="stretch", hide_index=True, height=320, column_config={"APY": st.column_config.NumberColumn(format="%.2f%%"), "TVL (USD)": st.column_config.NumberColumn(format="$%.0f")})
         st.markdown("</div>", unsafe_allow_html=True)
     with history_right:
         st.markdown("<div class='panel'>", unsafe_allow_html=True)
@@ -1215,7 +1215,7 @@ def render_recaps_page(alert_stats: dict[str, Any], history_latest_df: pd.DataFr
         if history_trend_df.empty:
             st.info("Trend blocks appear once multiple signals have been logged.")
         else:
-            st.dataframe(history_trend_df, use_container_width=True, hide_index=True, height=320, column_config={"APY": st.column_config.NumberColumn(format="%.2f%%"), "TVL (USD)": st.column_config.NumberColumn(format="$%.0f"), "APY Δ": st.column_config.NumberColumn(format="%.2f")})
+            st.dataframe(history_trend_df, width="stretch", hide_index=True, height=320, column_config={"APY": st.column_config.NumberColumn(format="%.2f%%"), "TVL (USD)": st.column_config.NumberColumn(format="$%.0f"), "APY Δ": st.column_config.NumberColumn(format="%.2f")})
         if not is_pro:
             st.markdown("<div class='note'>Free mode can see the recap layer. Pro is where you get the full signal engine, stronger alerts, and faster decision workflows.</div>", unsafe_allow_html=True)
             st.link_button("Upgrade to FuruFlow Pro — $20/month", get_checkout_link())
@@ -1281,7 +1281,7 @@ pendle_debug = df[
 ][["pool", "project", "chain", "symbol", "pool_url"]].head(10)
 
 with st.expander("Debug: Pendle link resolver", expanded=False):
-    st.dataframe(pendle_debug, use_container_width=True, hide_index=True)
+    st.dataframe(pendle_debug, width="stretch", hide_index=True)
 
 if "watchlist" not in st.session_state:
     st.session_state.watchlist = load_watchlist()
@@ -1443,7 +1443,7 @@ elif page == "Scanner":
         table_df = compact_table(filtered)
         st.dataframe(
             table_df,
-            use_container_width=True,
+            width="stretch",
             hide_index=True,
             height=540,
             column_config={
@@ -1460,7 +1460,7 @@ elif page == "Scanner":
             st.download_button("Download current table as CSV", csv, file_name="furuflow_scanner.csv", mime="text/csv")
         else:
             st.markdown("<div class='signal-card'><div class='signal-title'>CSV export is Pro</div><div class='signal-copy'>Keep the scanner open to everyone, then charge for export workflows and deeper decision tools.</div></div>", unsafe_allow_html=True)
-            st.link_button("Unlock CSV export", get_checkout_link(), use_container_width=True)
+            st.link_button("Unlock CSV export", get_checkout_link(), width="stretch")
         st.markdown("</div>", unsafe_allow_html=True)
     with right:
         st.markdown("<div class='panel'>", unsafe_allow_html=True)
@@ -1475,7 +1475,7 @@ elif page == "Scanner":
         mini = filtered.head(12).groupby("risk_band", as_index=False).agg(pools=("pool", "count")) if not filtered.empty else pd.DataFrame()
         if not mini.empty:
             pie = px.pie(mini, values="pools", names="risk_band", hole=0.45)
-            st.plotly_chart(plotly_theme(pie, 260), use_container_width=True)
+            st.plotly_chart(plotly_theme(pie, 260), width="stretch")
         st.markdown("</div>", unsafe_allow_html=True)
 
 elif page == "Signals":
@@ -1526,7 +1526,7 @@ elif page == "Signals":
         section_header("Signal engine", "Yield trend AI layer", "Rules-based labels surface APY spikes, farm rotations, emerging pools, and whale inflows from recent pool chart movement.")
         sig_view = filtered[["project", "chain", "symbol", "signal", "signal_strength", "apy_delta_7", "tvl_delta_7_pct", "apy_volatility", "pool_url"]].copy().head(20)
         sig_view.columns = ["Protocol", "Chain", "Asset", "Signal", "Strength", "7d APY Δ", "7d TVL Δ %", "APY volatility", "Open"]
-        st.dataframe(sig_view, use_container_width=True, hide_index=True, height=560, column_config={"Strength": st.column_config.NumberColumn(format="%.1f"), "7d APY Δ": st.column_config.NumberColumn(format="%.2f"), "7d TVL Δ %": st.column_config.NumberColumn(format="%.2f"), "APY volatility": st.column_config.NumberColumn(format="%.2f"), "Open": st.column_config.LinkColumn("Pool link", display_text="Open")})
+        st.dataframe(sig_view, width="stretch", hide_index=True, height=560, column_config={"Strength": st.column_config.NumberColumn(format="%.1f"), "7d APY Δ": st.column_config.NumberColumn(format="%.2f"), "7d TVL Δ %": st.column_config.NumberColumn(format="%.2f"), "APY volatility": st.column_config.NumberColumn(format="%.2f"), "Open": st.column_config.LinkColumn("Pool link", display_text="Open")})
         st.markdown("</div>", unsafe_allow_html=True)
     with right:
         st.markdown("<div class='panel'>", unsafe_allow_html=True)
@@ -1544,7 +1544,7 @@ elif page == "Signals":
             fig = px.scatter(sig_plot_df, x="avg_tvl", y="avg_apy", size="avg_strength", color="signal", hover_name="signal", size_max=42, log_x=True)
             fig.update_xaxes(title="Average TVL")
             fig.update_yaxes(title="Average APY %")
-            st.plotly_chart(plotly_theme(fig, 320), use_container_width=True)
+            st.plotly_chart(plotly_theme(fig, 320), width="stretch")
         st.markdown("</div>", unsafe_allow_html=True)
     render_link_table(filtered.sort_values(["signal_strength", "apy_delta_7", "tvl_delta_7_pct"], ascending=[False, False, False]), "Signals", "Open the strongest recent signal movers directly from the signal view.", limit=10)
 
@@ -1558,7 +1558,7 @@ elif page == "Arbitrage":
         if arb_df.empty:
             st.info("No meaningful cross-chain APY gaps are visible for the current filters.")
         else:
-            st.dataframe(arb_df, use_container_width=True, hide_index=True, height=560, column_config={"Best APY": st.column_config.NumberColumn(format="%.2f%%"), "Lower APY": st.column_config.NumberColumn(format="%.2f%%"), "APY difference": st.column_config.NumberColumn(format="%.2f"), "Best link": st.column_config.LinkColumn("Best pool", display_text="Open"), "Lower link": st.column_config.LinkColumn("Lower pool", display_text="Open")})
+            st.dataframe(arb_df, width="stretch", hide_index=True, height=560, column_config={"Best APY": st.column_config.NumberColumn(format="%.2f%%"), "Lower APY": st.column_config.NumberColumn(format="%.2f%%"), "APY difference": st.column_config.NumberColumn(format="%.2f"), "Best link": st.column_config.LinkColumn("Best pool", display_text="Open"), "Lower link": st.column_config.LinkColumn("Lower pool", display_text="Open")})
         st.markdown("</div>", unsafe_allow_html=True)
     with right:
         st.markdown("<div class='panel'>", unsafe_allow_html=True)
@@ -1573,7 +1573,7 @@ elif page == "Arbitrage":
         if not arb_df.empty:
             fig = px.bar(arb_df.head(12), x="Asset", y="APY difference", color="Best chain", hover_data={"Best protocol": True, "Lower chain": True, "Lower protocol": True})
             fig.update_yaxes(title="APY difference")
-            st.plotly_chart(plotly_theme(fig, 330), use_container_width=True)
+            st.plotly_chart(plotly_theme(fig, 330), width="stretch")
         st.markdown("</div>", unsafe_allow_html=True)
     if not filtered.empty:
         arb_focus = filtered.sort_values(["apy", "tvlUsd"], ascending=[False, False]).head(10)
@@ -1589,7 +1589,7 @@ elif page == "Market Map":
             bubble.update_traces(marker=dict(line=dict(width=1, color="rgba(255,255,255,0.22)"), opacity=0.8))
             bubble.update_xaxes(title="Risk score")
             bubble.update_yaxes(title="APY %")
-            st.plotly_chart(plotly_theme(bubble, 420), use_container_width=True)
+            st.plotly_chart(plotly_theme(bubble, 420), width="stretch")
         st.markdown("</div>", unsafe_allow_html=True)
     with right:
         st.markdown("<div class='panel'>", unsafe_allow_html=True)
@@ -1597,7 +1597,7 @@ elif page == "Market Map":
         if not filtered.empty:
             chain_df = filtered.groupby("chain", as_index=False).agg(total_tvl=("tvlUsd", "sum"), median_apy=("apy", "median"), pools=("pool", "count"))
             sun = px.treemap(chain_df, path=[px.Constant("Chains"), "chain"], values="total_tvl", color="median_apy", hover_data={"pools": True, "median_apy": ':.2f'})
-            st.plotly_chart(plotly_theme(sun, 420), use_container_width=True)
+            st.plotly_chart(plotly_theme(sun, 420), width="stretch")
         st.markdown("</div>", unsafe_allow_html=True)
     render_link_table(filtered, "Market map", "Open the pools you are seeing in the current market field view.", limit=10, sort_cols=["rank_score", "apy", "tvlUsd"])
 
@@ -1621,7 +1621,7 @@ elif page == "Pool Explorer":
                 fig.update_layout(yaxis2=dict(overlaying="y", side="right", showgrid=False, title="TVL"))
             fig.update_xaxes(title="Time")
             fig.update_yaxes(title="APY %")
-            st.plotly_chart(plotly_theme(fig, 430), use_container_width=True)
+            st.plotly_chart(plotly_theme(fig, 430), width="stretch")
             if chart_mode == "fallback":
                 st.caption("Live history was unavailable, so FuruFlow generated a preview trend from the current pool snapshot to avoid an empty chart state.")
             elif chart_mode == "stored":
@@ -1641,18 +1641,18 @@ elif page == "Pool Explorer":
                 ["7d APY change", f"{float(row['apy_delta_7']):.2f}"],
                 ["7d TVL change", f"{float(row['tvl_delta_7_pct']):.2f}%"],
             ], columns=["Metric", "Value"])
-            st.dataframe(stats, use_container_width=True, hide_index=True, height=360)
+            st.dataframe(stats, width="stretch", hide_index=True, height=360)
             c1, c2 = st.columns(2)
             with c1:
                 watched = row["pool"] in st.session_state.watchlist
                 st.markdown("<div class='watch-wrap'>", unsafe_allow_html=True)
-                if st.button("Remove from watchlist" if watched else "Add to watchlist", key="drill_watch", use_container_width=True):
+                if st.button("Remove from watchlist" if watched else "Add to watchlist", key="drill_watch", width="stretch"):
                     watch_toggle(str(row["pool"]))
                     st.rerun()
                 st.markdown("</div>", unsafe_allow_html=True)
             with c2:
                 st.markdown("<div class='pool-wrap'>", unsafe_allow_html=True)
-                st.link_button("Open Pool", row["pool_url"], use_container_width=True)
+                st.link_button("Open Pool", row["pool_url"], width="stretch")
                 st.markdown("</div>", unsafe_allow_html=True)
     st.markdown("</div>", unsafe_allow_html=True)
 
@@ -1687,7 +1687,7 @@ elif page == "Strategy Builder":
         else:
             view = strategy_df[["project", "chain", "symbol", "apy", "tvlUsd", "risk_score", "signal", "pool_url"]].copy()
             view.columns = ["Protocol", "Chain", "Asset", "APY", "TVL (USD)", "Risk", "Signal", "Open"]
-            st.dataframe(view, use_container_width=True, hide_index=True, height=520, column_config={"APY": st.column_config.NumberColumn(format="%.2f%%"), "TVL (USD)": st.column_config.NumberColumn(format="$%.0f"), "Open": st.column_config.LinkColumn("Pool link", display_text="Open")})
+            st.dataframe(view, width="stretch", hide_index=True, height=520, column_config={"APY": st.column_config.NumberColumn(format="%.2f%%"), "TVL (USD)": st.column_config.NumberColumn(format="$%.0f"), "Open": st.column_config.LinkColumn("Pool link", display_text="Open")})
         st.markdown("</div>", unsafe_allow_html=True)
 
 elif page == "Recaps":
@@ -1703,9 +1703,9 @@ elif page == "Watchlist":
         else:
             view = watchlist_df[["project", "chain", "symbol", "apy", "tvlUsd", "risk_score", "signal", "pool_url"]].copy()
             view.columns = ["Protocol", "Chain", "Asset", "APY", "TVL (USD)", "Risk", "Signal", "Open"]
-            st.dataframe(view, use_container_width=True, hide_index=True, height=440, column_config={"APY": st.column_config.NumberColumn(format="%.2f%%"), "TVL (USD)": st.column_config.NumberColumn(format="$%.0f"), "Open": st.column_config.LinkColumn("Pool link", display_text="Open")})
+            st.dataframe(view, width="stretch", hide_index=True, height=440, column_config={"APY": st.column_config.NumberColumn(format="%.2f%%"), "TVL (USD)": st.column_config.NumberColumn(format="$%.0f"), "Open": st.column_config.LinkColumn("Pool link", display_text="Open")})
             st.markdown("<div class='danger-wrap'>", unsafe_allow_html=True)
-            if st.button("Clear watchlist", use_container_width=True):
+            if st.button("Clear watchlist", width="stretch"):
                 set_watchlist([])
                 st.rerun()
             st.markdown("</div>", unsafe_allow_html=True)
@@ -1717,10 +1717,10 @@ elif page == "Watchlist":
             fig = px.bar(watchlist_df.sort_values("apy", ascending=False), x="project", y="apy", color="risk_band", hover_data={"chain": True, "symbol": True, "tvlUsd": ':$,.0f'})
             fig.update_xaxes(title="Protocol")
             fig.update_yaxes(title="APY %")
-            st.plotly_chart(plotly_theme(fig, 300), use_container_width=True)
+            st.plotly_chart(plotly_theme(fig, 300), width="stretch")
             sig_counts = watchlist_df["signal"].value_counts().reset_index()
             sig_counts.columns = ["Signal", "Count"]
-            st.dataframe(sig_counts, use_container_width=True, hide_index=True, height=180)
+            st.dataframe(sig_counts, width="stretch", hide_index=True, height=180)
         else:
             st.info("Add a few pools to see watchlist comparisons.")
         st.markdown("</div>", unsafe_allow_html=True)

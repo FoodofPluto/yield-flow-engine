@@ -66,17 +66,49 @@ FuruFlow Pro adds the intelligence layer:
 
 ## Quick start
 
-Install dependencies:
+Python 3.10-3.12 is supported. Poetry 2.2.1 and `poetry.lock` are the canonical
+dependency source for the Streamlit app, CLI, tests, scheduled jobs, local
+development, and CI. Install the locked environment:
 
 ```bash
-pip install -r requirements.txt
+pipx install poetry==2.2.1
+pipx inject poetry poetry-plugin-export==1.9.0
+poetry install --with dev
 ```
 
-Run the app:
+`requirements.txt` is a checked-in export of the locked runtime dependencies for
+Streamlit Community Cloud and other hosts that install from requirements files.
+Do not edit it by hand. Regenerate and verify it after dependency changes:
 
 ```bash
-streamlit run app.py
+poetry lock
+poetry export --only main --format requirements.txt --without-hashes --output requirements.txt
+poetry check --lock
 ```
+
+Run the app and network-free CLI smoke command:
+
+```bash
+poetry run streamlit run app.py
+poetry run engine --source demo --top 1
+```
+
+Run the complete local baseline:
+
+```bash
+poetry run python -m pytest
+poetry run python scripts/check_python_syntax.py
+poetry run ruff check .
+poetry run mypy engine/scanner.py engine/scoring.py engine/tier.py engine/x_format.py signal_formatter.py signal_intelligence.py utils/external_side_effects.py
+poetry run engine --source demo --top 1
+poetry run python scripts/streamlit_smoke.py
+poetry run python scripts/check_tracked_secrets.py
+poetry run pip-audit --requirement requirements.txt
+```
+
+Tests and smoke checks set `FURUFLOW_DISABLE_EXTERNAL_SIDE_EFFECTS=true` and do
+not use production credentials. See `docs/ARCHITECTURE.md` for execution paths
+and `docs/STABILIZATION_BASELINE.md` for the recorded baseline.
 
 ## Account and entitlement model
 
