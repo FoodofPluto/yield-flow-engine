@@ -19,11 +19,15 @@ def main() -> int:
     tracked = [part.decode("utf-8") for part in output.split(b"\0") if part]
 
     failures: list[str] = []
+    parsed_count = 0
     for relative in tracked:
         path = root / relative
+        if not path.is_file():
+            continue
         try:
             with tokenize.open(path) as source_file:
                 ast.parse(source_file.read(), filename=relative)
+                parsed_count += 1
         except (SyntaxError, UnicodeError) as exc:
             failures.append(f"{relative}: {exc}")
 
@@ -33,7 +37,7 @@ def main() -> int:
             print(f"- {failure}")
         return 1
 
-    print(f"Parsed {len(tracked)} tracked/non-ignored Python files successfully.")
+    print(f"Parsed {parsed_count} tracked/non-ignored Python files successfully.")
     return 0
 
 

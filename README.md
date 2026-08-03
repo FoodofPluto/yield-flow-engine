@@ -100,6 +100,7 @@ poetry run python -m pytest
 poetry run python scripts/check_python_syntax.py
 poetry run ruff check .
 poetry run mypy engine/scanner.py engine/scoring.py engine/tier.py engine/x_format.py signal_formatter.py signal_intelligence.py utils/external_side_effects.py
+poetry run mypy --follow-imports=skip supabase_client.py auth_session.py furuflow_auth.py auth_service.py auth.py scripts/check_supabase_auth_health.py
 poetry run engine --source demo --top 1
 poetry run python scripts/streamlit_smoke.py
 poetry run python scripts/check_tracked_secrets.py
@@ -128,23 +129,44 @@ Admin access must be assigned explicitly in the user database and must be paired
 
 ## Production auth environment
 
-Production startup fails closed when required auth or billing settings are missing.
+Preview/staging and production startup fail closed when auth configuration is
+missing, malformed, placeholder-shaped, or unsafe. `SUPABASE_URL` must be the
+project root; `/rest/v1`, `/auth/v1`, and every other subpath are rejected.
 
 Required auth variables:
 
 ```env
 ENVIRONMENT=production
-SUPABASE_URL=https://your-project.supabase.co
-SUPABASE_ANON_KEY=your-public-anon-key
+DEV_MODE=false
+SUPABASE_URL=https://PROJECT_REFERENCE.supabase.co
+SUPABASE_ANON_KEY=REPLACE_WITH_PUBLISHABLE_OR_ANON_KEY
+SUPABASE_REDIRECT_URL_DEVELOPMENT=http://localhost:8501
+SUPABASE_REDIRECT_URL_PREVIEW=https://PREVIEW_HOST/auth/callback
+SUPABASE_REDIRECT_URL_PRODUCTION=https://PRODUCTION_HOST/auth/callback
 ```
 
-Supabase JWT verification uses the project's JWKS endpoint by default:
+The active redirect variable is selected by `ENVIRONMENT`; `staging` uses the
+preview variable. Supabase dashboard redirect allowlists must contain each
+deployed callback base/path; production should use an exact path, while preview
+host patterns may use Supabase-supported wildcards as documented in
+`docs/AUTHENTICATION.md`.
+
+The JWKS endpoint is derived from the validated project root. An optional exact
+override may be supplied:
 
 ```env
-SUPABASE_JWKS_URL=https://your-project.supabase.co/auth/v1/.well-known/jwks.json
+SUPABASE_JWKS_URL=https://PROJECT_REFERENCE.supabase.co/auth/v1/.well-known/jwks.json
 ```
 
-`SUPABASE_JWKS_URL` is optional when `SUPABASE_URL` is set, because the app derives the default JWKS URL from `SUPABASE_URL`. Legacy HS256 projects can still set `SUPABASE_JWT_SECRET`; ECC/P-256 signing-key projects should leave `SUPABASE_JWT_SECRET` unset.
+Run the deploy diagnostic without printing credentials:
+
+```bash
+poetry run python scripts/check_supabase_auth_health.py
+```
+
+It validates configuration, DNS, Auth health, JWKS availability, and project
+URL/key coherence. Identity and email verification are resolved through
+Supabase Auth's authoritative user endpoint, not mutable user metadata.
 
 Required billing variables:
 
@@ -153,7 +175,8 @@ STRIPE_SECRET_KEY=sk_live_...
 STRIPE_WEBHOOK_SECRET=whsec_...
 ```
 
-`DEV_MODE=true` is rejected when `ENVIRONMENT=production`.
+`DEV_MODE=true`, loopback HTTP redirects, and custom ports are rejected in
+preview/staging/production.
 
 ## Stripe / Pro activation notes
 
@@ -177,14 +200,23 @@ This build includes:
 
 The legacy email form is a temporary free-session bridge during migration. Supabase Auth is now the verified identity boundary for privileged access. Legacy sessions cannot unlock admin, lifetime, or Pro entitlements.
 
+Supabase access and refresh tokens live only in the current Streamlit server
+session. This safely survives Streamlit reruns, but not a browser refresh or a
+new websocket. FuruFlow does not store raw tokens in browser storage, cookies,
+SQLite, or runtime files. Secure persistence across refresh requires the
+separate opaque HttpOnly-cookie backend bridge specified in
+`docs/AUTHENTICATION.md`.
+
 ## Rollout sequence
 
-1. Add Supabase and Stripe production secrets.
-2. Deploy with `ENVIRONMENT=production` and `DEV_MODE=false`.
-3. Run the app once to apply additive SQLite migrations.
-4. Verify Supabase password login or magic-link flow.
-5. Migrate paid users by having them sign in with the same verified Supabase email.
-6. Assign admin roles only through explicit DB mutation after verified identity exists.
+1. Add the exact Supabase project root, matching publishable key, and active
+   redirect setting without changing any local placeholder to a guessed value.
+2. Allowlist development, preview/staging, and production callback variants in
+   the Supabase dashboard.
+3. Run `scripts/check_supabase_auth_health.py` in the deployed environment.
+4. Verify signup, email confirmation, password and magic-link sign-in, refresh,
+   global logout, and password recovery using staging accounts.
+5. Deploy production with `ENVIRONMENT=production` and `DEV_MODE=false`.
 7. Move Stripe checkout creation to a backend endpoint that writes internal `user_id` into Stripe metadata.
 
 Rollback is safe by reverting the auth migration commit. The DB changes are additive nullable columns and new audit/idempotency tables; no existing users are deleted.

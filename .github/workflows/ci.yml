@@ -61,6 +61,16 @@ jobs:
           signal_intelligence.py
           utils/external_side_effects.py
 
+      - name: Type-check authentication boundary
+        run: >-
+          poetry run mypy --follow-imports=skip
+          supabase_client.py
+          auth_session.py
+          furuflow_auth.py
+          auth_service.py
+          auth.py
+          scripts/check_supabase_auth_health.py
+
       - name: Smoke-test CLI with local demo data
         run: poetry run engine --source demo --top 1
 

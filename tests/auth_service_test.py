@@ -8,6 +8,9 @@ from unittest.mock import patch
 
 import auth_service
 
+PROJECT_URL = "https://abcdefghijklmnopqrst.supabase.co"
+PUBLISHABLE_KEY = "sb_publishable_" + "A" * 32
+
 
 class AuthServiceHardeningTests(unittest.TestCase):
     def test_typed_email_does_not_imply_admin_access(self):
@@ -51,13 +54,13 @@ class AuthServiceHardeningTests(unittest.TestCase):
         with patch.dict(os.environ, {"ENVIRONMENT": "test", "DEV_MODE": "false"}, clear=False):
             importlib.reload(auth_service)
 
-    def test_production_accepts_ecc_jwks_config_without_legacy_jwt_secret(self):
+    def test_production_accepts_valid_project_root_and_publishable_key(self):
         env = {
             "ENVIRONMENT": "production",
             "DEV_MODE": "false",
-            "SUPABASE_URL": "https://example.supabase.co",
-            "SUPABASE_ANON_KEY": "anon",
-            "SUPABASE_JWT_SECRET": "",
+            "SUPABASE_URL": PROJECT_URL,
+            "SUPABASE_ANON_KEY": PUBLISHABLE_KEY,
+            "SUPABASE_REDIRECT_URL_PRODUCTION": "https://app.furuflow.example/auth/callback",
             "STRIPE_SECRET_KEY": "sk_test_placeholder",
             "STRIPE_WEBHOOK_SECRET": "whsec_placeholder",
         }
@@ -71,35 +74,13 @@ class AuthServiceHardeningTests(unittest.TestCase):
         with patch.dict(os.environ, {"ENVIRONMENT": "test", "DEV_MODE": "false"}, clear=False):
             importlib.reload(auth_service)
 
-    def test_production_missing_both_jwt_secret_and_jwks_config_fails_boot(self):
+    def test_production_missing_project_url_fails_boot(self):
         env = {
             "ENVIRONMENT": "production",
             "DEV_MODE": "false",
             "SUPABASE_URL": "",
-            "SUPABASE_ANON_KEY": "anon",
-            "SUPABASE_JWT_SECRET": "",
-            "SUPABASE_JWKS_URL": "",
-            "STRIPE_SECRET_KEY": "sk_test_placeholder",
-            "STRIPE_WEBHOOK_SECRET": "whsec_placeholder",
-        }
-
-        with patch.dict(os.environ, env, clear=False):
-            import supabase_client
-
-            with self.assertRaises(RuntimeError):
-                importlib.reload(supabase_client)
-
-        with patch.dict(os.environ, {"ENVIRONMENT": "test", "DEV_MODE": "false"}, clear=False):
-            importlib.reload(auth_service)
-
-    def test_production_accepts_legacy_jwt_secret_config(self):
-        env = {
-            "ENVIRONMENT": "production",
-            "DEV_MODE": "false",
-            "SUPABASE_URL": "https://example.supabase.co",
-            "SUPABASE_ANON_KEY": "anon",
-            "SUPABASE_JWT_SECRET": "legacy-secret",
-            "SUPABASE_JWKS_URL": "",
+            "SUPABASE_ANON_KEY": PUBLISHABLE_KEY,
+            "SUPABASE_REDIRECT_URL_PRODUCTION": "https://app.furuflow.example/auth/callback",
             "STRIPE_SECRET_KEY": "sk_test_placeholder",
             "STRIPE_WEBHOOK_SECRET": "whsec_placeholder",
         }
@@ -108,7 +89,29 @@ class AuthServiceHardeningTests(unittest.TestCase):
             import supabase_client
 
             client = importlib.reload(supabase_client)
-            self.assertTrue(client.healthcheck_auth()["ok"])
+            with self.assertRaises(RuntimeError):
+                client.require_production_auth_config()
+
+        with patch.dict(os.environ, {"ENVIRONMENT": "test", "DEV_MODE": "false"}, clear=False):
+            importlib.reload(auth_service)
+
+    def test_production_rejects_placeholder_public_key(self):
+        env = {
+            "ENVIRONMENT": "production",
+            "DEV_MODE": "false",
+            "SUPABASE_URL": PROJECT_URL,
+            "SUPABASE_ANON_KEY": "your-public-anon-key",
+            "SUPABASE_REDIRECT_URL_PRODUCTION": "https://app.furuflow.example/auth/callback",
+            "STRIPE_SECRET_KEY": "sk_test_placeholder",
+            "STRIPE_WEBHOOK_SECRET": "whsec_placeholder",
+        }
+
+        with patch.dict(os.environ, env, clear=False):
+            import supabase_client
+
+            client = importlib.reload(supabase_client)
+            with self.assertRaises(RuntimeError):
+                client.require_production_auth_config()
 
         with patch.dict(os.environ, {"ENVIRONMENT": "test", "DEV_MODE": "false"}, clear=False):
             importlib.reload(auth_service)

@@ -40,11 +40,19 @@ infrastructure-as-code, release workflow, or command that deploys hosted state.
 README deployment guidance is narrative: Streamlit Community Cloud for `app.py`
 and a separately hosted Flask example.
 
+Supabase authentication is split across `supabase_client.py` (validated
+configuration, isolated SDK clients, and deploy diagnostics),
+`furuflow_auth.py` (provider lifecycle), `auth_session.py` (server-memory session
+boundary), `auth_service.py` (application identity/entitlement integration), and
+`auth.py` (Streamlit forms/callback UI). The provider module deliberately avoids
+the name `supabase_auth.py`, which would shadow the SDK's own `supabase_auth`
+package. See `docs/AUTHENTICATION.md` for the lifecycle and persistence boundary.
+
 ## Tests and validation
 
-The canonical test command is `poetry run python -m pytest`. Module execution
-keeps repository modules ahead of similarly named third-party packages on the
-import path. Pytest collects the existing
+The canonical test command is `poetry run python -m pytest`. Application modules
+must not reuse third-party package names; tests import the installed Supabase
+client to guard the resolved namespace. Pytest collects the existing
 `unittest.TestCase` suite plus stabilization tests. `tests/conftest.py` clears
 known production credential variables, enables the explicit side-effect guard,
 and blocks every outbound socket for every test. A test therefore cannot reach
