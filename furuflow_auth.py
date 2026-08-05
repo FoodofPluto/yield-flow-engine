@@ -9,7 +9,6 @@ import secrets
 import threading
 import time
 from dataclasses import dataclass
-from datetime import datetime, timezone
 from types import SimpleNamespace
 from typing import Any, MutableMapping
 from urllib.parse import urlencode
@@ -20,10 +19,11 @@ import streamlit as st
 from auth_session import (
     ACCESS_TOKEN_KEY,
     REFRESH_TOKEN_KEY,
+    SessionBridgeError,
     SessionTokens,
     get_auth_session_store,
+    persist_current_session,
 )
-from db import get_user_by_email, get_user_by_provider_user_id, upsert_user
 from supabase_client import AuthConfigurationError, get_supabase_client, load_auth_config
 
 logger = logging.getLogger(__name__)
@@ -603,46 +603,22 @@ def resolve_verified_identity(auth_user: dict[str, Any] | None) -> dict[str, Any
     if not provider_user_id or not email or not auth_user.get("email_verified"):
         raise AuthSessionError("Supabase identity is not verified.", "email_not_confirmed")
 
-    existing_by_provider = get_user_by_provider_user_id(provider_user_id)
-    now = datetime.now(timezone.utc).isoformat()
-    migration_notes = None
-    migrated_from_legacy = False
-
-    if existing_by_provider:
-        user = upsert_user(
-            email=existing_by_provider["email"],
-            provider_user_id=provider_user_id,
-            auth_provider=AUTH_PROVIDER,
-            email_verified=True,
-            last_login_at=now,
-        )
-    else:
-        legacy_user = get_user_by_email(email)
-        if legacy_user:
-            migrated_from_legacy = legacy_user.get("auth_provider") == "legacy_email"
-            migration_notes = "Matched authoritative Supabase identity to the existing local account."
-        user = upsert_user(
-            email=email,
-            provider_user_id=provider_user_id,
-            auth_provider=AUTH_PROVIDER,
-            email_verified=True,
-            last_login_at=now,
-            migrated_at=now if migrated_from_legacy else None,
-            migrated_from_legacy=migrated_from_legacy if migrated_from_legacy else None,
-            migration_notes=migration_notes,
-        )
-
     identity = {
-        "email": user["email"],
+        "email": email,
         "provider_user_id": provider_user_id,
         "auth_provider": AUTH_PROVIDER,
         "email_verified": True,
         "authenticated": True,
         "legacy": False,
-        "user_id": user["user_id"],
+        "user_id": provider_user_id,
     }
     st.session_state[IDENTITY_KEY] = identity
     st.session_state[IDENTITY_VALIDATED_AT_KEY] = time.time()
+    try:
+        persist_current_session(provider_user_id)
+    except SessionBridgeError as exc:
+        clear_cached_session()
+        raise AuthSessionError("Secure session persistence is temporarily unavailable.", "session_unavailable") from exc
     return identity
 
 

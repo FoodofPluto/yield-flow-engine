@@ -184,11 +184,11 @@ Your current Stripe buy link is a monthly Pro offer, so the production webhook s
 
 This build includes:
 
-- `stripe_subscription_id` and `subscription_status` fields in the user database
-- a webhook example that handles `checkout.session.completed`
+- migration-managed Supabase `subscriptions`, `entitlements`, and `webhook_events`
+- a service-role-only webhook backend that handles `checkout.session.completed`
 - subscription lifecycle syncing for `customer.subscription.created`, `updated`, and `deleted`
 - automatic activation/deactivation of Pro based on Stripe subscription state
-- webhook idempotency storage for processed Stripe event IDs
+- durable webhook processing/failure/idempotency state
 
 ## Recommended deployment split
 
@@ -196,16 +196,14 @@ This build includes:
 - **Backend webhook:** a small Flask app on Render, Railway, Fly.io, or another backend host
 - **Secrets:** keep Stripe secrets on the backend only
 
-## Important limitation
+## Account control plane
 
-The legacy email form is a temporary free-session bridge during migration. Supabase Auth is now the verified identity boundary for privileged access. Legacy sessions cannot unlock admin, lifetime, or Pro entitlements.
-
-Supabase access and refresh tokens live only in the current Streamlit server
-session. This safely survives Streamlit reruns, but not a browser refresh or a
-new websocket. FuruFlow does not store raw tokens in browser storage, cookies,
-SQLite, or runtime files. Secure persistence across refresh requires the
-separate opaque HttpOnly-cookie backend bridge specified in
-`docs/AUTHENTICATION.md`.
+Supabase Auth UUIDs are the identity boundary. Supabase Postgres profiles,
+entitlements, subscriptions, audits, webhook state, and sessions are the
+production authority; SQLite cannot grant access. Browser refresh is handled by
+the separate encrypted session broker and opaque HttpOnly cookie. See
+`docs/ACCOUNT_CONTROL_PLANE.md` for RLS, bootstrap, demo, migration, rollback,
+and deployment procedures.
 
 ## Rollout sequence
 
@@ -216,10 +214,14 @@ separate opaque HttpOnly-cookie backend bridge specified in
 3. Run `scripts/check_supabase_auth_health.py` in the deployed environment.
 4. Verify signup, email confirmation, password and magic-link sign-in, refresh,
    global logout, and password recovery using staging accounts.
-5. Deploy production with `ENVIRONMENT=production` and `DEV_MODE=false`.
-7. Move Stripe checkout creation to a backend endpoint that writes internal `user_id` into Stripe metadata.
+5. Apply the account migration, deploy the same-origin session broker route,
+   and verify RLS using two staging users.
+6. Bootstrap the first admin by verified UUID from a trusted shell.
+7. Deploy production with `ENVIRONMENT=production` and `DEV_MODE=false`.
+8. Configure Stripe checkout to write the verified UUID into metadata.
 
-Rollback is safe by reverting the auth migration commit. The DB changes are additive nullable columns and new audit/idempotency tables; no existing users are deleted.
+Use the reviewed migration/rollback artifacts described in
+`docs/ACCOUNT_CONTROL_PLANE.md`; reverting code alone is not a database rollback.
 
 ## Signal engine notes
 

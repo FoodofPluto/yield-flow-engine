@@ -229,15 +229,13 @@ def test_authoritative_verification_ignores_mutable_user_metadata(auth_context) 
         auth_context.module.validate_supabase_session("access-token")
 
 
-def test_password_login_stores_server_session_and_creates_canonical_user(auth_context) -> None:
+def test_password_login_stores_server_session_without_creating_sqlite_authority(auth_context) -> None:
     identity = auth_context.module.sign_in_with_password("User@Example.com", "password")
 
     assert identity["provider_user_id"] == "supabase-user-1"
     assert auth_context.state["supabase_access_token"] == "access-token"
     assert auth_context.state["supabase_refresh_token"] == "refresh-token"
-    user = auth_context.db.get_user_by_provider_user_id("supabase-user-1")
-    assert user["auth_provider"] == "supabase"
-    assert user["email_verified"]
+    assert auth_context.db.get_user_by_provider_user_id("supabase-user-1") is None
 
 
 def test_password_login_returns_useful_safe_error(auth_context) -> None:

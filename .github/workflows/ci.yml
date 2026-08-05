@@ -65,10 +65,15 @@ jobs:
         run: >-
           poetry run mypy --follow-imports=skip
           supabase_client.py
+          account_control.py
           auth_session.py
           furuflow_auth.py
           auth_service.py
           auth.py
+          session_broker.py
+          stripe_webhook_example.py
+          scripts/manage_accounts.py
+          scripts/migrate_legacy_accounts.py
           scripts/check_supabase_auth_health.py
 
       - name: Smoke-test CLI with local demo data

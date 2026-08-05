@@ -21,7 +21,7 @@ pip-audit are in the dev group. The supported interpreter range is Python
 
 | Surface | Canonical command or host action | Code path | External or local effects |
 |---|---|---|---|
-| Streamlit application | `poetry run streamlit run app.py` | `app.py` -> auth/DB/history/engine helpers | DeFiLlama reads during a user session; local SQLite/history/watchlist writes; no message send on boot |
+| Streamlit application | `poetry run streamlit run app.py` | `app.py` -> Supabase auth/account plus history/engine helpers | DeFiLlama reads during a user session; non-account history remains local; no message send on boot |
 | Alternate debug app | `poetry run streamlit run app_linkdebug.py` | Near-copy of `app.py` | Same broad app effects; retained only for later archival review |
 | Scanner CLI | `poetry run engine ...` or `python -m engine.cli ...` | `engine.cli:cli` -> `engine.scanner.rank_top_yields` -> demo or DeFiLlama provider | Demo source is local; DeFiLlama source performs an HTTP GET |
 | Telegram signal poster | `python post_real_signals.py` | scanner/history/formatters -> `telegram_utils.send_telegram_message` | DeFiLlama GET, Telegram POST, local history/dedupe writes |
@@ -32,7 +32,7 @@ pip-audit are in the dev group. The supported interpreter range is Python
 | Workbook ingestion | `python yf_ingest.py ...` | parser -> pandas/openpyxl | Writes the local tracker workbook |
 | Signal-card renderer | `python signal_card.py` | Pillow rendering | Writes local PNG output |
 | Auto allocator scaffold | `python bots/auto_allocator.py` | Typer scaffold/stub | Local plan/state behavior; explicitly unfinished and not scheduled |
-| Stripe webhook example | Flask host imports `stripe_webhook_example:app` | Stripe signature/lifecycle handlers -> local DB | Receives Stripe requests and mutates local SQLite; no tracked deploy command exists |
+| Stripe webhook backend | Flask host imports `stripe_webhook_example:app` | Stripe signature/lifecycle handlers -> service-role Supabase RPCs | Receives signed Stripe requests and mutates shared subscription/entitlement state; no tracked deploy command exists |
 
 `telegram_bot.py`, `test_send.py`, and `stripe_stub.py` are import helpers rather
 than independently managed services. The repository contains no Dockerfile,
@@ -42,8 +42,10 @@ and a separately hosted Flask example.
 
 Supabase authentication is split across `supabase_client.py` (validated
 configuration, isolated SDK clients, and deploy diagnostics),
-`furuflow_auth.py` (provider lifecycle), `auth_session.py` (server-memory session
-boundary), `auth_service.py` (application identity/entitlement integration), and
+`furuflow_auth.py` (provider lifecycle), `auth_session.py` plus
+`session_broker.py` (opaque-cookie/encrypted server session boundary),
+`account_control.py` (RLS-backed profile/entitlement/session integration),
+`auth_service.py` (application authorization), and
 `auth.py` (Streamlit forms/callback UI). The provider module deliberately avoids
 the name `supabase_auth.py`, which would shadow the SDK's own `supabase_auth`
 package. See `docs/AUTHENTICATION.md` for the lifecycle and persistence boundary.

@@ -19,9 +19,10 @@ from streamlit.components.v1 import html as st_html
 
 
 from auth import login_form
+from auth_session import render_pending_session_activation
 from auth_service import can_access_pro, claim_session, get_current_identity, get_current_user, is_admin, logout, validate_session
-from db import get_user_by_email, init_db, record_admin_audit, search_users, set_admin, set_lifetime_access, set_pro_active, upsert_user
 from stripe_stub import render_checkout_section
+from utils.external_side_effects import set_demo_side_effect_block
 from history_store import load_history, save_snapshot
 from engine.performance import alert_snapshot, latest_signal_history, trend_summary_df
 from engine.recap import build_daily_recap, build_weekly_recap
@@ -894,7 +895,8 @@ def load_watchlist() -> list[str]:
 def set_watchlist(items: list[str]) -> None:
     deduped = list(dict.fromkeys([str(i) for i in items]))
     st.session_state.watchlist = deduped
-    save_watchlist(deduped)
+    if not st.session_state.get("furuflow_demo_active"):
+        save_watchlist(deduped)
 
 
 def watch_toggle(pool_id: str) -> None:
@@ -969,84 +971,11 @@ def render_admin_access_panel(current_user: dict) -> None:
     st.markdown("<div class='panel'>", unsafe_allow_html=True)
     section_header(
         "Admin access controls",
-        "Grant or remove account access",
-        "Manage lifetime access, recurring Pro, and admin status for any account.",
+        "Trusted account administration",
+        "Role and entitlement changes run through the audited service-role CLI, outside Streamlit.",
     )
-
-    query = st.text_input(
-        "Find account by email",
-        value="",
-        placeholder="name@example.com",
-        key="admin_user_search",
-    )
-    users = search_users(query=query, limit=50)
-
-    target_emails = [u["email"] for u in users]
-    if current_user["email"] not in target_emails:
-        target_emails.insert(0, current_user["email"])
-
-    selected_email = st.selectbox(
-        "Select account",
-        options=target_emails if target_emails else [current_user["email"]],
-        key="admin_target_email",
-    )
-
-    target_user = get_user_by_email(selected_email)
-    if not target_user:
-        upsert_user(selected_email, is_admin=False)
-        target_user = get_user_by_email(selected_email)
-
-    col1, col2, col3 = st.columns(3)
-    with col1:
-        st.metric("Admin", "Yes" if target_user["is_admin"] else "No")
-    with col2:
-        st.metric("Lifetime", "Yes" if target_user["lifetime_access"] else "No")
-    with col3:
-        st.metric("Pro active", "Yes" if target_user["pro_active"] else "No")
-
-    a1, a2, a3 = st.columns(3)
-    with a1:
-        if target_user["lifetime_access"]:
-            if st.button("Remove lifetime access", key=f"remove_lifetime_{selected_email}"):
-                set_lifetime_access(selected_email, False)
-                record_admin_audit(actor_user_id=current_user["user_id"], target_user_id=target_user["user_id"], action="remove_lifetime_access", reason="admin_panel")
-                st.success(f"Removed lifetime access from {selected_email}.")
-                st.rerun()
-        else:
-            if st.button("Grant lifetime access", key=f"grant_lifetime_{selected_email}"):
-                set_lifetime_access(selected_email, True)
-                record_admin_audit(actor_user_id=current_user["user_id"], target_user_id=target_user["user_id"], action="grant_lifetime_access", reason="admin_panel")
-                st.success(f"Granted lifetime access to {selected_email}.")
-                st.rerun()
-
-    with a2:
-        if target_user["pro_active"]:
-            if st.button("Deactivate Pro", key=f"deactivate_pro_{selected_email}"):
-                set_pro_active(selected_email, False)
-                record_admin_audit(actor_user_id=current_user["user_id"], target_user_id=target_user["user_id"], action="deactivate_pro", reason="admin_panel")
-                st.success(f"Deactivated Pro for {selected_email}.")
-                st.rerun()
-        else:
-            if st.button("Activate Pro", key=f"activate_pro_{selected_email}"):
-                set_pro_active(selected_email, True)
-                record_admin_audit(actor_user_id=current_user["user_id"], target_user_id=target_user["user_id"], action="activate_pro", reason="admin_panel")
-                st.success(f"Activated Pro for {selected_email}.")
-                st.rerun()
-
-    with a3:
-        can_edit_admin = selected_email != current_user["email"]
-        if target_user["is_admin"]:
-            if st.button("Remove admin", key=f"remove_admin_{selected_email}", disabled=not can_edit_admin):
-                set_admin(selected_email, False)
-                record_admin_audit(actor_user_id=current_user["user_id"], target_user_id=target_user["user_id"], action="remove_admin", reason="admin_panel")
-                st.success(f"Removed admin from {selected_email}.")
-                st.rerun()
-        else:
-            if st.button("Make admin", key=f"make_admin_{selected_email}"):
-                set_admin(selected_email, True)
-                record_admin_audit(actor_user_id=current_user["user_id"], target_user_id=target_user["user_id"], action="make_admin", reason="admin_panel")
-                st.success(f"Made {selected_email} an admin.")
-                st.rerun()
+    st.info("Use `python scripts/manage_accounts.py` from a trusted shell. Target accounts by verified Supabase user ID.")
+    st.caption("The service-role credential is intentionally unavailable to this Streamlit process and browser UI.")
 
     st.markdown("</div>", unsafe_allow_html=True)
 
@@ -1254,8 +1183,7 @@ def render_recaps_page(alert_stats: dict[str, Any], history_latest_df: pd.DataFr
 
 
 inject_css()
-init_db()
-
+render_pending_session_activation()
 with st.sidebar:
     st.markdown("## Account")
     if st.session_state.get("auth_email"):
@@ -1286,6 +1214,8 @@ else:
     is_pro = can_access_pro(db_user)
 
 st.session_state["access_granted"] = is_pro
+st.session_state["furuflow_demo_active"] = bool(db_user.get("demo_active"))
+set_demo_side_effect_block(st.session_state["furuflow_demo_active"])
 
 with st.sidebar:
     st.write(f"Session: **{db_user['email']}**")
@@ -1294,7 +1224,7 @@ with st.sidebar:
         st.write(f"Admin: **{'Yes' if is_admin(db_user) else 'No'}**")
         st.write(f"Lifetime access: **{'Yes' if db_user['lifetime_access'] else 'No'}**")
         st.write(f"Pro active: **{'Yes' if db_user['pro_active'] else 'No'}**")
-        st.caption("Single-active-session lock is on for email-only sign-in.")
+        st.caption("Server-managed single-session enforcement is active.")
         if st.button("Log out", key="logout_button"):
             logout()
             st.rerun()
@@ -1315,7 +1245,7 @@ with st.expander("Debug: Pendle link resolver", expanded=False):
     st.dataframe(pendle_debug, width="stretch", hide_index=True)
 
 if "watchlist" not in st.session_state:
-    st.session_state.watchlist = load_watchlist()
+    st.session_state.watchlist = [] if st.session_state.get("furuflow_demo_active") else load_watchlist()
 
 signal_source = tuple(df.head(SIGNAL_SAMPLE)["pool"].tolist())
 signal_df = fetch_signal_snapshots(signal_source)

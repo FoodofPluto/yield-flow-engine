@@ -77,7 +77,7 @@ URL while preserving unrelated application parameters.
 
 ## Session strategy and bridge boundary
 
-The current safe implementation uses `StreamlitMemorySessionStore`:
+Development without bridge configuration uses `StreamlitMemorySessionStore`:
 
 - tokens exist only in per-WebSocket server-side `st.session_state`;
 - state survives normal Streamlit reruns;
@@ -94,12 +94,11 @@ to another unshared application instance requires a new email link. Multi-
 instance continuity is another responsibility of the secure backend session
 bridge, not a reason to put the verifier or tokens into browser storage.
 
-`auth_session.SecureSessionBridge` is the code boundary for future persistence.
-A production implementation requires a separate HTTPS backend/reverse-proxy
-component because Streamlit cannot safely issue and manage the required cookie.
-That service must:
+Production requires `session_broker.py` behind the same HTTPS origin because
+Streamlit cannot safely issue the required cookie itself. The implemented
+broker:
 
-1. exchange callbacks and retain provider tokens only in an encrypted,
+1. retains provider tokens only in encrypted,
    server-side session store;
 2. issue a random opaque `__Host-furuflow_session` cookie with `Secure`,
    `HttpOnly`, `SameSite=Lax`, `Path=/`, and no `Domain`;
@@ -108,11 +107,14 @@ That service must:
 4. expose authenticated identity/session introspection to Streamlit without
    returning provider tokens to the browser;
 5. refresh and revoke provider sessions server-side; and
-6. enforce callback state/PKCE, CSRF protection for mutations, rate limits, and
-   redacted audit events.
+6. fails closed when state is expired, revoked, undecryptable, or rejected by
+   Supabase Auth.
 
 Raw Supabase tokens must never become cookies, query parameters, browser
 storage, logs, or local application database values.
+
+See `ACCOUNT_CONTROL_PLANE.md` for the exact sidecar, secret separation,
+same-origin routing, refresh, and revocation deployment contract.
 
 ## Deployment diagnostic
 
@@ -158,14 +160,16 @@ exception text.
     authoritative validation denies access and clears local state.
 12. Repeat signup with an existing email and confirm the UI does not disclose
     whether that account exists.
-13. Inspect deployment logs and the local SQLite database for the staging token
-    sentinels; confirm neither access nor refresh values appear.
+13. Inspect deployment logs and migration reports for staging token sentinels;
+    confirm neither access nor refresh values appear. Broker rows must contain
+    only encrypted token ciphertext and hashed opaque identifiers.
 14. Repeat callback and redirect checks on the preview hostname and production
     hostname before promoting traffic.
 
 ## Configuration migration and rollback
 
-No database migration is included in this authentication-only change.
+The account and session migration, first-admin bootstrap, SQLite reconciliation,
+and rollback procedures are in `ACCOUNT_CONTROL_PLANE.md`.
 
 Configuration migration:
 

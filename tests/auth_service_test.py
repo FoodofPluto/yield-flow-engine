@@ -8,8 +8,15 @@ from unittest.mock import patch
 
 import auth_service
 
+FAKE_STRIPE_KEY = "sk_" + "test_" + "fixture_not_a_real_secret"
+
 PROJECT_URL = "https://abcdefghijklmnopqrst.supabase.co"
 PUBLISHABLE_KEY = "sb_publishable_" + "A" * 32
+SESSION_ENV = {
+    "FURUFLOW_SESSION_BROKER_INTERNAL_URL": "http://127.0.0.1:8510",
+    "FURUFLOW_SESSION_BROKER_PUBLIC_ORIGIN": "https://app.furuflow.example",
+    "FURUFLOW_SESSION_BRIDGE_KEY": "B" * 32,
+}
 
 
 class AuthServiceHardeningTests(unittest.TestCase):
@@ -43,7 +50,7 @@ class AuthServiceHardeningTests(unittest.TestCase):
                 "DEV_MODE": "true",
                 "SUPABASE_URL": "https://example.supabase.co",
                 "SUPABASE_ANON_KEY": "anon",
-                "STRIPE_SECRET_KEY": "sk_test_placeholder",
+                "STRIPE_SECRET_KEY": FAKE_STRIPE_KEY,
                 "STRIPE_WEBHOOK_SECRET": "whsec_placeholder",
             },
             clear=False,
@@ -61,8 +68,9 @@ class AuthServiceHardeningTests(unittest.TestCase):
             "SUPABASE_URL": PROJECT_URL,
             "SUPABASE_ANON_KEY": PUBLISHABLE_KEY,
             "SUPABASE_REDIRECT_URL_PRODUCTION": "https://app.furuflow.example/auth/callback",
-            "STRIPE_SECRET_KEY": "sk_test_placeholder",
+            "STRIPE_SECRET_KEY": FAKE_STRIPE_KEY,
             "STRIPE_WEBHOOK_SECRET": "whsec_placeholder",
+            **SESSION_ENV,
         }
 
         with patch.dict(os.environ, env, clear=False):
@@ -81,8 +89,9 @@ class AuthServiceHardeningTests(unittest.TestCase):
             "SUPABASE_URL": "",
             "SUPABASE_ANON_KEY": PUBLISHABLE_KEY,
             "SUPABASE_REDIRECT_URL_PRODUCTION": "https://app.furuflow.example/auth/callback",
-            "STRIPE_SECRET_KEY": "sk_test_placeholder",
+            "STRIPE_SECRET_KEY": FAKE_STRIPE_KEY,
             "STRIPE_WEBHOOK_SECRET": "whsec_placeholder",
+            **SESSION_ENV,
         }
 
         with patch.dict(os.environ, env, clear=False):
@@ -102,8 +111,9 @@ class AuthServiceHardeningTests(unittest.TestCase):
             "SUPABASE_URL": PROJECT_URL,
             "SUPABASE_ANON_KEY": "your-public-anon-key",
             "SUPABASE_REDIRECT_URL_PRODUCTION": "https://app.furuflow.example/auth/callback",
-            "STRIPE_SECRET_KEY": "sk_test_placeholder",
+            "STRIPE_SECRET_KEY": FAKE_STRIPE_KEY,
             "STRIPE_WEBHOOK_SECRET": "whsec_placeholder",
+            **SESSION_ENV,
         }
 
         with patch.dict(os.environ, env, clear=False):
@@ -115,6 +125,19 @@ class AuthServiceHardeningTests(unittest.TestCase):
 
         with patch.dict(os.environ, {"ENVIRONMENT": "test", "DEV_MODE": "false"}, clear=False):
             importlib.reload(auth_service)
+
+    def test_production_streamlit_rejects_service_role_or_encryption_keys(self):
+        from auth_session import require_production_session_config
+
+        env = {
+            "ENVIRONMENT": "production",
+            "SUPABASE_REDIRECT_URL_PRODUCTION": "https://app.furuflow.example/auth/callback",
+            "SUPABASE_SERVICE_ROLE_KEY": "must-stay-in-backend",
+            **SESSION_ENV,
+        }
+        with patch.dict(os.environ, env, clear=False):
+            with self.assertRaises(RuntimeError):
+                require_production_session_config()
 
     def test_can_access_pro_requires_verified_identity(self):
         unverified_user = {
@@ -130,6 +153,7 @@ class AuthServiceHardeningTests(unittest.TestCase):
             "email_verified": True,
             "provider_user_id": "supabase-user-1",
             "_identity_verified": True,
+            "_account_authority": "supabase",
         }
 
         self.assertFalse(auth_service.can_access_pro(unverified_user))
@@ -168,6 +192,7 @@ class AuthServiceHardeningTests(unittest.TestCase):
             self.assertNotIn("from entitlements import can_access_pro", source)
             self.assertNotIn("ADMIN_EMAILS", source)
             self.assertNotIn("from db import claim_session", source)
+            self.assertNotIn("from db import", source)
 
 
 if __name__ == "__main__":
