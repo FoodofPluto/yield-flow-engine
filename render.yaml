@@ -1,0 +1,86 @@
+services:
+  - type: web
+    name: furuflow-staging
+    runtime: docker
+    plan: starter
+    region: ohio
+    branch: feat/supabase-auth-demo-access
+    dockerfilePath: ./deploy/render/proxy/Dockerfile
+    dockerContext: .
+    healthCheckPath: /healthz
+    envVars:
+      - key: STREAMLIT_UPSTREAM
+        fromService:
+          type: pserv
+          name: furuflow-staging-streamlit
+          property: hostport
+      - key: SESSION_BROKER_UPSTREAM
+        fromService:
+          type: pserv
+          name: furuflow-staging-session-broker
+          property: hostport
+
+  - type: pserv
+    name: furuflow-staging-streamlit
+    runtime: python
+    plan: starter
+    region: ohio
+    branch: feat/supabase-auth-demo-access
+    buildCommand: pip install -r requirements.txt
+    startCommand: FURUFLOW_SESSION_BROKER_INTERNAL_URL="http://${FURUFLOW_SESSION_BROKER_INTERNAL_HOSTPORT}" streamlit run app.py --server.address 0.0.0.0 --server.port 8501 --server.headless true --browser.gatherUsageStats false
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.12.10
+      - key: ENVIRONMENT
+        value: staging
+      - key: DEV_MODE
+        value: "false"
+      - key: SUPABASE_URL
+        sync: false
+      - key: SUPABASE_ANON_KEY
+        sync: false
+      - key: SUPABASE_REDIRECT_URL_PREVIEW
+        fromService:
+          type: web
+          name: furuflow-staging
+          envVarKey: RENDER_EXTERNAL_URL
+      - key: SUPABASE_REDIRECT_URL_PRODUCTION
+        fromService:
+          type: web
+          name: furuflow-staging
+          envVarKey: RENDER_EXTERNAL_URL
+      - key: FURUFLOW_SESSION_BROKER_INTERNAL_HOSTPORT
+        fromService:
+          type: pserv
+          name: furuflow-staging-session-broker
+          property: hostport
+      - key: FURUFLOW_SESSION_BROKER_PUBLIC_ORIGIN
+        fromService:
+          type: web
+          name: furuflow-staging
+          envVarKey: RENDER_EXTERNAL_URL
+      - key: FURUFLOW_SESSION_BRIDGE_KEY
+        fromService:
+          type: pserv
+          name: furuflow-staging-session-broker
+          envVarKey: FURUFLOW_SESSION_BRIDGE_KEY
+
+  - type: pserv
+    name: furuflow-staging-session-broker
+    runtime: python
+    plan: starter
+    region: ohio
+    branch: feat/supabase-auth-demo-access
+    buildCommand: pip install -r requirements.txt
+    startCommand: gunicorn --bind 0.0.0.0:8510 --timeout 30 --error-logfile - "session_broker:create_app()"
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.12.10
+      - key: SUPABASE_URL
+        sync: false
+      - key: SUPABASE_SERVICE_ROLE_KEY
+        sync: false
+      - key: FURUFLOW_SESSION_ENCRYPTION_KEY
+        sync: false
+      - key: FURUFLOW_SESSION_BRIDGE_KEY
+        generateValue: true

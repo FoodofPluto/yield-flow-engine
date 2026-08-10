@@ -140,6 +140,9 @@ Deployment separation:
 - reverse proxy: route `/auth/session/activate` on the Streamlit public origin
   to the broker. Do not expose `/v1/session/*` publicly.
 
+The staging Render Blueprint, environment boundary matrix, and exact operator
+sequence are in `RENDER_STAGING_DEPLOYMENT.md`.
+
 Generate the encryption key in the trusted broker environment:
 
 ```powershell
