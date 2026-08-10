@@ -15,12 +15,11 @@ import plotly.express as px
 import plotly.graph_objects as go
 import requests
 import streamlit as st
-from streamlit.components.v1 import html as st_html
 
 
 from auth import login_form
 from auth_session import render_pending_session_activation
-from auth_service import can_access_pro, claim_session, get_current_identity, get_current_user, is_admin, logout, validate_session
+from auth_service import can_access_pro, claim_session, get_current_user, is_admin, logout, validate_session
 from stripe_stub import render_checkout_section
 from utils.external_side_effects import set_demo_side_effect_block
 from history_store import load_history, save_snapshot
@@ -33,6 +32,23 @@ from engine.scoring import (
     score_signal_movement,
     score_tvl_stability,
 )
+from ui_shell import (
+    DISCOVER_VIEWS,
+    PRO_TOOL_VIEWS,
+    RESEARCH_VIEWS,
+    account_control_model,
+    canonical_route,
+    inject_shell_css,
+    market_filters_apply,
+    pool_detail_back_state,
+    pool_detail_state,
+    render_brand,
+    render_navigation,
+    render_page_heading,
+    render_state,
+    render_status,
+    route_access,
+)
 
 APP_NAME = "FuruFlow"
 APP_VERSION = "v8.1"
@@ -42,30 +58,6 @@ POOL_LIMIT = 400
 FREE_POOL_LIMIT = 10
 FREE_SORT_OPTIONS = ["Highest APY", "Largest TVL"]
 PRO_SORT_OPTIONS = ["FuruFlow rank", "Lowest risk", "Highest 24h volume", "Largest signal move"]
-PAGE_OPTIONS = [
-    "Home",
-    "Scanner",
-    "Signals",
-    "Market Map",
-    "Pool Explorer",
-    "Watchlist",
-    "Recaps",
-    "Protocol Dashboard",
-    "Strategy Builder",
-    "Arbitrage",
-]
-PAGE_LABELS = {
-    "Home": "🏠 Home",
-    "Scanner": "🔎 Scanner",
-    "Signals": "📡 Signals",
-    "Market Map": "🗺️ Market Map",
-    "Pool Explorer": "🧪 Pool Explorer",
-    "Watchlist": "⭐ Watchlist",
-    "Recaps": "📝 Recaps",
-    "Protocol Dashboard": "🏛️ Protocol Dashboard",
-    "Strategy Builder": "🧱 Strategy Builder",
-    "Arbitrage": "⚡ Arbitrage",
-}
 TIMEOUT = 18
 SIGNAL_SAMPLE = 16
 WATCHLIST_FILE = Path(__file__).with_name("watchlist.json")
@@ -88,7 +80,7 @@ st.set_page_config(
     page_title=APP_NAME,
     page_icon="🐸",
     layout="wide",
-    initial_sidebar_state="expanded",
+    initial_sidebar_state="auto",
 )
 
 PROTOCOL_META = {
@@ -437,6 +429,8 @@ def fetch_pools() -> pd.DataFrame:
             rows = payload.get("data", payload)
             df = pd.DataFrame(rows)
             if not df.empty:
+                df.attrs["source_status"] = "live"
+                df.attrs["source_label"] = "DeFiLlama live pool feed"
                 return df
         except Exception as exc:
             errors.append(f"{url}: {exc}")
@@ -686,6 +680,8 @@ def sample_pool_data(errors: list[str]) -> pd.DataFrame:
         ]
     )
     demo.attrs["errors"] = errors
+    demo.attrs["source_status"] = "degraded"
+    demo.attrs["source_label"] = "Clearly labeled local sample data"
     return demo
 
 
@@ -794,19 +790,6 @@ def sidebar_group(title: str, copy: str) -> None:
     st.markdown(f"<div class='sidebar-group-title'>{title}</div><div class='sidebar-group-copy'>{copy}</div>", unsafe_allow_html=True)
 
 
-def page_selectbox(default_page: str = "Home") -> str:
-    label_to_page = {PAGE_LABELS[p]: p for p in PAGE_OPTIONS}
-    labels = [PAGE_LABELS[p] for p in PAGE_OPTIONS]
-    default_label = PAGE_LABELS.get(default_page, labels[0])
-    selected_label = st.selectbox(
-        "Workspace",
-        labels,
-        index=labels.index(default_label),
-        key="sidebar_page_select",
-    )
-    return label_to_page[selected_label]
-
-
 def compact_table(df: pd.DataFrame) -> pd.DataFrame:
     table = df[[
         "project", "chain", "symbol", "strategy_type", "apy", "apyBase", "apyReward", "tvlUsd", "risk_score", "signal", "pool_url"
@@ -908,6 +891,23 @@ def watch_toggle(pool_id: str) -> None:
     set_watchlist(current)
 
 
+def open_pool_detail(pool_id: str, *, return_route: str = "Discover", return_view: str = "Opportunities") -> None:
+    st.session_state.update(pool_detail_state(pool_id, return_route=return_route, return_view=return_view))
+    st.query_params["page"] = "Pool Detail"
+    st.query_params["pool"] = str(pool_id)
+
+
+def return_from_pool_detail() -> None:
+    destination = pool_detail_back_state(st.session_state)
+    route = destination["current_route"]
+    st.session_state["current_route"] = route
+    if route == "Discover":
+        st.session_state["discover_view"] = destination["current_view"]
+    st.query_params["page"] = route
+    if "pool" in st.query_params:
+        del st.query_params["pool"]
+
+
 def strategy_builder_filter(df: pd.DataFrame, stable_only: bool, min_apy: float, min_tvl: float, max_risk: int, signal_pref: str) -> pd.DataFrame:
     out = df.copy()
     if stable_only:
@@ -947,10 +947,10 @@ def require_pro(feature_name: str, preview_df: pd.DataFrame | None = None, previ
     st.markdown(
         """
 **FuruFlow Pro includes:**
-- Arbitrage signals
+- Yield-spread signals
 - Whale-flow and signal engine views
 - Advanced ranking and sorting
-- Full scanner depth and CSV export
+- Full Discover depth and CSV export
 - Future signal-based alerts
 """
     )
@@ -1026,7 +1026,7 @@ def render_opportunity_card(row: pd.Series, idx: int, watched: bool) -> None:
         </div>
     </div>
     """
-    st_html(card_html, height=300)
+    st.html(card_html)
     c1, c2 = st.columns(2)
     with c1:
         st.markdown("<div class='watch-wrap'>", unsafe_allow_html=True)
@@ -1037,7 +1037,9 @@ def render_opportunity_card(row: pd.Series, idx: int, watched: bool) -> None:
         st.markdown("</div>", unsafe_allow_html=True)
     with c2:
         st.markdown("<div class='pool-wrap'>", unsafe_allow_html=True)
-        st.link_button("Open Pool", row["pool_url"], width="stretch")
+        if st.button("View details", key=f"detail_{idx}_{row['pool']}", width="stretch"):
+            open_pool_detail(str(row["pool"]))
+            st.rerun()
         st.markdown("</div>", unsafe_allow_html=True)
 
 
@@ -1082,7 +1084,7 @@ def render_home_page(filtered: pd.DataFrame, full_filtered: pd.DataFrame, watchl
             stat_card("Signal density", f"{signal_share:,.0f}%", "Pools with non-steady signal labels")
 
         st.markdown("<div style='height:0.75rem;'></div>", unsafe_allow_html=True)
-        section_header("Best opportunities now", "Start with the strongest visible pools", "Use this shortlist for fast triage, then move into Signals or Pool Explorer for more conviction.")
+        section_header("Best opportunities now", "Start with the strongest visible pools", "Use this shortlist for fast triage, then open Discover signals or contextual Pool Detail for more conviction.")
         top_today = full_filtered[["project", "chain", "symbol", "apy", "tvlUsd", "risk_band", "pool_url"]].head(8).copy()
         if top_today.empty:
             st.info("No opportunities match the current filters.")
@@ -1090,14 +1092,14 @@ def render_home_page(filtered: pd.DataFrame, full_filtered: pd.DataFrame, watchl
             top_today.columns = ["Protocol", "Chain", "Asset", "APY", "TVL (USD)", "Risk", "Open"]
             st.dataframe(top_today, width="stretch", hide_index=True, height=320, column_config={"APY": st.column_config.NumberColumn(format="%.2f%%"), "TVL (USD)": st.column_config.NumberColumn(format="$%.0f"), "Open": st.column_config.LinkColumn("Pool link", display_text="Open")})
     with top_right:
-        st.markdown("<div class='signal-card'><div class='signal-title'>What to do next</div><div class='signal-copy'>Use Home for a quick market read, Signals for ranked conviction, Watchlist for your shortlist, and Recaps for the memory layer behind alerts and trend persistence.</div></div>", unsafe_allow_html=True)
+        st.markdown("<div class='signal-card'><div class='signal-title'>What to do next</div><div class='signal-copy'>Use Discover for opportunities and signals, Watchlists for your shortlist, and Activity & Digests for the memory layer behind alerts and trend persistence.</div></div>", unsafe_allow_html=True)
         st.markdown("<div style='height:0.65rem;'></div>", unsafe_allow_html=True)
         stat_card("Signals logged (24h)", f"{alert_stats['signals_24h']:,}", "Captured for recap and alert workflows")
         stat_card("Best chain (24h)", str(alert_stats['best_chain']), "Chain with the most qualifying signals today")
-        stat_card("Watchlist", f"{len(watchlist_df):,}", "Pools saved to your persistent tracker")
+        stat_card("Watchlists", f"{len(watchlist_df):,}", "Pools saved to your persistent tracker")
         if not is_pro:
             st.markdown("<div style='height:0.65rem;'></div>", unsafe_allow_html=True)
-            st.markdown("<div class='signal-card'><div class='signal-title'>FuruFlow Pro</div><div class='signal-copy'>Unlock the full signals view, deeper scanner access, advanced ranking, arbitrage, and strategy workflows.</div></div>", unsafe_allow_html=True)
+            st.markdown("<div class='signal-card'><div class='signal-title'>FuruFlow Pro</div><div class='signal-copy'>Unlock the full Signals view, deeper Discover access, advanced ranking, Yield Spreads, and strategy workflows.</div></div>", unsafe_allow_html=True)
             if len(full_filtered) > len(filtered):
                 st.caption(f"Free mode currently shows the top {len(filtered):,} of {len(full_filtered):,} matching pools.")
             st.link_button("Upgrade to FuruFlow Pro — $20/month", get_checkout_link())
@@ -1136,7 +1138,7 @@ def render_home_page(filtered: pd.DataFrame, full_filtered: pd.DataFrame, watchl
 
 def render_recaps_page(alert_stats: dict[str, Any], history_latest_df: pd.DataFrame, history_trend_df: pd.DataFrame, is_pro: bool) -> None:
     st.markdown("<div class='panel'>", unsafe_allow_html=True)
-    section_header("Recaps", "The memory layer behind the signal engine", "Use recaps to review what the engine saw, what kept repeating, and where durable opportunities may be forming.")
+    section_header("Activity & digests", "The memory layer behind the signal engine", "Review what the engine saw, what kept repeating, and where durable opportunities may be forming.")
     summary_cols = st.columns(3)
     with summary_cols[0]:
         stat_card("Signals logged (24h)", f"{alert_stats['signals_24h']:,}", "Captured into the local signal history")
@@ -1183,20 +1185,46 @@ def render_recaps_page(alert_stats: dict[str, Any], history_latest_df: pd.DataFr
 
 
 inject_css()
+inject_shell_css()
 render_pending_session_activation()
+
+requested_route = str(st.query_params.get("page") or st.session_state.get("current_route") or "Home")
+page, legacy_view = canonical_route(requested_route)
+if legacy_view:
+    if page == "Discover":
+        st.session_state["discover_view"] = legacy_view
+    elif page == "Research":
+        st.session_state["research_view"] = legacy_view
+    elif page == "Pro Tools":
+        st.session_state["pro_tools_view"] = legacy_view
+st.session_state["current_route"] = page
+if st.query_params.get("pool"):
+    st.session_state["selected_pool_id"] = str(st.query_params["pool"])
+
 with st.sidebar:
-    st.markdown("## Account")
-    if st.session_state.get("auth_email"):
-        st.caption("Legacy email session active. Verified auth is required for Pro and admin access.")
-    else:
-        st.caption("Public mode is live. Sign in only for saved account features or Pro.")
-    login_form()
+    render_brand()
+    navigation_slot = st.empty()
+    with st.expander("Account", expanded=False):
+        account_summary_slot = st.empty()
+        login_form()
 
-identity = get_current_identity()
-db_user = get_current_user()
-guest_mode = db_user is None
+account_user = get_current_user()
+signed_in = bool(account_user and account_user.get("_identity_verified"))
 
-if guest_mode:
+if signed_in:
+    claim_session()
+    if not validate_session():
+        render_status(
+            "warning",
+            "Session expired",
+            "This account was opened in another browser session, so this session was signed out to preserve the active-session boundary.",
+        )
+        st.stop()
+    account_user = get_current_user()
+    is_pro = can_access_pro(account_user)
+    db_user = account_user or {}
+else:
+    is_pro = False
     db_user = {
         "email": "Guest",
         "is_admin": False,
@@ -1204,45 +1232,52 @@ if guest_mode:
         "pro_active": False,
         "email_verified": False,
     }
-    is_pro = False
-else:
-    claim_session()
-    if not validate_session():
-        st.warning("This account was opened in another browser session, so this session was signed out to keep FuruFlow to one active login at a time.")
-        st.stop()
-    db_user = get_current_user()
-    is_pro = can_access_pro(db_user)
 
+admin_user = is_admin(db_user)
+guest_mode = not signed_in
 st.session_state["access_granted"] = is_pro
 st.session_state["furuflow_demo_active"] = bool(db_user.get("demo_active"))
 set_demo_side_effect_block(st.session_state["furuflow_demo_active"])
 
-with st.sidebar:
-    st.write(f"Session: **{db_user['email']}**")
-    st.write(f"Plan: **{'Pro' if is_pro else 'Free'}**")
-    if not guest_mode:
-        st.write(f"Admin: **{'Yes' if is_admin(db_user) else 'No'}**")
-        st.write(f"Lifetime access: **{'Yes' if db_user['lifetime_access'] else 'No'}**")
-        st.write(f"Pro active: **{'Yes' if db_user['pro_active'] else 'No'}**")
-        st.caption("Server-managed single-session enforcement is active.")
-        if st.button("Log out", key="logout_button"):
+with navigation_slot.container():
+    selected_route = render_navigation(
+        current_route=page,
+        signed_in=signed_in,
+        is_pro=is_pro,
+        is_admin=admin_user,
+    )
+if selected_route != page:
+    st.session_state["current_route"] = selected_route
+    st.query_params["page"] = selected_route
+    if "pool" in st.query_params:
+        del st.query_params["pool"]
+    st.rerun()
+
+account_model = account_control_model(account_user if signed_in else None, is_pro=is_pro, is_admin=admin_user)
+with account_summary_slot.container():
+    st.markdown(f"**{account_model['email']}**")
+    st.caption(f"{account_model['plan']} plan · server-authoritative access")
+    if signed_in:
+        if st.button("Log out", key="logout_button", width="stretch"):
             logout()
             st.rerun()
+    else:
+        st.caption("Sign in for saved account features. Public research remains available.")
 
-if is_admin(db_user):
-    render_admin_access_panel(db_user)
+allowed, denial_reason = route_access(page, signed_in=signed_in, is_admin=admin_user)
+if not allowed:
+    render_page_heading(page)
+    if denial_reason == "authentication_required":
+        render_status("auth", "Authentication required", "Open Account in the navigation drawer to sign in securely.")
+    else:
+        render_status("unauthorized", "Unauthorized", "This route is restricted to verified administrators.")
+    st.stop()
 
-raw_df = fetch_pools()
+with st.spinner("Refreshing market data…"):
+    raw_df = fetch_pools()
+market_source_status = str(raw_df.attrs.get("source_status", "live"))
+market_source_label = str(raw_df.attrs.get("source_label", "DeFiLlama live pool feed"))
 df = enrich(raw_df, resolver_version=LINK_RESOLVER_VERSION)
-
-pendle_debug = df[
-    (df["project"].astype(str).str.lower() == "pendle")
-    & (df["chain"].astype(str) == "Arbitrum")
-    & (df["symbol"].astype(str) == "SUSDAI")
-][["pool", "project", "chain", "symbol", "pool_url"]].head(10)
-
-with st.expander("Debug: Pendle link resolver", expanded=False):
-    st.dataframe(pendle_debug, width="stretch", hide_index=True)
 
 if "watchlist" not in st.session_state:
     st.session_state.watchlist = [] if st.session_state.get("furuflow_demo_active") else load_watchlist()
@@ -1272,28 +1307,7 @@ history_latest_df = latest_signal_history(limit=12)
 history_trend_df = trend_summary_df(limit=10)
 alert_stats = alert_snapshot()
 
-st.markdown(
-    f"""
-    <section class="hero-shell"><div class="hero-inner">
-        <div class="eyebrow">DeFi yield intelligence</div>
-        <div class="hero-title">{APP_NAME}</div>
-        <div class="hero-subtitle">{APP_TAGLINE}</div>
-    </div></section>
-    """,
-    unsafe_allow_html=True,
-)
-
-if guest_mode:
-    st.info("🌐 Free mode is open immediately. Explore core pools, the market map, protocol dashboard, and pool explorer without creating an account.")
-elif is_pro:
-    st.info("🔥 Pro is active. You have access to ranked signals, advanced workflows, and full scanner depth.")
-else:
-    st.info("✅ Free account active. Upgrade to Pro for signals, arbitrage, advanced ranking, and the full opportunity set.")
-
 with st.sidebar:
-    st.markdown(f"## {APP_NAME}")
-    st.markdown(APP_TAGLINE)
-
     chains = sorted(df["chain"].dropna().unique().tolist())
     projects = sorted(df["project"].dropna().unique().tolist())
     strategies = sorted(df["strategy_type"].dropna().unique().tolist())
@@ -1301,56 +1315,32 @@ with st.sidebar:
 
     default_chains = chains[: min(len(chains), 8)] if chains else []
 
-    with st.expander("🧭 Navigation", expanded=True):
-        sidebar_group("Workspace", "All pages stay available, but the navigation now lives in a cleaner dropdown instead of one long list.")
-        page = page_selectbox(st.session_state.get("current_page", "Home"))
-        st.session_state["current_page"] = page
-        st.markdown("<div class='sidebar-mini-note'>Tip: Home is the fastest overview, Signals is the premium intelligence layer, and Pool Explorer is best for single-pool inspection.</div>", unsafe_allow_html=True)
+    if market_filters_apply(page):
+        with st.expander("Market filters", expanded=False):
+            sidebar_group("Universe", "Choose the chains, protocols, and market slices in view.")
+            selected_chains = st.multiselect("Chains", chains, default=default_chains)
+            selected_projects = st.multiselect("Protocols", projects, placeholder="Choose protocols")
+            selected_strategies = st.multiselect("Strategy type", strategies, placeholder="Choose strategy types")
+            selected_signals = st.multiselect("Signal", signals, placeholder="Choose signals")
+            stable_only = st.toggle("Stablecoin pools only", value=False)
 
-    with st.expander("🧰 Market Filters", expanded=True):
-        sidebar_group("Universe", "Choose the chains, protocols, and market slices you want in view.")
-        selected_chains = st.multiselect("Chains", chains, default=default_chains)
-        selected_projects = st.multiselect("Protocols", projects, placeholder="Choose protocols")
-        selected_strategies = st.multiselect("Strategy Type", strategies, placeholder="Choose strategy types")
-        selected_signals = st.multiselect("Signal Filter", signals, placeholder="Choose signals")
-        stable_only = st.toggle("Stablecoin pools only", value=False)
-
-    with st.expander("🎚️ Risk & Yield", expanded=True):
-        sidebar_group("Thresholds", "Tighten the opportunity set with TVL, APY, and risk controls.")
-        min_tvl = st.slider("Minimum TVL", min_value=0, max_value=500_000_000, value=5_000_000, step=1_000_000)
-        max_risk = st.slider("Maximum risk score", min_value=1, max_value=100, value=70)
-        min_apy = st.slider("Minimum APY", min_value=0.0, max_value=250.0, value=0.0, step=0.5)
-        st.markdown("<div class='sidebar-mini-note'>Risk score is heuristic. It blends protocol age, TVL stability, audit confidence, reward dependence, and inferred pool volatility. Signals come from recent chart movement when chart data is available.</div>", unsafe_allow_html=True)
-
-    with st.expander("📊 Sorting", expanded=False):
-        sidebar_group("Ranking", "Change how results are ordered without changing the underlying filter set.")
-        sort_options = FREE_SORT_OPTIONS + PRO_SORT_OPTIONS if is_pro else FREE_SORT_OPTIONS
-        sort_by = st.selectbox("Sort by", sort_options, index=0)
-
-    st.markdown("<div class='sidebar-plan'>", unsafe_allow_html=True)
-    sidebar_group("Plan overview", "Free mode stays useful on purpose. Pro adds the intelligence layer and deeper workflows.")
-    if is_pro:
-        st.success("Pro is active for this account.")
-        st.markdown("""- Full signal engine
-- Advanced ranking and deeper scanner depth
-- Arbitrage and strategy workflows
-- Faster decision support with recaps and history
-""")
+        with st.expander("Risk, yield & sort", expanded=False):
+            sidebar_group("Thresholds", "Tighten the visible opportunity set without changing methodology.")
+            min_tvl = st.slider("Minimum TVL", min_value=0, max_value=500_000_000, value=5_000_000, step=1_000_000)
+            max_risk = st.slider("Maximum risk score", min_value=1, max_value=100, value=70)
+            min_apy = st.slider("Minimum APY", min_value=0.0, max_value=250.0, value=0.0, step=0.5)
+            sort_options = FREE_SORT_OPTIONS + PRO_SORT_OPTIONS if is_pro else FREE_SORT_OPTIONS
+            sort_by = st.selectbox("Sort by", sort_options, index=0)
     else:
-        st.info("Free mode stays useful on purpose. Pro adds the intelligence layer.")
-        st.markdown("""**Free includes**
-- Scanner, market map, pool explorer, protocol dashboard
-- Basic sorting and top opportunities
-- Watchlist and recap previews
-
-**Pro adds**
-- Full signals view and deeper scanner depth
-- Advanced ranking, arbitrage, and strategy builder
-- Stronger recap workflows and future alerts
-""")
-        st.link_button("Upgrade to FuruFlow Pro — $20/month", get_checkout_link())
-    st.markdown("<div class='sidebar-mini-note'>Use Home for the fastest read on the market, Signals for ranked conviction, and Recaps for the memory layer.</div>", unsafe_allow_html=True)
-    st.markdown("</div>", unsafe_allow_html=True)
+        selected_chains = []
+        selected_projects = []
+        selected_strategies = []
+        selected_signals = []
+        stable_only = False
+        min_tvl = 5_000_000
+        max_risk = 70
+        min_apy = 0.0
+        sort_by = "Highest APY"
 
 filtered = df.copy()
 if selected_chains:
@@ -1386,14 +1376,58 @@ if not is_pro:
 watchlist_df = df[df["pool"].isin(st.session_state.watchlist)].copy()
 arb_df = find_arbitrage_candidates(full_filtered if is_pro else filtered)
 
-if page == "Home":
+content_page = page
+active_view: str | None = None
+if page == "Discover":
+    render_page_heading(page)
+    active_view = st.radio(
+        "Discover view",
+        DISCOVER_VIEWS,
+        horizontal=True,
+        label_visibility="collapsed",
+        key="discover_view",
+    )
+    content_page = {"Opportunities": "Scanner", "Signals": "Signals", "Compare": "Compare"}[active_view]
+elif page == "Research":
+    render_page_heading(page)
+    active_view = st.radio(
+        "Research view",
+        RESEARCH_VIEWS,
+        horizontal=True,
+        label_visibility="collapsed",
+        key="research_view",
+    )
+    content_page = {"Market Map": "Market Map", "Protocols": "Protocol Dashboard"}[active_view]
+elif page == "Pro Tools":
+    render_page_heading(page)
+    active_view = st.radio(
+        "Pro tools view",
+        PRO_TOOL_VIEWS,
+        horizontal=True,
+        label_visibility="collapsed",
+        key="pro_tools_view",
+    )
+    content_page = {"Strategy Builder": "Strategy Builder", "Yield Spreads": "Arbitrage"}[active_view]
+elif page != "Pool Detail":
+    render_page_heading(page)
+
+if market_source_status == "degraded" and market_filters_apply(page) and page != "Pool Detail":
+    render_status(
+        "degraded",
+        "Live market source unavailable",
+        f"{market_source_label} is shown for interface continuity. It is sample data, not a live market feed.",
+    )
+elif market_filters_apply(page) and page != "Pool Detail":
+    render_status("success", "Market source available", f"{market_source_label}. Cached requests may be up to one hour old.")
+
+if content_page == "Home":
     render_home_page(filtered, full_filtered, watchlist_df, alert_stats, history_latest_df, history_trend_df, is_pro)
 
-elif page == "Scanner":
+elif content_page == "Scanner":
     left, right = st.columns([1.6, 1], gap="large")
     with left:
         st.markdown("<div class='panel'>", unsafe_allow_html=True)
-        section_header("Scanner", "Custom scan view", "A more product-like scanner surface with richer cards, cleaner table layout, and strong control readability.")
+        section_header("Opportunities", "Visible opportunity set", "Triage the current market slice, then open a contextual Pool Detail view for deeper inspection.")
         top_cards = filtered.head(6)
         for start in range(0, len(top_cards), 3):
             cols = st.columns(3, gap="medium")
@@ -1420,16 +1454,16 @@ elif page == "Scanner":
             csv = make_download_df(filtered).to_csv(index=False).encode("utf-8")
             st.download_button("Download current table as CSV", csv, file_name="furuflow_scanner.csv", mime="text/csv")
         else:
-            st.markdown("<div class='signal-card'><div class='signal-title'>CSV export is Pro</div><div class='signal-copy'>Keep the scanner open to everyone, then charge for export workflows and deeper decision tools.</div></div>", unsafe_allow_html=True)
+            st.markdown("<div class='signal-card'><div class='signal-title'>CSV export is Pro</div><div class='signal-copy'>Discover stays open to everyone; export and deeper decision workflows are part of Pro.</div></div>", unsafe_allow_html=True)
             st.link_button("Unlock CSV export", get_checkout_link(), width="stretch")
         st.markdown("</div>", unsafe_allow_html=True)
     with right:
         st.markdown("<div class='panel'>", unsafe_allow_html=True)
-        section_header("Scanner guidance", "How to read the cards", "The card layer helps you triage quickly before you dig into individual pool detail.")
+        section_header("Discovery guidance", "How to read the cards", "The card layer helps you triage quickly before you open individual pool detail.")
         bullets = [
             ("Risk", "Heuristic score from protocol age, audit confidence, TVL stability, reward dependence, and pool volatility."),
             ("Signal", "Labels such as APY spike, Emerging pool, Farm rotation, and Whale inflow come from recent chart movement."),
-            ("Watchlist", "Click Watch to persist a pool to your tracked list inside this project zip."),
+            ("Watchlists", "Click Watch to persist a pool to your tracked list."),
         ]
         for title, copy in bullets:
             st.markdown(f"<div class='signal-card'><div class='signal-title'>{title}</div><div class='signal-copy'>{copy}</div></div>", unsafe_allow_html=True)
@@ -1439,7 +1473,32 @@ elif page == "Scanner":
             st.plotly_chart(plotly_theme(pie, 260), width="stretch")
         st.markdown("</div>", unsafe_allow_html=True)
 
-elif page == "Signals":
+elif content_page == "Compare":
+    st.markdown("<div class='panel'>", unsafe_allow_html=True)
+    section_header(
+        "Discover",
+        "Compare visible opportunities",
+        "Compare the current filtered rows using the existing APY, TVL, risk, strategy, and signal fields. No new comparison methodology is introduced here.",
+    )
+    if filtered.empty:
+        render_status("empty", "Nothing to compare", "Adjust the market filters to restore at least one visible opportunity.")
+    else:
+        st.dataframe(
+            compact_table(filtered.head(20)),
+            width="stretch",
+            hide_index=True,
+            height=560,
+            column_config={
+                "APY": st.column_config.NumberColumn(format="%.2f%%"),
+                "Base": st.column_config.NumberColumn(format="%.2f%%"),
+                "Rewards": st.column_config.NumberColumn(format="%.2f%%"),
+                "TVL (USD)": st.column_config.NumberColumn(format="$%.0f"),
+                "Open": st.column_config.LinkColumn("Pool link", display_text="Open venue"),
+            },
+        )
+    st.markdown("</div>", unsafe_allow_html=True)
+
+elif content_page == "Signals":
     st.markdown(
         """
         <section class="hero-shell"><div class="hero-inner">
@@ -1509,13 +1568,13 @@ elif page == "Signals":
         st.markdown("</div>", unsafe_allow_html=True)
     render_link_table(filtered.sort_values(["signal_strength", "apy_delta_7", "tvl_delta_7_pct"], ascending=[False, False, False]), "Signals", "Open the strongest recent signal movers directly from the signal view.", limit=10)
 
-elif page == "Arbitrage":
+elif content_page == "Arbitrage":
     if not is_pro:
-        require_pro("Arbitrage scanner")
+        require_pro("Yield Spreads")
     left, right = st.columns([1.15, 1], gap="large")
     with left:
         st.markdown("<div class='panel'>", unsafe_allow_html=True)
-        section_header("Arbitrage", "Same asset, different chain", "This view hunts for APY gaps across chains for the same displayed asset symbol.")
+        section_header("Yield spreads", "Same asset, different chain", "This view identifies APY gaps across chains for the same displayed asset symbol; it does not label them risk-free arbitrage.")
         if arb_df.empty:
             st.info("No meaningful cross-chain APY gaps are visible for the current filters.")
         else:
@@ -1538,9 +1597,9 @@ elif page == "Arbitrage":
         st.markdown("</div>", unsafe_allow_html=True)
     if not filtered.empty:
         arb_focus = filtered.sort_values(["apy", "tvlUsd"], ascending=[False, False]).head(10)
-        render_link_table(arb_focus, "Arbitrage", "Open candidate pools from the arb universe without leaving this screen.", limit=10)
+        render_link_table(arb_focus, "Yield spreads", "Open candidate pools from the visible spread universe without leaving this screen.", limit=10)
 
-elif page == "Market Map":
+elif content_page == "Market Map":
     left, right = st.columns([1, 1], gap="large")
     with left:
         st.markdown("<div class='panel'>", unsafe_allow_html=True)
@@ -1562,18 +1621,33 @@ elif page == "Market Map":
         st.markdown("</div>", unsafe_allow_html=True)
     render_link_table(filtered, "Market map", "Open the pools you are seeing in the current market field view.", limit=10, sort_cols=["rank_score", "apy", "tvlUsd"])
 
-elif page == "Pool Explorer":
-    st.markdown("<div class='panel'>", unsafe_allow_html=True)
-    section_header("Pool explorer", "Open a single venue", "Inspect chart shape, risk factors, and watchlist actions without leaving the app.")
-    pool_options = filtered.copy()
-    pool_options["pool_pick"] = pool_options.apply(lambda r: f"{r['project']} • {r['symbol']} • {r['chain']}", axis=1)
+elif content_page == "Pool Detail":
+    selected_pool_id = str(st.session_state.get("selected_pool_id") or st.query_params.get("pool") or "")
+    pool_options = df[df["pool"].astype(str) == selected_pool_id].copy()
     if pool_options.empty:
-        st.info("No pools match the current filter set.")
+        render_page_heading("Pool Detail")
+        render_status("empty", "Opportunity not available", "Choose an opportunity from Discover to open its contextual detail view.")
+        if st.button("Back to opportunities", key="pool_detail_empty_back"):
+            return_from_pool_detail()
+            st.rerun()
     else:
-        chosen = st.selectbox("Choose a Pool", pool_options["pool_pick"].tolist(), index=0)
-        row = pool_options.loc[pool_options["pool_pick"] == chosen].iloc[0]
+        row = pool_options.iloc[0]
         current_pool_id = str(row["pool"])
         card_state_key = f"pool_card_assets_{current_pool_id}"
+        render_page_heading("Pool Detail", detail_label=f"{row['project']} · {row['symbol']}")
+        if market_source_status == "degraded":
+            render_status(
+                "degraded",
+                "Live market source unavailable",
+                f"{market_source_label} is shown for interface continuity. It is sample data, not a live market feed.",
+            )
+        else:
+            render_status("success", "Market source available", f"{market_source_label}. Cached requests may be up to one hour old.")
+        if st.button("← Back to opportunities", key="pool_detail_back"):
+            return_from_pool_detail()
+            st.rerun()
+        st.markdown("<div class='panel'>", unsafe_allow_html=True)
+        section_header("Opportunity context", "Pool detail", "Inspect chart shape, risk factors, and watchlist actions without losing the discovery context.")
 
         cols = st.columns([1.3, 1], gap="large")
         with cols[0]:
@@ -1613,7 +1687,7 @@ elif page == "Pool Explorer":
 
             st.dataframe(stats, width="stretch", hide_index=True, height=360)
 
-            if db_user.get("is_admin", False):
+            if admin_user:
                 st.markdown("### 📸 Shareable Signal Card")
                 st.caption("Admin-only feature.")
 
@@ -1681,14 +1755,14 @@ elif page == "Pool Explorer":
                 st.markdown("<div class='pool-wrap'>", unsafe_allow_html=True)
                 st.link_button("Open Pool", row["pool_url"], width="stretch")
                 st.markdown("</div>", unsafe_allow_html=True)
-    st.markdown("</div>", unsafe_allow_html=True)
+        st.markdown("</div>", unsafe_allow_html=True)
 
-elif page == "Protocol Dashboard":
+elif content_page == "Protocol Dashboard":
     render_protocol_dashboard(filtered)
     top_protocol_pools = filtered.sort_values(["tvlUsd", "apy"], ascending=[False, False]).head(10)
     render_link_table(top_protocol_pools, "Protocol dashboard", "Jump from protocol summary into high-TVL pools without switching sections.", limit=10)
 
-elif page == "Strategy Builder":
+elif content_page == "Strategy Builder":
     if not is_pro:
         preview = strategy_builder_filter(df, True, 8.0, 10_000_000.0, 40, "Any")[["project", "chain", "symbol", "apy", "risk_score", "signal"]].copy().head(8)
         preview.columns = ["Protocol", "Chain", "Asset", "APY", "Risk", "Signal"]
@@ -1708,7 +1782,7 @@ elif page == "Strategy Builder":
         st.markdown("</div>", unsafe_allow_html=True)
     with right:
         st.markdown("<div class='panel'>", unsafe_allow_html=True)
-        section_header("Strategy results", "Top matching pools", "Use this as a shortlist generator, then move candidates to the watchlist or pool explorer.")
+        section_header("Strategy results", "Top matching pools", "Use this as a shortlist generator, then move candidates to Watchlists or contextual Pool Detail.")
         if strategy_df.empty:
             st.info("No pools match the current strategy builder settings.")
         else:
@@ -1717,16 +1791,16 @@ elif page == "Strategy Builder":
             st.dataframe(view, width="stretch", hide_index=True, height=520, column_config={"APY": st.column_config.NumberColumn(format="%.2f%%"), "TVL (USD)": st.column_config.NumberColumn(format="$%.0f"), "Open": st.column_config.LinkColumn("Pool link", display_text="Open")})
         st.markdown("</div>", unsafe_allow_html=True)
 
-elif page == "Recaps":
+elif content_page == "Activity & Digests":
     render_recaps_page(alert_stats, history_latest_df, history_trend_df, is_pro)
 
-elif page == "Watchlist":
+elif content_page == "Watchlists":
     left, right = st.columns([1.2, 1], gap="large")
     with left:
         st.markdown("<div class='panel'>", unsafe_allow_html=True)
-        section_header("Watchlist", "Tracked pools", "This is your lightweight conviction layer. Items persist in watchlist.json inside the project folder.")
+        section_header("Watchlists", "Tracked pools", "This is your lightweight conviction layer. Items currently retain the existing local persistence behavior.")
         if watchlist_df.empty:
-            st.info("Your watchlist is empty. Use Watch on any scanner card or pool explorer panel.")
+            render_status("empty", "Your watchlist is empty", "Use Watch on an opportunity card, then return here to review it.")
         else:
             view = watchlist_df[["project", "chain", "symbol", "apy", "tvlUsd", "risk_score", "signal", "pool_url"]].copy()
             view.columns = ["Protocol", "Chain", "Asset", "APY", "TVL (USD)", "Risk", "Signal", "Open"]
@@ -1739,7 +1813,7 @@ elif page == "Watchlist":
         st.markdown("</div>", unsafe_allow_html=True)
     with right:
         st.markdown("<div class='panel'>", unsafe_allow_html=True)
-        section_header("Watchlist chart", "Where your attention sits", "Quick visual comparison of tracked yield and signal distribution.")
+        section_header("Watchlists overview", "Where your attention sits", "Quick visual comparison of tracked yield and signal distribution.")
         if not watchlist_df.empty:
             fig = px.bar(watchlist_df.sort_values("apy", ascending=False), x="project", y="apy", color="risk_band", hover_data={"chain": True, "symbol": True, "tvlUsd": ':$,.0f'})
             fig.update_xaxes(title="Protocol")
@@ -1751,3 +1825,65 @@ elif page == "Watchlist":
         else:
             st.info("Add a few pools to see watchlist comparisons.")
         st.markdown("</div>", unsafe_allow_html=True)
+
+elif content_page == "Pricing":
+    free_col, pro_col = st.columns(2, gap="large")
+    with free_col:
+        st.markdown("<div class='panel'>", unsafe_allow_html=True)
+        section_header("Free", "Explore the market", "Public research remains useful without requiring an account.")
+        st.markdown("- Home market briefing\n- Discover opportunities and comparison\n- Research views\n- Public methodology and data status")
+        st.markdown("</div>", unsafe_allow_html=True)
+    with pro_col:
+        st.markdown("<div class='panel'>", unsafe_allow_html=True)
+        section_header("Pro · $20/month", "Add the intelligence layer", "Existing Pro entitlements unlock signals, deeper ranking, export, and Pro Tools.")
+        st.markdown("- Full Signals view\n- Advanced ranking and deeper result depth\n- Strategy Builder and Yield Spreads\n- CSV export")
+        st.link_button("Upgrade to FuruFlow Pro", get_checkout_link(), width="stretch")
+        st.caption("Billing lifecycle and entitlement semantics are unchanged by this UI release.")
+        st.markdown("</div>", unsafe_allow_html=True)
+
+elif content_page == "Methodology & Data Status":
+    left, right = st.columns(2, gap="large")
+    with left:
+        st.markdown("<div class='panel'>", unsafe_allow_html=True)
+        section_header("Methodology", "Decision support, not a guarantee", "The current scoring and calculations are preserved in this release.")
+        st.markdown(
+            "Risk is a heuristic blend of existing protocol-age, audit-confidence, TVL-stability, reward-dependence, and pool-volatility inputs. "
+            "APY, signal, ranking, and risk formulas were not changed as part of the shell redesign."
+        )
+        st.markdown("</div>", unsafe_allow_html=True)
+    with right:
+        st.markdown("<div class='panel'>", unsafe_allow_html=True)
+        section_header("Data status", "Source and fallback conventions", "FuruFlow distinguishes live, cached, stored, and generated-preview states.")
+        if market_source_status == "degraded":
+            render_status("degraded", "Degraded source", f"{market_source_label}; values must not be interpreted as live.")
+        else:
+            render_status("success", "Source available", f"{market_source_label}; request caching may be up to one hour old.")
+        st.markdown("Pool charts explicitly identify live history, stored snapshots, or generated preview trends at the point of use.")
+        st.markdown("</div>", unsafe_allow_html=True)
+
+elif content_page == "Alerts":
+    render_status("warning", "Alert controls are not available yet", "Existing alert snapshots remain visible in Activity & Digests. Delivery setup is not fabricated or activated here.")
+    render_state("Coming later", "A future release can centralize rules, delivery channels, quiet hours, and delivery history after those capabilities are implemented and validated.")
+
+elif content_page == "Account & Billing":
+    st.markdown("<div class='panel'>", unsafe_allow_html=True)
+    section_header("Account", str(db_user.get("email") or "Signed-in account"), "Identity and privileges continue to come from the existing Supabase control plane.")
+    st.markdown(f"**Plan:** {'Admin' if admin_user else 'Pro' if is_pro else 'Free'}")
+    st.caption("Session restoration, single-session enforcement, authorization, and RLS boundaries are unchanged.")
+    if not is_pro:
+        render_checkout_section(current_email=str(db_user.get("email") or ""))
+        st.link_button("Upgrade to FuruFlow Pro", get_checkout_link(db_user), width="stretch")
+    st.markdown("</div>", unsafe_allow_html=True)
+
+elif content_page == "Admin":
+    if not admin_user:
+        render_status("unauthorized", "Unauthorized", "Verified administrator access is required.")
+        st.stop()
+    render_admin_access_panel(db_user)
+    with st.expander("Link resolver diagnostic", expanded=False):
+        pendle_debug = df[
+            (df["project"].astype(str).str.lower() == "pendle")
+            & (df["chain"].astype(str) == "Arbitrum")
+            & (df["symbol"].astype(str) == "SUSDAI")
+        ][["pool", "project", "chain", "symbol", "pool_url"]].head(10)
+        st.dataframe(pendle_debug, width="stretch", hide_index=True)

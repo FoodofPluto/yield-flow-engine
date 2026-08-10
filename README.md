@@ -111,6 +111,10 @@ Tests and smoke checks set `FURUFLOW_DISABLE_EXTERNAL_SIDE_EFFECTS=true` and do
 not use production credentials. See `docs/ARCHITECTURE.md` for execution paths
 and `docs/STABILIZATION_BASELINE.md` for the recorded baseline.
 
+The responsive application sitemap, shell/component boundary, contextual Pool
+Detail model, navigation authorization rules, and accessibility validation are
+documented in `docs/UI_SHELL.md`.
+
 ## Account and entitlement model
 
 The app uses account-based access instead of the old shared access-code workflow.

@@ -50,6 +50,14 @@ configuration, isolated SDK clients, and deploy diagnostics),
 the name `supabase_auth.py`, which would shadow the SDK's own `supabase_auth`
 package. See `docs/AUTHENTICATION.md` for the lifecycle and persistence boundary.
 
+`ui_shell.py` is the presentation boundary for the canonical `app.py`. It owns
+the sitemap, route aliases, public/authenticated/restricted visibility,
+authorization-aware navigation decisions, contextual Pool Detail state,
+responsive design tokens, and shared status-state renderers. It consumes the
+existing authorization result; it does not create or modify identity,
+entitlement, admin, session, or billing state. See `docs/UI_SHELL.md` for the
+implemented information architecture and validation boundary.
+
 ## Tests and validation
 
 The canonical test command is `poetry run python -m pytest`. Application modules

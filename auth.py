@@ -172,7 +172,7 @@ def login_form() -> None:
         _signup_tab()
     with reset_tab:
         _reset_tab()
-    st.caption("Sessions are kept in server memory for this browser connection; closing or refreshing may require sign-in again.")
+    st.caption("A valid session is restored after refresh or browser reopen through the secure browser-session boundary.")
     _legacy_free_session()
 
 

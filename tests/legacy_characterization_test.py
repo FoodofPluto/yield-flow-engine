@@ -12,12 +12,16 @@ def _function_names(path: Path) -> set[str]:
     return {node.name for node in tree.body if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))}
 
 
-def test_linkdebug_is_a_reduced_app_copy_with_one_known_missing_feature() -> None:
+def test_linkdebug_is_a_reduced_app_copy_with_known_canonical_shell_features_missing() -> None:
     app_functions = _function_names(ROOT / "app.py")
     linkdebug_functions = _function_names(ROOT / "app_linkdebug.py")
 
-    assert app_functions - linkdebug_functions == {"build_signal_card_assets"}
-    assert linkdebug_functions - app_functions == set()
+    assert app_functions - linkdebug_functions == {
+        "build_signal_card_assets",
+        "open_pool_detail",
+        "return_from_pool_detail",
+    }
+    assert linkdebug_functions - app_functions == {"page_selectbox"}
 
     app_source = (ROOT / "app.py").read_text(encoding="utf-8")
     linkdebug_source = (ROOT / "app_linkdebug.py").read_text(encoding="utf-8")
