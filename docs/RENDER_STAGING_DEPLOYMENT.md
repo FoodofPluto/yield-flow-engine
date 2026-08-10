@@ -1,70 +1,81 @@
 # Render staging deployment
 
-This runbook deploys the existing Prompt 2 session architecture to staging. It
-does not change authentication or account-control authority. The public Render
-web service is the only browser-visible origin; Streamlit and the Flask session
-broker are Render private services in `ohio`.
+This runbook packages the existing Prompt 2 secure browser-session architecture
+into one Render Free Web Service for staging validation. It is a testing
+topology, not the recommended production topology. It does not change
+authentication, account-control authority, RLS, entitlements, or cookie
+semantics.
 
-## Deployed services
+## Free staging/testing topology
 
-| Render service | Type | Listener | Responsibility |
-|---|---|---:|---|
-| `furuflow-staging` | public web service | Render-provided `PORT` | Nginx same-origin reverse proxy |
-| `furuflow-staging-streamlit` | private service | `8501` | `streamlit run app.py` |
-| `furuflow-staging-session-broker` | private service | `8510` | Gunicorn serving `session_broker:create_app()` |
+The single Docker container runs three supervised processes:
 
-`render.yaml` obtains both private upstreams through Render Blueprint
-`hostport` references. It never uses either private service's public URL; private
-services do not have public URLs. The proxy routes only the exact
-`/auth/session/activate` path to the broker, returns `404` for
-`/v1/session` and `/v1/session/*`, and sends all remaining HTTP and WebSocket
-traffic to Streamlit.
+| Process | Bind address | Unix identity | Public reachability |
+|---|---|---|---|
+| Nginx | `0.0.0.0:$PORT` | root master / `www-data` workers | Render's only public listener |
+| Streamlit `app.py` | `127.0.0.1:8501` | `furuflow-streamlit` | Nginx only |
+| Gunicorn `session_broker:create_app()` | `127.0.0.1:8510` | `furuflow-broker` | Nginx activation route and Streamlit only |
 
-The broker remains the only process with the Supabase service-role and session
-encryption credentials. Nginx disables access logging on the activation route
-so the single-use ticket query is not written to its access log. Gunicorn's
-access log is intentionally not enabled for the same reason.
+Nginx routes only the exact `/auth/session/activate` path to the broker,
+returns `404` for `/v1/session` and `/v1/session/*`, and proxies every other
+HTTP request and Streamlit WebSocket upgrade to `127.0.0.1:8501`. The broker
+has no listener on an external interface. `FURUFLOW_SESSION_BROKER_INTERNAL_URL`
+is fixed to `http://127.0.0.1:8510`.
 
-## Environment-variable matrix
+The supervisor treats any Nginx, Streamlit, or Gunicorn exit as a container
+failure. It terminates the remaining children and exits nonzero, allowing
+Render to expose and restart the failed service instead of leaving a partial
+deployment running.
 
-`sync: false` means Render prompts for the value during initial Blueprint
-creation. `fromService` values are populated by Render and use the private
-network where noted. No credential value belongs in Git.
+## Process environment boundaries
 
-| Variable | Public proxy | Private Streamlit | Private broker | Source |
-|---|:---:|:---:|:---:|---|
-| `PORT` | yes | no | no | Render default |
-| `PYTHON_VERSION` | no | yes | yes | Blueprint: `3.12.10` |
-| `ENVIRONMENT` | no | yes | no | Blueprint: `staging` |
-| `DEV_MODE` | no | yes | no | Blueprint: `false` |
-| `SUPABASE_URL` | no | yes | yes | Render secret input; use the same staging project root on both |
-| `SUPABASE_ANON_KEY` | no | yes | no | Render secret input |
-| `SUPABASE_SERVICE_ROLE_KEY` | no | no | yes | Render secret input |
-| `SUPABASE_REDIRECT_URL_PREVIEW` | no | yes | no | Public proxy `RENDER_EXTERNAL_URL` |
-| `SUPABASE_REDIRECT_URL_PRODUCTION` | no | yes | no | Public proxy `RENDER_EXTERNAL_URL` |
-| `FURUFLOW_SESSION_BROKER_INTERNAL_HOSTPORT` | no | yes | no | Broker private `hostport`; startup-only helper |
-| `FURUFLOW_SESSION_BROKER_INTERNAL_URL` | no | yes | no | Constructed at process start as `http://` plus the broker private `hostport` |
-| `FURUFLOW_SESSION_BROKER_PUBLIC_ORIGIN` | no | yes | no | Public proxy `RENDER_EXTERNAL_URL` |
-| `FURUFLOW_SESSION_BRIDGE_KEY` | no | yes | yes | Generated once on the broker and copied to Streamlit by `fromService` |
-| `FURUFLOW_SESSION_ENCRYPTION_KEY` | no | no | yes | Render secret input; Fernet key |
-| `STREAMLIT_UPSTREAM` | yes | no | no | Streamlit private `hostport` |
-| `SESSION_BROKER_UPSTREAM` | yes | no | no | Broker private `hostport` |
+The Render service necessarily has the union of the Streamlit and broker
+settings. `deploy/render/supervise.py` creates separate child environments and
+separate non-root Unix identities:
 
-The staging application needs `SUPABASE_REDIRECT_URL_PREVIEW` because the
-existing configuration maps `ENVIRONMENT=staging` to that name. The Blueprint
-also supplies the requested `SUPABASE_REDIRECT_URL_PRODUCTION`; both resolve to
-the same staging proxy origin. Neither variable contains provider credentials.
+| Variable | Supervisor initially | Nginx | Streamlit | Broker |
+|---|:---:|:---:|:---:|:---:|
+| `PORT` | yes | no; rendered into config | yes | no |
+| `ENVIRONMENT` | yes | no | yes | no |
+| `DEV_MODE` | yes | no | yes | no |
+| `SUPABASE_URL` | yes | no | yes | yes |
+| `SUPABASE_ANON_KEY` | yes | no | yes | no |
+| `SUPABASE_SERVICE_ROLE_KEY` | yes | no | **no** | yes |
+| `SUPABASE_REDIRECT_URL_PREVIEW` | yes | no | yes | no |
+| `SUPABASE_REDIRECT_URL_PRODUCTION` | yes | no | yes | no |
+| `FURUFLOW_SESSION_BROKER_INTERNAL_URL` | yes | no | yes, forced to loopback | no |
+| `FURUFLOW_SESSION_BROKER_PUBLIC_ORIGIN` | yes | no | yes | no |
+| `FURUFLOW_SESSION_BRIDGE_KEY` | yes | no | yes | yes |
+| `FURUFLOW_SESSION_ENCRYPTION_KEY` | yes | no | **no** | yes |
 
-Explicitly verify in the Render dashboard that the Streamlit service does not
-contain `SUPABASE_SERVICE_ROLE_KEY` or `FURUFLOW_SESSION_ENCRYPTION_KEY`, and
-that the proxy contains none of the four session/Supabase credentials.
+Nginx receives only a small execution environment and no `SUPABASE_*` or
+`FURUFLOW_*` values. The broker receives only its four required application
+variables plus a small execution environment. Streamlit receives the service
+environment after `SUPABASE_SERVICE_ROLE_KEY` and
+`FURUFLOW_SESSION_ENCRYPTION_KEY` have been removed. The supervisor also
+removes those two values from its own environment after starting the broker.
 
-## Exact staging deployment sequence
+This lets the existing production guard in `auth_session.py` continue to reject
+an unsafe Streamlit environment. The guard is not weakened or bypassed.
 
-1. In a separate staging Supabase project, apply and verify
+## Same-origin cookie and log invariants
+
+The public Render HTTPS URL remains the only browser-visible origin. The broker
+response passes through Nginx without cookie-domain or cookie-path rewriting.
+`session_broker.py` therefore continues to issue a host-only
+`__Host-furuflow_session` cookie with `Secure`, `HttpOnly`, `SameSite=Lax`,
+`Path=/`, and no `Domain` attribute.
+
+Nginx disables access logging for `/auth/session/activate`. Its general log
+format records `$uri`, not `$request_uri`, so query strings such as auth codes
+and activation tickets are not logged. Gunicorn access logging remains disabled.
+
+## Exact Free Render creation sequence
+
+1. Use a separate staging Supabase project. Apply and verify
    `supabase/migrations/202608050001_prompt2_account_control_plane.sql` as
    described in `ACCOUNT_CONTROL_PLANE.md`. Confirm `browser_sessions` and
-   `browser_session_tickets` exist. Do not use the production Supabase project.
+   `browser_session_tickets` exist. Do not use the production project.
 2. In a trusted local shell, generate a Fernet key for
    `FURUFLOW_SESSION_ENCRYPTION_KEY`:
 
@@ -72,42 +83,40 @@ that the proxy contains none of the four session/Supabase credentials.
    .\.venv\Scripts\python.exe -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"
    ```
 
-   Retain it only in the secret manager or another approved secret store. The
-   Blueprint generates `FURUFLOW_SESSION_BRIDGE_KEY`; do not replace it with an
-   application or Supabase credential.
-3. Commit the reviewed deployment files and push branch
-   `feat/supabase-auth-demo-access` to the repository connected to Render.
+   Store it only in Render's secret settings or another approved secret store.
+   The Blueprint generates an independent `FURUFLOW_SESSION_BRIDGE_KEY`.
+3. Before pushing, run the local validation commands in this runbook. Commit
+   the reviewed files and push `feat/supabase-auth-demo-access`.
 4. In Render, choose **New > Blueprint**, connect `yield-flow-engine`, select
    branch `feat/supabase-auth-demo-access`, and use the root `render.yaml`.
-   Confirm the preview shows exactly one public web service and two private
-   services, all in `ohio` on the `starter` plan.
-5. During initial Blueprint creation, enter only these `sync: false` values:
-   - on `furuflow-staging-streamlit`: `SUPABASE_URL` and
-     `SUPABASE_ANON_KEY` from the staging Supabase project;
-   - on `furuflow-staging-session-broker`: the same `SUPABASE_URL`, the staging
-     `SUPABASE_SERVICE_ROLE_KEY`, and the generated
-     `FURUFLOW_SESSION_ENCRYPTION_KEY`.
-6. Apply the Blueprint and wait for all three initial deploys to become live.
-   The broker must show an internal address on port `8510`, Streamlit an
-   internal address on port `8501`, and only `furuflow-staging` an external
-   `https://...onrender.com` URL. Do not create a public broker or Streamlit
-   service as a workaround for a failed private-network check.
-7. Copy the public proxy's `RENDER_EXTERNAL_URL`. In the staging Supabase
-   Authentication URL configuration, set the staging Site URL deliberately and
-   add that exact HTTPS origin/path to the redirect allowlist. The Blueprint
-   supplies that same URL to `SUPABASE_REDIRECT_URL_PREVIEW`,
+   Confirm the preview contains exactly one Docker web service named
+   `furuflow-staging`, in `ohio`, with instance type `free`. There must be no
+   private service or separately public Streamlit/broker service.
+5. During initial Blueprint creation, provide these four `sync: false` values:
+   `SUPABASE_URL`, `SUPABASE_ANON_KEY`, `SUPABASE_SERVICE_ROLE_KEY`, and
+   `FURUFLOW_SESSION_ENCRYPTION_KEY`. Use only values from the staging Supabase
+   project. Do not paste any value into `render.yaml` or another tracked file.
+6. Apply the Blueprint and wait for the Docker build and health check to pass.
+   The health check is `/_stcore/health`, which Nginx proxies to the localhost
+   Streamlit process. In logs, confirm the supervisor starts
+   `session-broker`, `streamlit`, and `nginx` and does not print environment
+   values.
+7. Copy the service's `RENDER_EXTERNAL_URL`. In staging Supabase Authentication
+   URL Configuration, set the staging Site URL deliberately and allowlist that
+   exact HTTPS callback origin/path. The Blueprint copies the same Render URL
+   to `SUPABASE_REDIRECT_URL_PREVIEW`,
    `SUPABASE_REDIRECT_URL_PRODUCTION`, and
    `FURUFLOW_SESSION_BROKER_PUBLIC_ORIGIN`.
-8. Open a Render shell on the private Streamlit service and run the redacted
-   deployment diagnostic:
+8. Run the redacted auth diagnostic locally from a trusted shell with the
+   staging public configuration. Render Free Web Services do not provide shell
+   or one-off-job access:
 
-   ```bash
-   python scripts/check_supabase_auth_health.py
+   ```powershell
+   .\.venv\Scripts\python.exe scripts\check_supabase_auth_health.py
    ```
 
-   It must pass before staging sign-in testing.
-9. From a trusted workstation, replace `STAGING_ORIGIN` below with the proxy's
-   external URL and verify routing:
+9. From a trusted workstation, replace `STAGING_ORIGIN` with the service's
+   external URL and verify public routing:
 
    ```bash
    curl -i "STAGING_ORIGIN/healthz"
@@ -116,34 +125,75 @@ that the proxy contains none of the four session/Supabase credentials.
    curl -i "STAGING_ORIGIN/auth/session/activate"
    ```
 
-   Expected results are `200`, `200`, `404`, and `400`, respectively. The final
-   `400` is the broker's safe response to a missing/expired ticket and confirms
-   only the activation endpoint is publicly routed.
-10. Complete signup/sign-in on the public proxy origin, then refresh the page
-    and reconnect the Streamlit WebSocket. In browser developer tools, verify
-    the cookie is named `__Host-furuflow_session`, is host-only (no `Domain`),
-    and has `Secure`, `HttpOnly`, `SameSite=Lax`, and `Path=/`. Confirm refresh
-    restores the identity and logout revokes it.
-11. Inspect proxy, Streamlit, and broker logs for the staging test. Activation
-    tickets, opaque cookie values, Supabase access/refresh tokens, and secret
-    values must not appear. Complete the manual staging verification in
-    `AUTHENTICATION.md` before accepting the deployment.
+   Expected results are `200`, `200`, `404`, and `400`. The final response is
+   the broker's safe missing/expired-ticket response and confirms the exact
+   activation route without exposing `/v1/session/*`.
+10. Complete sign-in on the public Render origin. In browser developer tools,
+    verify the cookie is host-only and has `Secure`, `HttpOnly`, `SameSite=Lax`,
+    and `Path=/`. Press F5 and confirm identity restoration, then verify logout
+    revokes the session. Inspect logs for tokens, activation tickets, cookie
+    values, and secrets; none may appear.
 
-For this first staging deployment, use the Render-provided external URL as the
-browser-visible origin. If a custom staging domain is introduced later, update
-all three public-origin/redirect variables together to that exact HTTPS origin
-before sending traffic; otherwise the `__Host-` cookie would be scoped to the
-wrong host. Production promotion is intentionally outside this runbook.
+For this staging test, use the Render-provided URL as the browser origin. A
+custom staging domain requires updating all three public-origin/redirect
+variables together before traffic is sent.
 
-## Cookie and routing invariants
+## F5 restoration on the Free topology
 
-`session_broker.py` issues the cookie with `secure=True`, `httponly=True`,
-`samesite="Lax"`, `path="/"`, and no `domain` argument. The proxy passes the
-broker's `Set-Cookie` header unchanged and does not configure cookie-domain or
-cookie-path rewriting. Therefore activation on the proxy origin produces the
-required host-only `__Host-furuflow_session` cookie.
+F5 restoration can be tested faithfully. The opaque cookie remains in the
+browser and encrypted provider tokens remain in the staging Supabase
+`browser_sessions` table, not on Render's ephemeral filesystem. After a rerun,
+WebSocket reconnect, container restart, or Free-instance wake, Streamlit starts
+with empty memory, reads the opaque cookie, and restores through the loopback
+broker exactly as it would through a private-network broker.
 
-The public Nginx configuration has no general broker upstream. Only the exact
-activation location references the broker; both public `/v1/session` forms are
-terminated by Nginx. Streamlit reaches `/v1/session/*` directly over Render's
-private network using the shared bridge key.
+Expect a cold-start delay after Render spins down an idle Free service. An auth
+flow whose PKCE verifier was only in process memory when the container stopped
+cannot resume and must be restarted; that is an existing process-memory
+limitation, not a change to F5 restoration for an already activated browser
+session.
+
+## Security and reliability tradeoffs
+
+This Free topology preserves the browser security properties, public route
+denial, encrypted Supabase session storage, bridge authentication, and child
+environment denial. It is still weaker than separate services:
+
+- the Render service configuration and root supervisor initially hold the
+  union of all secrets;
+- Unix users and sanitized child environments reduce accidental disclosure but
+  are not the same as separate container/service isolation;
+- a root/container compromise could reach every process and credential;
+- all processes share one CPU/memory budget and failure domain;
+- Free services can sleep or restart, provide no persistent disk, shell, or
+  one-off jobs, and cannot scale beyond one instance.
+
+Use this topology only for staging/testing with a staging Supabase project and
+synthetic/public data.
+
+## Recommended production topology
+
+Production should retain the three-service same-origin design:
+
+1. a public Nginx web service that exposes Streamlit and only the broker's exact
+   `/auth/session/activate` endpoint;
+2. a private Streamlit service that never receives the Supabase service-role or
+   session-encryption key; and
+3. a private Gunicorn broker service that alone receives those credentials and
+   exposes `/v1/session/*` only on Render's private network.
+
+All production services belong in the same Render region. Streamlit and Nginx
+must use the broker's private hostname, and Nginx must preserve Streamlit
+WebSocket forwarding. This platform-level separation is the recommended
+production security boundary even though the Free staging container reproduces
+the functional session behavior.
+
+## Local validation
+
+```powershell
+.\.venv\Scripts\python.exe -m pytest
+.\.venv\Scripts\poetry.exe check --lock
+git diff --check
+.\.venv\Scripts\python.exe scripts\check_tracked_secrets.py
+.\.venv\Scripts\poetry.exe run pip-audit --requirement requirements.txt
+```

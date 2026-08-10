@@ -1,0 +1,15 @@
+.git
+.github
+.venv
+.env
+.env.*
+!.env.example
+.mypy_cache
+.pytest_cache
+.ruff_cache
+**/__pycache__
+**/*.py[cod]
+.streamlit/secrets.toml
+account-migration-*.json
+reviewed-account-map.json
+furuflow.pre-supabase-migration.db

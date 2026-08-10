@@ -115,8 +115,8 @@ storage, logs, or local application database values.
 
 See `ACCOUNT_CONTROL_PLANE.md` for the exact sidecar, secret separation,
 same-origin routing, refresh, and revocation deployment contract.
-See `RENDER_STAGING_DEPLOYMENT.md` for the concrete three-service Render staging
-topology and deployment sequence.
+See `RENDER_STAGING_DEPLOYMENT.md` for the single-service Free Render staging
+test topology and the recommended three-service production topology.
 
 ## Deployment diagnostic
 
