@@ -7,7 +7,7 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 WORKDIR /app
 
 RUN apt-get update \
-    && apt-get install --yes --no-install-recommends nginx \
+    && apt-get install --yes --no-install-recommends gcc nginx \
     && rm -rf /var/lib/apt/lists/* \
     && rm -f /etc/nginx/sites-enabled/default \
     && useradd --create-home --home-dir /home/furuflow-streamlit --shell /usr/sbin/nologin furuflow-streamlit \
