@@ -67,6 +67,9 @@ def test_pool_detail_open_and_back_preserve_results_context() -> None:
     assert state["pool_return_route"] == "Discover"
     assert state["pool_return_view"] == "Opportunities"
 
+    compared = pool_detail_state("pool-789", return_route="Discover", return_view="Compare")
+    assert pool_detail_back_state(compared) == {"current_route": "Discover", "current_view": "Compare"}
+
 
 def test_renamed_and_reorganized_pages_map_to_the_new_sitemap() -> None:
     expected = {

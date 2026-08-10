@@ -58,6 +58,14 @@ existing authorization result; it does not create or modify identity,
 entitlement, admin, session, or billing state. See `docs/UI_SHELL.md` for the
 implemented information architecture and validation boundary.
 
+`market_research.py` is the pure Prompt 4 market-research boundary. It owns the
+deterministic Discover filter/query model, stable missing-last sorting,
+comparison models, reported-yield explanation, factor-based risk explanation,
+central provenance/freshness terminology, Yield Spreads presentation data, and
+a local allowlisted product-event envelope. Provider I/O and Streamlit rendering
+remain in `app.py`; identity and authorization remain outside both modules. See
+`docs/MARKET_RESEARCH.md`.
+
 ## Tests and validation
 
 The canonical test command is `poetry run python -m pytest`. Application modules

@@ -17,16 +17,19 @@ FuruFlow helps users:
 
 ## Product structure
 
-The app is now organized around a clearer user journey:
+The app is organized around a research journey:
 
 - **Home** — fastest market read, top opportunities, movers, and a quick intelligence summary
-- **Scanner** — broader pool discovery and table workflows
-- **Signals** — ranked conviction view with APY change, TVL change, volatility context, and direct links
-- **Market Map** — broader market shape by risk, chain, and capital concentration
-- **Pool Explorer** — single-pool inspection with charting, risk factors, and watchlist actions
-- **Watchlist** — lightweight conviction layer for tracked pools
-- **Recaps** — daily/weekly recap previews plus signal history and trend summaries
-- **Protocol Dashboard / Strategy Builder / Arbitrage** — deeper Pro-oriented workflows
+- **Discover** — deterministic search/filtering, opportunity triage, nested signals, and bounded comparison
+- **Pool Detail** — contextual identity, reported yield components, liquidity, risk factors, and provenance
+- **Research** — market-map and protocol-depth views
+- **Watchlists / Activity & Digests** — authenticated attention and history surfaces
+- **Pro Tools** — Strategy Builder and Yield Spreads (reported differences, not guaranteed arbitrage)
+- **Methodology & Data Status** — source, freshness, fallback, and scoring conventions
+
+See [`docs/MARKET_RESEARCH.md`](docs/MARKET_RESEARCH.md) for the Discover state
+model, Compare, provenance/freshness, explainable yield and risk, degraded data,
+and responsive/accessibility limitations.
 
 ## Free vs Pro
 

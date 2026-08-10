@@ -46,6 +46,9 @@ def pytest_configure() -> None:
     os.environ["ENVIRONMENT"] = "test"
     os.environ["DEV_MODE"] = "false"
     os.environ["FURUFLOW_DISABLE_EXTERNAL_SIDE_EFFECTS"] = "true"
+    # Streamlit workflow tests use an explicit, clearly labelled development
+    # fixture. Production leaves this unset and never substitutes sample pools.
+    os.environ["FURUFLOW_MARKET_SAMPLE_MODE"] = "true"
     os.environ["PYTHON_DOTENV_DISABLED"] = "1"
     for name in _PRODUCTION_CREDENTIALS:
         os.environ.pop(name, None)

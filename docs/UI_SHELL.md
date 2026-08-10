@@ -95,18 +95,19 @@ Streamlit cannot preserve browser history and every transient widget/filter
 value like a client-side router; the return abstraction therefore preserves the
 route/view context rather than a full browser-history stack.
 
-Pool Detail uses the existing calculations and upstream/stored/generated chart
-selection. Generated chart trends remain explicitly labeled as previews and are
-not presented as live observations.
+Pool Detail uses existing calculations and upstream/stored chart selection.
+When neither legitimate source exists, history is explicitly unavailable; the
+canonical app does not generate a trend from a single snapshot.
 
 ## Shared status conventions
 
 `render_status()` supports loading/refreshing, no data, error, warning,
 degraded source, stale cache, authentication required, Pro required,
 unauthorized, session expired, informational, and success states. Each uses an
-icon and useful text as well as color. The live pool feed is labeled available
-with its cache window. If both upstream endpoints fail, local rows are explicitly
-labeled sample data in a degraded banner and must not be interpreted as live.
+icon and useful text as well as color. The live pool feed is labeled with its
+source, retrieval age, and cache window. If upstream pool endpoints fail, the
+canonical app renders provider unavailable and does not substitute sample rows.
+The sample fixture requires an explicit development/test environment flag.
 
 ## Accessibility validation
 

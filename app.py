@@ -6,6 +6,7 @@ import tempfile
 import json
 import os
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 from urllib.parse import quote
@@ -31,6 +32,23 @@ from engine.scoring import (
     score_pool_volatility,
     score_signal_movement,
     score_tvl_stability,
+)
+from market_research import (
+    COMPARISON_LIMIT,
+    DEFAULT_FILTERS,
+    DiscoveryFilters,
+    active_filters,
+    apply_discovery_filters,
+    comparison_rows,
+    data_status_from_attrs,
+    filter_query,
+    freshness,
+    parse_filter_query,
+    remove_filter,
+    risk_explanation,
+    track_research_event,
+    yield_explanation,
+    yield_spreads,
 )
 from ui_shell import (
     DISCOVER_VIEWS,
@@ -416,6 +434,8 @@ def inject_css() -> None:
 
 @st.cache_data(ttl=900, show_spinner=False)
 def fetch_pools() -> pd.DataFrame:
+    if os.getenv("FURUFLOW_MARKET_SAMPLE_MODE", "").strip().lower() in {"1", "true", "yes"}:
+        return sample_pool_data(["Explicit FURUFLOW_MARKET_SAMPLE_MODE development fixture"])
     urls = [
         "https://yields.llama.fi/pools",
         "https://stablecoins.llama.fi/yields/pools",
@@ -429,12 +449,33 @@ def fetch_pools() -> pd.DataFrame:
             rows = payload.get("data", payload)
             df = pd.DataFrame(rows)
             if not df.empty:
-                df.attrs["source_status"] = "live"
-                df.attrs["source_label"] = "DeFiLlama live pool feed"
+                required_identity = {"pool", "chain", "project", "symbol"}
+                if not required_identity.issubset(df.columns):
+                    errors.append(f"{url}: malformed response missing pool identity fields")
+                    continue
+                usable = df[list(required_identity)].notna().all(axis=1)
+                dropped = int((~usable).sum())
+                df = df[usable].copy()
+                if df.empty:
+                    errors.append(f"{url}: response contained no usable pool identities")
+                    continue
+                value_fields_missing = any(column not in df.columns for column in ("apy", "tvlUsd"))
+                df.attrs["source_status"] = "partial" if dropped or value_fields_missing else "live"
+                df.attrs["source_label"] = "DeFiLlama Yields"
+                df.attrs["retrieved_at"] = datetime.now(timezone.utc).isoformat()
+                df.attrs["cache_seconds"] = 900
+                if dropped:
+                    df.attrs["errors"] = [f"Dropped {dropped} rows without complete pool identity"]
                 return df
         except Exception as exc:
             errors.append(f"{url}: {exc}")
-    return sample_pool_data(errors)
+    unavailable = pd.DataFrame()
+    unavailable.attrs["errors"] = errors
+    unavailable.attrs["source_status"] = "unavailable"
+    unavailable.attrs["source_label"] = "DeFiLlama Yields"
+    unavailable.attrs["retrieved_at"] = None
+    unavailable.attrs["cache_seconds"] = 900
+    return unavailable
 
 
 @st.cache_data(ttl=3600, show_spinner=False)
@@ -493,41 +534,21 @@ def fetch_signal_snapshots(pool_ids: tuple[str, ...]) -> pd.DataFrame:
     return pd.DataFrame(rows)
 
 
-@st.cache_data(ttl=1800, show_spinner=False)
-def synthesize_pool_chart(pool_id: str, apy: float, apy_base: float, apy_reward: float, tvl: float) -> pd.DataFrame:
-    periods = 14
-    end = pd.Timestamp.utcnow().floor("D")
-    dates = pd.date_range(end=end, periods=periods, freq="D")
-    drift = max(apy * 0.03, 0.25)
-    apy_points = [max(0.0, round(apy - drift * (periods - i - 1), 2)) for i in range(periods)]
-    base_points = [max(0.0, round(apy_base - drift * 0.55 * (periods - i - 1), 2)) for i in range(periods)]
-    reward_points = [max(0.0, round(a - b, 2)) for a, b in zip(apy_points, base_points)]
-    tvl_floor = tvl * 0.9
-    tvl_points = [round(tvl_floor + ((i + 1) / periods) * max(tvl - tvl_floor, 0.0), 2) for i in range(periods)]
-    return pd.DataFrame({
-        "timestamp": dates,
-        "apy": apy_points,
-        "apyBase": base_points,
-        "apyReward": reward_points,
-        "tvlUsd": tvl_points,
-    })
-
-
 def get_pool_chart_with_fallback(row: pd.Series) -> tuple[pd.DataFrame, str]:
     pool_id = str(row["pool"])
-    chart = fetch_pool_chart(pool_id)
+    sample_mode = os.getenv("FURUFLOW_MARKET_SAMPLE_MODE", "").strip().lower() in {"1", "true", "yes"}
+    chart = pd.DataFrame() if sample_mode else fetch_pool_chart(pool_id)
     if not chart.empty:
         return chart, "live"
+
+    if sample_mode:
+        return pd.DataFrame(columns=["timestamp", "apy", "apyBase", "apyReward", "tvlUsd"]), "unavailable"
 
     stored = load_history(pool_id)
     if not stored.empty:
         return stored, "stored"
 
-    apy = float(row.get("apy", 0.0) or 0.0)
-    apy_base = float(row.get("apyBase", apy * 0.7) or 0.0)
-    apy_reward = float(row.get("apyReward", max(apy - apy_base, 0.0)) or 0.0)
-    tvl = float(row.get("tvlUsd", 0.0) or 0.0)
-    return synthesize_pool_chart(pool_id, apy, apy_base, apy_reward, tvl), "fallback"
+    return pd.DataFrame(columns=["timestamp", "apy", "apyBase", "apyReward", "tvlUsd"]), "unavailable"
 
 
 def derive_chart_signal(pool_id: str, chart: pd.DataFrame) -> dict[str, Any]:
@@ -569,7 +590,16 @@ def enrich(df: pd.DataFrame, resolver_version: str = LINK_RESOLVER_VERSION) -> p
 
     for column in ["apy", "apyBase", "apyReward", "tvlUsd", "volumeUsd1d", "volumeUsd7d"]:
         if column not in data.columns:
-            data[column] = 0.0
+            data[column] = pd.NA
+        availability_name = {
+            "apy": "apy_available",
+            "apyBase": "apy_base_available",
+            "apyReward": "apy_reward_available",
+            "tvlUsd": "tvl_available",
+            "volumeUsd1d": "volume_1d_available",
+            "volumeUsd7d": "volume_7d_available",
+        }[column]
+        data[availability_name] = pd.to_numeric(data[column], errors="coerce").notna()
         data[column] = pd.to_numeric(data[column], errors="coerce").fillna(0.0)
 
     for col in ["chain", "project", "symbol", "poolMeta", "exposure", "pool"]:
@@ -580,6 +610,15 @@ def enrich(df: pd.DataFrame, resolver_version: str = LINK_RESOLVER_VERSION) -> p
     if "stablecoin" not in data.columns:
         data["stablecoin"] = data["symbol"].str.contains("USDC|USDT|DAI|FRAX|USD|USDe", case=False, na=False)
     data["stablecoin"] = data["stablecoin"].fillna(False)
+
+    if data.empty:
+        text_columns = ["strategy_type", "project_key", "protocol_badge", "protocol_tier", "risk_band", "pool_url", "scorecard", "watch_label"]
+        numeric_columns = ["protocol_age_score", "audit_score", "tvl_stability_score", "pool_volatility_score", "risk_score", "rank_score"]
+        for column in text_columns:
+            data[column] = pd.Series(dtype="object")
+        for column in numeric_columns:
+            data[column] = pd.Series(dtype="float64")
+        return data
 
     data["strategy_type"] = data["poolMeta"].replace({"Unknown": "General", "": "General"})
     data["project_key"] = data["project"].str.lower().str.strip()
@@ -680,8 +719,10 @@ def sample_pool_data(errors: list[str]) -> pd.DataFrame:
         ]
     )
     demo.attrs["errors"] = errors
-    demo.attrs["source_status"] = "degraded"
-    demo.attrs["source_label"] = "Clearly labeled local sample data"
+    demo.attrs["source_status"] = "sample"
+    demo.attrs["source_label"] = "Local development market fixture"
+    demo.attrs["retrieved_at"] = datetime.now(timezone.utc).isoformat()
+    demo.attrs["cache_seconds"] = 900
     return demo
 
 
@@ -791,7 +832,16 @@ def sidebar_group(title: str, copy: str) -> None:
 
 
 def compact_table(df: pd.DataFrame) -> pd.DataFrame:
-    table = df[[
+    source = df.copy()
+    for value_col, available_col in (
+        ("apy", "apy_available"),
+        ("apyBase", "apy_base_available"),
+        ("apyReward", "apy_reward_available"),
+        ("tvlUsd", "tvl_available"),
+    ):
+        if available_col in source:
+            source.loc[~source[available_col].astype(bool), value_col] = pd.NA
+    table = source[[
         "project", "chain", "symbol", "strategy_type", "apy", "apyBase", "apyReward", "tvlUsd", "risk_score", "signal", "pool_url"
     ]].rename(columns={
         "project": "Protocol", "chain": "Chain", "symbol": "Asset", "strategy_type": "Strategy", "apy": "APY", "apyBase": "Base", "apyReward": "Rewards", "tvlUsd": "TVL (USD)", "risk_score": "Risk", "signal": "Signal", "pool_url": "Open"
@@ -979,8 +1029,18 @@ def render_admin_access_panel(current_user: dict) -> None:
 
     st.markdown("</div>", unsafe_allow_html=True)
 
-def render_opportunity_card(row: pd.Series, idx: int, watched: bool) -> None:
+def render_opportunity_card(
+    row: pd.Series,
+    idx: int,
+    watched: bool,
+    *,
+    authenticated: bool,
+    freshness_label: str,
+    return_view: str = "Opportunities",
+) -> None:
     signal = row.get("signal", "Steady")
+    apy_text = f"{row['apy']:.2f}%" if bool(row.get("apy_available", True)) else "Unavailable"
+    tvl_text = format_money(row["tvlUsd"]) if bool(row.get("tvl_available", True)) else "Unavailable"
     card_html = f"""
     <style>
         .ff-card-wrap {{
@@ -1018,10 +1078,11 @@ def render_opportunity_card(row: pd.Series, idx: int, watched: bool) -> None:
             <span class="ff-badge">{row['risk_band']} risk</span>
             <span class="ff-badge">{row['scorecard']}</span>
             <span class="ff-badge">{signal}</span>
+            <span class="ff-badge">Data: {freshness_label}</span>
         </div>
         <div class="ff-metric-strip">
-            <div class="ff-metric-box"><div class="ff-metric-mini-label">APY</div><div class="ff-metric-mini-value">{row['apy']:.2f}%</div></div>
-            <div class="ff-metric-box"><div class="ff-metric-mini-label">TVL</div><div class="ff-metric-mini-value">{format_money(row['tvlUsd'])}</div></div>
+            <div class="ff-metric-box"><div class="ff-metric-mini-label">APY</div><div class="ff-metric-mini-value">{apy_text}</div></div>
+            <div class="ff-metric-box"><div class="ff-metric-mini-label">TVL</div><div class="ff-metric-mini-value">{tvl_text}</div></div>
             <div class="ff-metric-box"><div class="ff-metric-mini-label">Risk</div><div class="ff-metric-mini-value">{int(row['risk_score'])}/100</div></div>
         </div>
     </div>
@@ -1030,15 +1091,17 @@ def render_opportunity_card(row: pd.Series, idx: int, watched: bool) -> None:
     c1, c2 = st.columns(2)
     with c1:
         st.markdown("<div class='watch-wrap'>", unsafe_allow_html=True)
-        label = "Remove" if watched else "Watch"
-        if st.button(label, key=f"watch_{idx}", width="stretch"):
+        label = "Remove" if watched else "Watch" if authenticated else "Sign in to save"
+        if st.button(label, key=f"watch_{idx}", width="stretch", disabled=not authenticated):
+            track_research_event("watchlist_action_initiated", {"pool": str(row["pool"]), "action": label})
             watch_toggle(str(row["pool"]))
             st.rerun()
         st.markdown("</div>", unsafe_allow_html=True)
     with c2:
         st.markdown("<div class='pool-wrap'>", unsafe_allow_html=True)
         if st.button("View details", key=f"detail_{idx}_{row['pool']}", width="stretch"):
-            open_pool_detail(str(row["pool"]))
+            track_research_event("pool_detail_opened", {"pool": str(row["pool"]), "view": return_view})
+            open_pool_detail(str(row["pool"]), return_view=return_view)
             st.rerun()
         st.markdown("</div>", unsafe_allow_html=True)
 
@@ -1276,13 +1339,15 @@ if not allowed:
 with st.spinner("Refreshing market data…"):
     raw_df = fetch_pools()
 market_source_status = str(raw_df.attrs.get("source_status", "live"))
-market_source_label = str(raw_df.attrs.get("source_label", "DeFiLlama live pool feed"))
+market_source_label = str(raw_df.attrs.get("source_label", "DeFiLlama Yields"))
+market_data_status = data_status_from_attrs(raw_df.attrs)
+market_freshness = freshness(market_data_status)
 df = enrich(raw_df, resolver_version=LINK_RESOLVER_VERSION)
 
 if "watchlist" not in st.session_state:
     st.session_state.watchlist = [] if st.session_state.get("furuflow_demo_active") else load_watchlist()
 
-signal_source = tuple(df.head(SIGNAL_SAMPLE)["pool"].tolist())
+signal_source = tuple(df.head(SIGNAL_SAMPLE)["pool"].tolist()) if market_source_status == "live" else ()
 signal_df = fetch_signal_snapshots(signal_source)
 if not signal_df.empty:
     df = df.merge(signal_df, on="pool", how="left")
@@ -1291,17 +1356,21 @@ for col, default in [("signal", "Steady"), ("apy_delta_7", 0.0), ("tvl_delta_7_p
         df[col] = default
     df[col] = df[col].fillna(default)
 
-df["signal_strength"] = df.apply(
-    lambda row: score_signal_movement(
-        row["apy_delta_7"],
-        row["tvl_delta_7_pct"],
-        row["apy_volatility"],
-    ),
-    axis=1,
-)
+if df.empty:
+    df["signal_strength"] = pd.Series(dtype="float64")
+else:
+    df["signal_strength"] = df.apply(
+        lambda row: score_signal_movement(
+            row["apy_delta_7"],
+            row["tvl_delta_7_pct"],
+            row["apy_volatility"],
+        ),
+        axis=1,
+    )
 
 watchlist_df = df[df["pool"].isin(st.session_state.watchlist)].copy()
-save_snapshot(df)
+if market_source_status == "live":
+    save_snapshot(df)
 
 history_latest_df = latest_signal_history(limit=12)
 history_trend_df = trend_summary_df(limit=10)
@@ -1312,74 +1381,111 @@ with st.sidebar:
     projects = sorted(df["project"].dropna().unique().tolist())
     strategies = sorted(df["strategy_type"].dropna().unique().tolist())
     signals = sorted(df["signal"].dropna().unique().tolist())
-
-    default_chains = chains[: min(len(chains), 8)] if chains else []
+    query_filter_model = parse_filter_query(st.query_params) if page in {"Discover", "Pool Detail"} else DEFAULT_FILTERS
+    filter_defaults = {
+        "market_search": query_filter_model.search,
+        "market_chains": [value for value in query_filter_model.chains if value in chains],
+        "market_protocols": [value for value in query_filter_model.protocols if value in projects],
+        "market_strategies": [value for value in query_filter_model.strategies if value in strategies],
+        "market_signals": [value for value in query_filter_model.signals if value in signals],
+        "market_stable": query_filter_model.stablecoin_only,
+        "market_min_tvl": int(query_filter_model.min_tvl),
+        "market_max_risk": query_filter_model.max_risk,
+        "market_min_apy": query_filter_model.min_apy,
+        "market_sort": query_filter_model.sort_by,
+    }
+    sort_options = FREE_SORT_OPTIONS + PRO_SORT_OPTIONS if is_pro else FREE_SORT_OPTIONS
+    if filter_defaults["market_sort"] not in sort_options:
+        filter_defaults["market_sort"] = DEFAULT_FILTERS.sort_by
+    for filter_key, filter_value in filter_defaults.items():
+        if filter_key not in st.session_state:
+            st.session_state[filter_key] = filter_value
 
     if market_filters_apply(page):
-        with st.expander("Market filters", expanded=False):
-            sidebar_group("Universe", "Choose the chains, protocols, and market slices in view.")
-            selected_chains = st.multiselect("Chains", chains, default=default_chains)
-            selected_projects = st.multiselect("Protocols", projects, placeholder="Choose protocols")
-            selected_strategies = st.multiselect("Strategy type", strategies, placeholder="Choose strategy types")
-            selected_signals = st.multiselect("Signal", signals, placeholder="Choose signals")
-            stable_only = st.toggle("Stablecoin pools only", value=False)
+        with st.expander("Discover filters", expanded=page == "Discover"):
+            sidebar_group("Primary controls", "Search the market, narrow the chain universe, or focus on stablecoin-labelled pools.")
+            search_text = st.text_input("Search protocol, pool, asset, or chain", key="market_search")
+            selected_chains = st.multiselect("Chains", chains, key="market_chains", placeholder="All chains")
+            stable_only = st.toggle("Stablecoin pools only", key="market_stable")
 
-        with st.expander("Risk, yield & sort", expanded=False):
-            sidebar_group("Thresholds", "Tighten the visible opportunity set without changing methodology.")
-            min_tvl = st.slider("Minimum TVL", min_value=0, max_value=500_000_000, value=5_000_000, step=1_000_000)
-            max_risk = st.slider("Maximum risk score", min_value=1, max_value=100, value=70)
-            min_apy = st.slider("Minimum APY", min_value=0.0, max_value=250.0, value=0.0, step=0.5)
-            sort_options = FREE_SORT_OPTIONS + PRO_SORT_OPTIONS if is_pro else FREE_SORT_OPTIONS
-            sort_by = st.selectbox("Sort by", sort_options, index=0)
+        with st.expander("Advanced filters & sorting", expanded=False):
+            sidebar_group("Advanced controls", "Refine protocol, strategy, signal, liquidity, yield, and risk.")
+            selected_projects = st.multiselect("Protocols", projects, key="market_protocols", placeholder="All protocols")
+            selected_strategies = st.multiselect("Strategy type", strategies, key="market_strategies", placeholder="All strategies")
+            selected_signals = st.multiselect("Signal", signals, key="market_signals", placeholder="All signals")
+            min_tvl = st.slider("Minimum TVL", min_value=0, max_value=500_000_000, step=1_000_000, key="market_min_tvl")
+            max_risk = st.slider("Maximum risk score", min_value=1, max_value=100, key="market_max_risk")
+            min_apy = st.slider("Minimum APY", min_value=0.0, max_value=250.0, step=0.5, key="market_min_apy")
+            sort_by = st.selectbox("Sort by", sort_options, key="market_sort")
+            if st.button(
+                "Clear all filters",
+                key="market_clear_all",
+                width="stretch",
+                on_click=st.session_state.update,
+                args=(
+                    {
+                        "market_search": DEFAULT_FILTERS.search,
+                        "market_chains": [],
+                        "market_protocols": [],
+                        "market_strategies": [],
+                        "market_signals": [],
+                        "market_stable": DEFAULT_FILTERS.stablecoin_only,
+                        "market_min_tvl": int(DEFAULT_FILTERS.min_tvl),
+                        "market_max_risk": DEFAULT_FILTERS.max_risk,
+                        "market_min_apy": DEFAULT_FILTERS.min_apy,
+                        "market_sort": DEFAULT_FILTERS.sort_by,
+                    },
+                ),
+            ):
+                track_research_event("filters_reset", {"action": "clear_all", "view": page})
     else:
+        search_text = DEFAULT_FILTERS.search
         selected_chains = []
         selected_projects = []
         selected_strategies = []
         selected_signals = []
-        stable_only = False
-        min_tvl = 5_000_000
-        max_risk = 70
-        min_apy = 0.0
-        sort_by = "Highest APY"
+        stable_only = DEFAULT_FILTERS.stablecoin_only
+        min_tvl = DEFAULT_FILTERS.min_tvl
+        max_risk = DEFAULT_FILTERS.max_risk
+        min_apy = DEFAULT_FILTERS.min_apy
+        sort_by = DEFAULT_FILTERS.sort_by
 
-filtered = df.copy()
-if selected_chains:
-    filtered = filtered[filtered["chain"].isin(selected_chains)]
-if selected_projects:
-    filtered = filtered[filtered["project"].isin(selected_projects)]
-if selected_strategies:
-    filtered = filtered[filtered["strategy_type"].isin(selected_strategies)]
-if selected_signals:
-    filtered = filtered[filtered["signal"].isin(selected_signals)]
-if stable_only:
-    filtered = filtered[filtered["stablecoin"] == True]
+current_filters = DiscoveryFilters(
+    search=search_text,
+    chains=tuple(selected_chains),
+    protocols=tuple(selected_projects),
+    strategies=tuple(selected_strategies),
+    signals=tuple(selected_signals),
+    stablecoin_only=stable_only,
+    min_tvl=float(min_tvl),
+    max_risk=int(max_risk),
+    min_apy=float(min_apy),
+    sort_by=sort_by,
+)
 
-filtered = filtered[(filtered["tvlUsd"] >= min_tvl) & (filtered["risk_score"] <= max_risk) & (filtered["apy"] >= min_apy)]
+if page in {"Discover", "Pool Detail"}:
+    encoded_filters = filter_query(current_filters)
+    for query_key in ("q", "chains", "protocols", "strategies", "signals", "stable", "min_tvl", "max_risk", "min_apy", "sort"):
+        if query_key in encoded_filters:
+            if str(st.query_params.get(query_key) or "") != encoded_filters[query_key]:
+                st.query_params[query_key] = encoded_filters[query_key]
+        elif query_key in st.query_params:
+            del st.query_params[query_key]
 
-if sort_by == "Highest APY":
-    filtered = filtered.sort_values(["apy", "tvlUsd"], ascending=[False, False])
-elif sort_by == "Largest TVL":
-    filtered = filtered.sort_values(["tvlUsd", "apy"], ascending=[False, False])
-elif sort_by == "Lowest risk":
-    filtered = filtered.sort_values(["risk_score", "apy", "tvlUsd"], ascending=[True, False, False])
-elif sort_by == "Highest 24h volume":
-    filtered = filtered.sort_values(["volumeUsd1d", "apy"], ascending=[False, False])
-elif sort_by == "Largest signal move":
-    filtered = filtered.sort_values(["apy_delta_7", "tvl_delta_7_pct"], ascending=[False, False])
-else:
-    filtered = filtered.sort_values(["rank_score", "apy", "tvlUsd"], ascending=[False, False, False])
+filtered = apply_discovery_filters(df, current_filters)
 
 filtered = filtered.head(POOL_LIMIT)
 full_filtered = filtered.copy()
 if not is_pro:
     filtered = filtered.head(FREE_POOL_LIMIT)
 watchlist_df = df[df["pool"].isin(st.session_state.watchlist)].copy()
-arb_df = find_arbitrage_candidates(full_filtered if is_pro else filtered)
+arb_df = yield_spreads(full_filtered if is_pro else filtered)
 
 content_page = page
 active_view: str | None = None
 if page == "Discover":
     render_page_heading(page)
+    track_research_event("discover_viewed", {"view": str(st.session_state.get("discover_view") or "Opportunities")})
     active_view = st.radio(
         "Discover view",
         DISCOVER_VIEWS,
@@ -1388,6 +1494,33 @@ if page == "Discover":
         key="discover_view",
     )
     content_page = {"Opportunities": "Scanner", "Signals": "Signals", "Compare": "Compare"}[active_view]
+    applied_filter_models = active_filters(current_filters)
+    if applied_filter_models:
+        track_research_event("filters_applied", {"count": len(applied_filter_models), "view": "Discover"})
+        st.caption(f"Active filters ({len(applied_filter_models)}). Activate a chip to remove that filter.")
+        with st.container(horizontal=True):
+            for filter_id, filter_label in applied_filter_models:
+                removed_filters = remove_filter(current_filters, filter_id)
+                removed_state = {
+                    "market_search": removed_filters.search,
+                    "market_chains": list(removed_filters.chains),
+                    "market_protocols": list(removed_filters.protocols),
+                    "market_strategies": list(removed_filters.strategies),
+                    "market_signals": list(removed_filters.signals),
+                    "market_stable": removed_filters.stablecoin_only,
+                    "market_min_tvl": int(removed_filters.min_tvl),
+                    "market_max_risk": removed_filters.max_risk,
+                    "market_min_apy": removed_filters.min_apy,
+                    "market_sort": removed_filters.sort_by,
+                }
+                st.button(
+                    f"Remove {filter_label}",
+                    key=f"remove_filter_{filter_id}",
+                    on_click=st.session_state.update,
+                    args=(removed_state,),
+                )
+    else:
+        st.caption("No filters are active. The deterministic default market view is shown.")
 elif page == "Research":
     render_page_heading(page)
     active_view = st.radio(
@@ -1411,14 +1544,22 @@ elif page == "Pro Tools":
 elif page != "Pool Detail":
     render_page_heading(page)
 
-if market_source_status == "degraded" and market_filters_apply(page) and page != "Pool Detail":
+if market_data_status.availability == "unavailable" and market_filters_apply(page) and page != "Pool Detail":
     render_status(
-        "degraded",
-        "Live market source unavailable",
-        f"{market_source_label} is shown for interface continuity. It is sample data, not a live market feed.",
+        "error",
+        "Market provider unavailable",
+        f"{market_source_label} did not return usable market data. This is not a zero-results state, and no sample values were substituted.",
     )
+elif market_data_status.availability == "sample" and market_filters_apply(page) and page != "Pool Detail":
+    render_status("degraded", "Development sample mode", f"{market_source_label} is not live market data.")
+elif market_data_status.availability == "partial" and market_filters_apply(page) and page != "Pool Detail":
+    render_status("degraded", "Partial market data", f"{market_source_label} returned a usable but incomplete response.")
 elif market_filters_apply(page) and page != "Pool Detail":
-    render_status("success", "Market source available", f"{market_source_label}. Cached requests may be up to one hour old.")
+    render_status(
+        market_freshness["kind"],
+        f"{market_source_label} · {market_freshness['label']}",
+        f"{market_freshness['age']}. Market requests use a 15-minute cache.",
+    )
 
 if content_page == "Home":
     render_home_page(filtered, full_filtered, watchlist_df, alert_stats, history_latest_df, history_trend_df, is_pro)
@@ -1429,27 +1570,41 @@ elif content_page == "Scanner":
         st.markdown("<div class='panel'>", unsafe_allow_html=True)
         section_header("Opportunities", "Visible opportunity set", "Triage the current market slice, then open a contextual Pool Detail view for deeper inspection.")
         top_cards = filtered.head(6)
-        for start in range(0, len(top_cards), 3):
-            cols = st.columns(3, gap="medium")
-            for i, (_, row) in enumerate(top_cards.iloc[start : start + 3].iterrows()):
+        if filtered.empty and market_data_status.availability != "unavailable":
+            render_status(
+                "empty",
+                "No pools match the active filters",
+                "Remove an active filter or use Clear all filters. The market provider loaded successfully; this is a genuine zero-match result.",
+            )
+        for start in range(0, len(top_cards), 2):
+            cols = st.columns(2, gap="medium")
+            for i, (_, row) in enumerate(top_cards.iloc[start : start + 2].iterrows()):
                 with cols[i]:
-                    render_opportunity_card(row, start + i, row["pool"] in st.session_state.watchlist)
+                    render_opportunity_card(
+                        row,
+                        start + i,
+                        row["pool"] in st.session_state.watchlist,
+                        authenticated=signed_in,
+                        freshness_label=market_freshness["label"],
+                        return_view="Opportunities",
+                    )
         st.markdown("<div style='height:0.5rem;'></div>", unsafe_allow_html=True)
         table_df = compact_table(filtered)
-        st.dataframe(
-            table_df,
-            width="stretch",
-            hide_index=True,
-            height=540,
-            column_config={
-                "APY": st.column_config.NumberColumn(format="%.2f%%", width="small"),
-                "Base": st.column_config.NumberColumn(format="%.2f%%", width="small"),
-                "Rewards": st.column_config.NumberColumn(format="%.2f%%", width="small"),
-                "TVL (USD)": st.column_config.NumberColumn(format="$%.0f", width="medium"),
-                "Risk": st.column_config.NumberColumn(width="small"),
-                "Open": st.column_config.LinkColumn("Pool link", display_text="Open"),
-            },
-        )
+        if not table_df.empty:
+            st.dataframe(
+                table_df,
+                width="stretch",
+                hide_index=True,
+                height=540,
+                column_config={
+                    "APY": st.column_config.NumberColumn(format="%.2f%%", width="small"),
+                    "Base": st.column_config.NumberColumn(format="%.2f%%", width="small"),
+                    "Rewards": st.column_config.NumberColumn(format="%.2f%%", width="small"),
+                    "TVL (USD)": st.column_config.NumberColumn(format="$%.0f", width="medium"),
+                    "Risk": st.column_config.NumberColumn(width="small"),
+                    "Open": st.column_config.LinkColumn("Pool link", display_text="Open"),
+                },
+            )
         if is_pro:
             csv = make_download_df(filtered).to_csv(index=False).encode("utf-8")
             st.download_button("Download current table as CSV", csv, file_name="furuflow_scanner.csv", mime="text/csv")
@@ -1463,7 +1618,7 @@ elif content_page == "Scanner":
         bullets = [
             ("Risk", "Heuristic score from protocol age, audit confidence, TVL stability, reward dependence, and pool volatility."),
             ("Signal", "Labels such as APY spike, Emerging pool, Farm rotation, and Whale inflow come from recent chart movement."),
-            ("Watchlists", "Click Watch to persist a pool to your tracked list."),
+            ("Watchlists", "Sign in to use the existing Watch action and tracked-list persistence."),
         ]
         for title, copy in bullets:
             st.markdown(f"<div class='signal-card'><div class='signal-title'>{title}</div><div class='signal-copy'>{copy}</div></div>", unsafe_allow_html=True)
@@ -1477,25 +1632,87 @@ elif content_page == "Compare":
     st.markdown("<div class='panel'>", unsafe_allow_html=True)
     section_header(
         "Discover",
-        "Compare visible opportunities",
-        "Compare the current filtered rows using the existing APY, TVL, risk, strategy, and signal fields. No new comparison methodology is introduced here.",
+        "Compare selected opportunities",
+        f"Select up to {COMPARISON_LIMIT} pools for a bounded comparison of reported yield, liquidity, risk factors, signal context, and missing values.",
     )
     if filtered.empty:
         render_status("empty", "Nothing to compare", "Adjust the market filters to restore at least one visible opportunity.")
     else:
-        st.dataframe(
-            compact_table(filtered.head(20)),
-            width="stretch",
-            hide_index=True,
-            height=560,
-            column_config={
-                "APY": st.column_config.NumberColumn(format="%.2f%%"),
-                "Base": st.column_config.NumberColumn(format="%.2f%%"),
-                "Rewards": st.column_config.NumberColumn(format="%.2f%%"),
-                "TVL (USD)": st.column_config.NumberColumn(format="$%.0f"),
-                "Open": st.column_config.LinkColumn("Pool link", display_text="Open venue"),
-            },
+        compare_options = filtered["pool"].astype(str).tolist()
+        compare_query = str(st.query_params.get("compare") or "")
+        if "compare_selection" not in st.session_state:
+            st.session_state["compare_selection"] = [item for item in compare_query.split(",") if item in compare_options][
+                :COMPARISON_LIMIT
+            ]
+        else:
+            st.session_state["compare_selection"] = [
+                item for item in st.session_state["compare_selection"] if item in compare_options
+            ][:COMPARISON_LIMIT]
+        label_by_pool = {
+            str(row["pool"]): f"{row['project']} · {row['symbol']} · {row['chain']}"
+            for _, row in filtered.iterrows()
+        }
+        selected_compare = st.multiselect(
+            "Pools to compare",
+            compare_options,
+            key="compare_selection",
+            max_selections=COMPARISON_LIMIT,
+            format_func=lambda pool_id: label_by_pool.get(pool_id, pool_id),
+            placeholder="Choose two to four pools",
         )
+        if selected_compare:
+            st.query_params["compare"] = ",".join(selected_compare)
+        elif "compare" in st.query_params:
+            del st.query_params["compare"]
+        st.caption(f"{len(selected_compare)} of {COMPARISON_LIMIT} comparison slots used. Missing values remain unavailable, never zero-filled.")
+        if st.button(
+            "Clear comparison",
+            key="clear_comparison",
+            disabled=not selected_compare,
+            on_click=st.session_state.update,
+            args=({"compare_selection": []},),
+        ):
+            track_research_event("comparison_cleared", {"count": len(selected_compare)})
+        compared_rows = comparison_rows(df, selected_compare)
+        if not compared_rows:
+            render_status("empty", "Choose pools to compare", "Select a small set above. The four-pool limit keeps phone and desktop review usable.")
+        else:
+            track_research_event("comparison_opened", {"count": len(compared_rows), "view": "Compare"})
+            matrix_source = pd.DataFrame(compared_rows)
+            matrix_source["Opportunity"] = (
+                matrix_source["Protocol"] + " · " + matrix_source["Pool / assets"] + " · " + matrix_source["Chain"]
+            )
+            matrix = matrix_source.set_index("Opportunity").drop(columns=["pool", "Pool / assets"]).T
+            st.dataframe(matrix, width="stretch", height=min(420, 120 + 38 * len(matrix.index)))
+            st.caption("On narrow screens, the comparison grid scrolls inside its bounded region; the pool summaries below stack vertically.")
+            for compared in compared_rows:
+                pool_id = compared["pool"]
+                with st.expander(f"{compared['Protocol']} · {compared['Pool / assets']} · {compared['Chain']}"):
+                    total_compare = f"{compared['APY']:.2f}%" if compared["APY"] is not None else "Unavailable"
+                    base_compare = f"{compared['Base APY']:.2f}%" if compared["Base APY"] is not None else "Unavailable"
+                    reward_compare = f"{compared['Reward APY']:.2f}%" if compared["Reward APY"] is not None else "Unavailable"
+                    st.markdown(
+                        f"**Yield:** {total_compare} total · {base_compare} base · {reward_compare} rewards"
+                    )
+                    st.markdown(f"**Risk:** {compared['Risk']} · **Signal:** {compared['Signal']}")
+                    action_cols = st.columns(2)
+                    with action_cols[0]:
+                        if st.button("View details", key=f"compare_detail_{pool_id}", width="stretch"):
+                            track_research_event("pool_detail_opened", {"pool": pool_id, "view": "Compare"})
+                            open_pool_detail(pool_id, return_view="Compare")
+                            st.rerun()
+                    with action_cols[1]:
+                        watched = pool_id in st.session_state.watchlist
+                        watch_label = "Remove" if watched else "Watch" if signed_in else "Sign in to save"
+                        if st.button(
+                            watch_label,
+                            key=f"compare_watch_{pool_id}",
+                            width="stretch",
+                            disabled=not signed_in,
+                        ):
+                            track_research_event("watchlist_action_initiated", {"pool": pool_id, "action": watch_label})
+                            watch_toggle(pool_id)
+                            st.rerun()
     st.markdown("</div>", unsafe_allow_html=True)
 
 elif content_page == "Signals":
@@ -1531,7 +1748,14 @@ elif content_page == "Signals":
         cols = st.columns(3, gap="medium")
         for idx, (_, row) in enumerate(top_signal_source.iterrows()):
             with cols[idx]:
-                render_opportunity_card(row, 700 + idx, row["pool"] in st.session_state.watchlist)
+                render_opportunity_card(
+                    row,
+                    700 + idx,
+                    row["pool"] in st.session_state.watchlist,
+                    authenticated=signed_in,
+                    freshness_label=market_freshness["label"],
+                    return_view="Signals",
+                )
                 st.caption(f"Signal strength: {row['signal_strength']:.1f} • 7d APY Δ: {row['apy_delta_7']:.2f} • 7d TVL Δ: {row['tvl_delta_7_pct']:.2f}%")
         st.markdown("</div>", unsafe_allow_html=True)
 
@@ -1543,7 +1767,7 @@ elif content_page == "Signals":
     left, right = st.columns([1.2, 1], gap="large")
     with left:
         st.markdown("<div class='panel'>", unsafe_allow_html=True)
-        section_header("Signal engine", "Yield trend AI layer", "Rules-based labels surface APY spikes, farm rotations, emerging pools, and whale inflows from recent pool chart movement.")
+        section_header("Signal engine", "Rules-based yield movement", "Existing deterministic labels surface APY spikes, farm rotations, emerging pools, and whale inflows from recent pool chart movement.")
         sig_view = filtered[["project", "chain", "symbol", "signal", "signal_strength", "apy_delta_7", "tvl_delta_7_pct", "apy_volatility", "pool_url"]].copy().head(20)
         sig_view.columns = ["Protocol", "Chain", "Asset", "Signal", "Strength", "7d APY Δ", "7d TVL Δ %", "APY volatility", "Open"]
         st.dataframe(sig_view, width="stretch", hide_index=True, height=560, column_config={"Strength": st.column_config.NumberColumn(format="%.1f"), "7d APY Δ": st.column_config.NumberColumn(format="%.2f"), "7d TVL Δ %": st.column_config.NumberColumn(format="%.2f"), "APY volatility": st.column_config.NumberColumn(format="%.2f"), "Open": st.column_config.LinkColumn("Pool link", display_text="Open")})
@@ -1571,6 +1795,7 @@ elif content_page == "Signals":
 elif content_page == "Arbitrage":
     if not is_pro:
         require_pro("Yield Spreads")
+    track_research_event("yield_spreads_viewed", {"count": len(arb_df), "view": "Yield Spreads"})
     left, right = st.columns([1.15, 1], gap="large")
     with left:
         st.markdown("<div class='panel'>", unsafe_allow_html=True)
@@ -1578,20 +1803,22 @@ elif content_page == "Arbitrage":
         if arb_df.empty:
             st.info("No meaningful cross-chain APY gaps are visible for the current filters.")
         else:
-            st.dataframe(arb_df, width="stretch", hide_index=True, height=560, column_config={"Best APY": st.column_config.NumberColumn(format="%.2f%%"), "Lower APY": st.column_config.NumberColumn(format="%.2f%%"), "APY difference": st.column_config.NumberColumn(format="%.2f"), "Best link": st.column_config.LinkColumn("Best pool", display_text="Open"), "Lower link": st.column_config.LinkColumn("Lower pool", display_text="Open")})
+            spread_view = arb_df.drop(columns=["Higher pool ID", "Lower pool ID"])
+            st.dataframe(spread_view, width="stretch", hide_index=True, height=560, column_config={"Higher APY": st.column_config.NumberColumn(format="%.2f%%"), "Lower APY": st.column_config.NumberColumn(format="%.2f%%"), "APY difference": st.column_config.NumberColumn(format="%.2f"), "Higher link": st.column_config.LinkColumn("Higher-yield pool", display_text="Open"), "Lower link": st.column_config.LinkColumn("Lower-yield pool", display_text="Open")})
+            st.caption(f"Both sides use {market_source_label} · {market_freshness['label']} ({market_freshness['age'].lower()}).")
         st.markdown("</div>", unsafe_allow_html=True)
     with right:
         st.markdown("<div class='panel'>", unsafe_allow_html=True)
-        section_header("Arb triage", "What to check next", "A spread is only interesting if the execution path and risk justify it.")
+        section_header("Spread triage", "What to check next", "A reported yield difference is not guaranteed profit and does not represent an executable trade.")
         checks = [
-            ("Bridge friction", "Estimate the cost and time to move capital between the chains involved."),
+            ("Costs not modeled", "Gas, bridging, slippage, lockups, taxes, and execution timing are unavailable here; FuruFlow does not assume they are zero."),
             ("Protocol risk mismatch", "Higher APY often comes with lower audit confidence or a weaker TVL base."),
-            ("Signal support", "A Whale inflow or Emerging pool label can mean a spread is being discovered by others."),
+            ("Reward-token dependence", "Compare reported base and reward APY. Incentive yield can decay or carry token-price exposure."),
         ]
         for title, copy in checks:
             st.markdown(f"<div class='signal-card'><div class='signal-title'>{title}</div><div class='signal-copy'>{copy}</div></div>", unsafe_allow_html=True)
         if not arb_df.empty:
-            fig = px.bar(arb_df.head(12), x="Asset", y="APY difference", color="Best chain", hover_data={"Best protocol": True, "Lower chain": True, "Lower protocol": True})
+            fig = px.bar(arb_df.head(12), x="Asset", y="APY difference", color="Higher chain", hover_data={"Higher protocol": True, "Lower chain": True, "Lower protocol": True})
             fig.update_yaxes(title="APY difference")
             st.plotly_chart(plotly_theme(fig, 330), width="stretch")
         st.markdown("</div>", unsafe_allow_html=True)
@@ -1635,37 +1862,48 @@ elif content_page == "Pool Detail":
         current_pool_id = str(row["pool"])
         card_state_key = f"pool_card_assets_{current_pool_id}"
         render_page_heading("Pool Detail", detail_label=f"{row['project']} · {row['symbol']}")
-        if market_source_status == "degraded":
-            render_status(
-                "degraded",
-                "Live market source unavailable",
-                f"{market_source_label} is shown for interface continuity. It is sample data, not a live market feed.",
-            )
+        track_research_event("pool_detail_opened", {"pool": current_pool_id, "view": "Pool Detail"})
+        if market_data_status.availability == "sample":
+            render_status("degraded", "Development sample mode", f"{market_source_label} is not live market data.")
         else:
-            render_status("success", "Market source available", f"{market_source_label}. Cached requests may be up to one hour old.")
+            render_status(
+                market_freshness["kind"],
+                f"{market_source_label} · {market_freshness['label']}",
+                f"{market_freshness['age']}. Retrieval time is shown because the provider does not supply a pool observation timestamp.",
+            )
         if st.button("← Back to opportunities", key="pool_detail_back"):
             return_from_pool_detail()
             st.rerun()
         st.markdown("<div class='panel'>", unsafe_allow_html=True)
-        section_header("Opportunity context", "Pool detail", "Inspect chart shape, risk factors, and watchlist actions without losing the discovery context.")
+        section_header("Opportunity context", "Pool research", "Inspect identity, reported yield, liquidity, risk factors, provenance, and actions without losing the Discover context.")
+        st.markdown(
+            f"**Pool / assets:** {row['symbol']}  \n**Protocol:** {row['project']}  \n"
+            f"**Chain:** {row['chain']}  \n**Provider pool ID:** `{current_pool_id}`  \n"
+            f"**Strategy metadata:** {row['strategy_type']} · **Exposure:** {row['exposure']}"
+        )
 
         cols = st.columns([1.3, 1], gap="large")
         with cols[0]:
             chart, chart_mode = get_pool_chart_with_fallback(row)
-            fig = go.Figure()
-            fig.add_trace(go.Scatter(x=chart["timestamp"], y=chart["apy"], mode="lines", name="APY"))
-            if chart["tvlUsd"].gt(0).any():
-                fig.add_trace(go.Scatter(x=chart["timestamp"], y=chart["tvlUsd"], mode="lines", name="TVL", yaxis="y2"))
-                fig.update_layout(yaxis2=dict(overlaying="y", side="right", showgrid=False, title="TVL"))
-            fig.update_xaxes(title="Time")
-            fig.update_yaxes(title="APY %")
-            st.plotly_chart(plotly_theme(fig, 430), width="stretch")
-            if chart_mode == "fallback":
-                st.caption("Live history was unavailable, so FuruFlow generated a preview trend from the current pool snapshot to avoid an empty chart state.")
-            elif chart_mode == "stored":
-                st.caption("Live history was unavailable, so FuruFlow loaded stored snapshots collected by the app to render a real local chart history.")
+            if chart.empty:
+                render_status(
+                    "empty",
+                    "Historical series unavailable",
+                    "No live or legitimately stored history exists for this pool. FuruFlow does not generate a trend from a single snapshot.",
+                )
             else:
-                st.caption("Live chart history loaded from the upstream pool endpoint.")
+                fig = go.Figure()
+                fig.add_trace(go.Scatter(x=chart["timestamp"], y=chart["apy"], mode="lines", name="APY"))
+                if chart["tvlUsd"].gt(0).any():
+                    fig.add_trace(go.Scatter(x=chart["timestamp"], y=chart["tvlUsd"], mode="lines", name="TVL", yaxis="y2"))
+                    fig.update_layout(yaxis2=dict(overlaying="y", side="right", showgrid=False, title="TVL"))
+                fig.update_xaxes(title="Time")
+                fig.update_yaxes(title="APY %")
+                st.plotly_chart(plotly_theme(fig, 430), width="stretch")
+                if chart_mode == "stored":
+                    st.caption("The provider history endpoint was unavailable; this chart uses real snapshots previously stored by FuruFlow and may be stale.")
+                else:
+                    st.caption("Reported pool history loaded from the DeFiLlama history endpoint.")
 
         with cols[1]:
             st.markdown(
@@ -1673,10 +1911,14 @@ elif content_page == "Pool Detail":
                 unsafe_allow_html=True,
             )
 
+            pool_yield = yield_explanation(row)
+            pool_risk = risk_explanation(row)
             stats = pd.DataFrame([
-                ["APY", f"{row['apy']:.2f}%"],
-                ["TVL", format_money(row['tvlUsd'])],
-                ["Risk", f"{int(row['risk_score'])}/100 ({row['risk_band']})"],
+                ["Total APY · reported", f"{pool_yield['total']:.2f}%" if pool_yield["total"] is not None else "Unavailable"],
+                ["Base APY · reported", f"{pool_yield['base']:.2f}%" if pool_yield["base"] is not None else "Unavailable"],
+                ["Reward APY · reported", f"{pool_yield['reward']:.2f}%" if pool_yield["reward"] is not None else "Unavailable"],
+                ["TVL · reported", format_money(row['tvlUsd']) if bool(row.get("tvl_available", True)) else "Unavailable"],
+                ["Risk", f"{pool_risk['score']}/100 ({pool_risk['label']})" if pool_risk["score"] is not None else "Unknown · inputs missing"],
                 ["Audit confidence", f"{int(row['audit_score'])}/100"],
                 ["Protocol age", f"{int(row['protocol_age_score'])}/100"],
                 ["TVL stability", f"{int(row['tvl_stability_score'])}/100"],
@@ -1686,6 +1928,23 @@ elif content_page == "Pool Detail":
             ], columns=["Metric", "Value"])
 
             st.dataframe(stats, width="stretch", hide_index=True, height=360)
+            if pool_yield["mode"] == "aggregate_only":
+                st.caption("The provider reports only aggregate APY for this pool; no yield decomposition is implied.")
+            elif pool_yield["reconciles"] is False:
+                st.warning(
+                    f"Reported base plus reward APY differs from reported total APY by {pool_yield['discrepancy']:.2f} percentage points. Values are shown without forcing reconciliation."
+                )
+
+            st.markdown("#### Explainable risk factors")
+            st.dataframe(pd.DataFrame(pool_risk["factors"]), width="stretch", hide_index=True, height=260)
+            st.caption(pool_risk["method"])
+
+            st.markdown("#### Data provenance")
+            st.markdown(
+                f"**Source:** {market_data_status.source}  \n**Availability:** {market_data_status.availability.title()}  \n"
+                f"**Freshness:** {market_freshness['label']} · {market_freshness['age']}  \n"
+                "**Value origin:** APY and TVL are provider-reported; FuruFlow risk, rank, and signal labels are derived."
+            )
 
             if admin_user:
                 st.markdown("### 📸 Shareable Signal Card")
@@ -1744,10 +2003,12 @@ elif content_page == "Pool Detail":
                 watched = row["pool"] in st.session_state.watchlist
                 st.markdown("<div class='watch-wrap'>", unsafe_allow_html=True)
                 if st.button(
-                    "Remove from watchlist" if watched else "Add to watchlist",
+                    "Remove from watchlist" if watched else "Add to watchlist" if signed_in else "Sign in to save",
                     key=f"drill_watch_{current_pool_id}",
                     width="stretch",
+                    disabled=not signed_in,
                 ):
+                    track_research_event("watchlist_action_initiated", {"pool": current_pool_id, "action": "toggle"})
                     watch_toggle(str(row["pool"]))
                     st.rerun()
                 st.markdown("</div>", unsafe_allow_html=True)
@@ -1853,12 +2114,14 @@ elif content_page == "Methodology & Data Status":
         st.markdown("</div>", unsafe_allow_html=True)
     with right:
         st.markdown("<div class='panel'>", unsafe_allow_html=True)
-        section_header("Data status", "Source and fallback conventions", "FuruFlow distinguishes live, cached, stored, and generated-preview states.")
-        if market_source_status == "degraded":
-            render_status("degraded", "Degraded source", f"{market_source_label}; values must not be interpreted as live.")
+        section_header("Data status", "Source and fallback conventions", "FuruFlow distinguishes current, aging, stale, partial, sample, stored, and unavailable states.")
+        if market_data_status.availability == "unavailable":
+            render_status("error", "Provider unavailable", f"{market_source_label} returned no usable rows; no sample opportunities were substituted.")
+        elif market_data_status.availability == "sample":
+            render_status("degraded", "Development sample mode", f"{market_source_label}; values must not be interpreted as live.")
         else:
-            render_status("success", "Source available", f"{market_source_label}; request caching may be up to one hour old.")
-        st.markdown("Pool charts explicitly identify live history, stored snapshots, or generated preview trends at the point of use.")
+            render_status(market_freshness["kind"], f"{market_source_label} · {market_freshness['label']}", market_freshness["age"] + ".")
+        st.markdown("Market snapshots use a 15-minute cache. Current means ≤20 minutes, Aging means >20–60 minutes, and Stale means >60 minutes. Pool charts identify reported live history or stored observations; a missing series is left unavailable.")
         st.markdown("</div>", unsafe_allow_html=True)
 
 elif content_page == "Alerts":
