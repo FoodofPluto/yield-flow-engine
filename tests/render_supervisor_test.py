@@ -77,10 +77,15 @@ def test_supervisor_binds_only_nginx_to_the_public_interface() -> None:
     assert specs["streamlit"].user == "furuflow-streamlit"
 
 
-def test_blueprint_defines_one_free_web_service() -> None:
+def test_blueprint_isolates_free_web_service_from_durable_cron_worker() -> None:
     blueprint = Path("render.yaml").read_text(encoding="utf-8")
 
     assert blueprint.count("- type: web") == 1
+    assert blueprint.count("- type: cron") == 1
     assert "type: pserv" not in blueprint
     assert "plan: free" in blueprint
+    assert "name: furuflow-telegram-worker-staging" in blueprint
+    assert "plan: starter" in blueprint
+    assert "dockerCommand: python telegram_worker.py run" in blueprint
+    assert 'FURUFLOW_SYSTEM_TELEGRAM_RULE_ENABLED\n        value: "false"' in blueprint
     assert "dockerfilePath: ./deploy/render/Dockerfile" in blueprint

@@ -1,12 +1,19 @@
 # Render staging deployment
 
 This runbook packages the existing Prompt 2 secure browser-session architecture
-into one Render Free Web Service for staging validation. It is a testing
+into one Render Free Web Service and adds one isolated Starter cron job for the
+Prompt 5 durable Telegram worker. It is a testing
 topology, not the recommended production topology. It does not change
 authentication, account-control authority, RLS, entitlements, or cookie
 semantics.
 
 ## Free staging/testing topology
+
+The browser application remains a single Free Web Service. The Telegram cron
+job is a separate paid Starter service because Render does not provide Free
+cron jobs. A worker failure therefore cannot terminate the web container. See
+`docs/TELEGRAM_AUTOMATION.md` for migration, secrets, controlled testing,
+monitoring, disable, and rollback procedures.
 
 The single Docker container runs three supervised processes:
 
@@ -89,13 +96,17 @@ and activation tickets are not logged. Gunicorn access logging remains disabled.
    the reviewed files and push `feat/supabase-auth-demo-access`.
 4. In Render, choose **New > Blueprint**, connect `yield-flow-engine`, select
    branch `feat/supabase-auth-demo-access`, and use the root `render.yaml`.
-   Confirm the preview contains exactly one Docker web service named
-   `furuflow-staging`, in `ohio`, with instance type `free`. There must be no
-   private service or separately public Streamlit/broker service.
-5. During initial Blueprint creation, provide these four `sync: false` values:
+   Confirm the preview contains one Docker web service named
+   `furuflow-staging` (`free`) and one Docker cron service named
+   `furuflow-telegram-worker-staging` (`starter`), both in `ohio`. There must be
+   no private service or separately public Streamlit/broker service.
+5. During initial Blueprint creation, provide the web service's four `sync: false` values:
    `SUPABASE_URL`, `SUPABASE_ANON_KEY`, `SUPABASE_SERVICE_ROLE_KEY`, and
    `FURUFLOW_SESSION_ENCRYPTION_KEY`. Use only values from the staging Supabase
    project. Do not paste any value into `render.yaml` or another tracked file.
+   Separately provide the cron service's `SUPABASE_URL`,
+   `SUPABASE_SERVICE_ROLE_KEY`, and `TELEGRAM_BOT_TOKEN`. On an existing
+   Blueprint, add new secret values manually in the dashboard.
 6. Apply the Blueprint and wait for the Docker build and health check to pass.
    The health check is `/_stcore/health`, which Nginx proxies to the localhost
    Streamlit process. In logs, confirm the supervisor starts

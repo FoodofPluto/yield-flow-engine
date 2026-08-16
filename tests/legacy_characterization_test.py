@@ -43,7 +43,8 @@ def test_exact_legacy_script_duplicates_are_characterized() -> None:
     ).read_bytes()
 
 
-def test_active_telegram_workflow_uses_the_canonical_poster() -> None:
+def test_github_telegram_workflow_is_manual_only_and_uses_durable_worker() -> None:
     workflow = (ROOT / ".github" / "workflows" / "post-telegram-signals.yml").read_text(encoding="utf-8")
-    assert "python ./post_real_signals.py" in workflow
+    assert "python ./telegram_worker.py run" in workflow
+    assert "schedule:" not in workflow
     assert "run_furuflow" not in workflow

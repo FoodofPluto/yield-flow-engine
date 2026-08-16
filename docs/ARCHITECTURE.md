@@ -24,7 +24,8 @@ pip-audit are in the dev group. The supported interpreter range is Python
 | Streamlit application | `poetry run streamlit run app.py` | `app.py` -> Supabase auth/account plus history/engine helpers | DeFiLlama reads during a user session; non-account history remains local; no message send on boot |
 | Alternate debug app | `poetry run streamlit run app_linkdebug.py` | Near-copy of `app.py` | Same broad app effects; retained only for later archival review |
 | Scanner CLI | `poetry run engine ...` or `python -m engine.cli ...` | `engine.cli:cli` -> `engine.scanner.rank_top_yields` -> demo or DeFiLlama provider | Demo source is local; DeFiLlama source performs an HTTP GET |
-| Telegram signal poster | `python post_real_signals.py` | scanner/history/formatters -> `telegram_utils.send_telegram_message` | DeFiLlama GET, Telegram POST, local history/dedupe writes |
+| Durable Telegram worker | `python telegram_worker.py run` | existing scanner/scoring pipeline -> Supabase automation RPCs -> Telegram | Database-enforced idempotency, attempt history, DeFiLlama GET, Telegram POST |
+| Legacy Telegram poster | `python post_real_signals.py` | scanner/history/formatters -> `telegram_utils.send_telegram_message` | Manual compatibility path only; not repository-scheduled |
 | X poster | `python post_to_x.py` | signal/recap builders -> `post_tweet` | DeFiLlama GET in signal mode; optional X POST; otherwise local outbox write |
 | Daily/weekly recap | `python generate_daily_recap.py`; `python generate_weekly_recap.py` | `engine.recap` | Reads tracked/runtime CSV history and prints recap |
 | Discord postprocessor | `python -m engine.postprocess ...` | scan-log parser -> `post_to_discord` | Reads/writes run files and can POST a Discord webhook unless `--dry-run` |
@@ -84,11 +85,11 @@ runtime export.
 
 ## Scheduled and wrapper automation
 
-The only repository-managed schedule is
-`.github/workflows/post-telegram-signals.yml`, with cron
-`7,22,37,52 * * * *` and manual dispatch. It installs `requirements.txt` and
-runs `post_real_signals.py`. The audit found this workflow disabled for
-inactivity; stabilization does not re-enable or redesign it.
+The repository-managed schedule is the Render cron service in `render.yaml`,
+with cron `7,22,37,52 * * * *`. It runs `telegram_worker.py` and persists every
+scan/delivery outcome in Supabase. `.github/workflows/post-telegram-signals.yml`
+is manual-only and invokes the same durable worker as an operator fallback. See
+`docs/TELEGRAM_AUTOMATION.md`.
 
 PowerShell wrappers are not repository-managed schedules, but may be invoked by
 Windows Task Scheduler or a human:

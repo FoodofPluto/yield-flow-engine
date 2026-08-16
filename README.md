@@ -64,7 +64,8 @@ FuruFlow Pro adds the intelligence layer:
 - `entitlements.py` — access rules for free/admin/pro accounts
 - `history_store.py` — local snapshot history support
 - `engine/` — scanner, scoring, recap, link, tier, and performance logic
-- `post_real_signals.py` — Telegram-facing signal posting and signal history workflow
+- `telegram_worker.py` — durable Supabase-backed Telegram scanner/delivery worker
+- `post_real_signals.py` — scanner pipeline reused by the worker; legacy manual poster entry point
 - `post_to_x.py` — X post generation for signals and recaps
 
 ## Quick start
@@ -117,6 +118,10 @@ and `docs/STABILIZATION_BASELINE.md` for the recorded baseline.
 The responsive application sitemap, shell/component boundary, contextual Pool
 Detail model, navigation authorization rules, and accessibility validation are
 documented in `docs/UI_SHELL.md`.
+
+Durable Telegram automation, retention, managed secrets, monitoring, controlled
+staging delivery, and rollback are documented in
+`docs/TELEGRAM_AUTOMATION.md`.
 
 ## Account and entitlement model
 
