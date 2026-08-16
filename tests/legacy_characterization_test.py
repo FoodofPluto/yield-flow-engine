@@ -23,7 +23,13 @@ def test_linkdebug_is_a_reduced_app_copy_with_known_canonical_shell_features_mis
         "render_alerts_page",
         "return_from_pool_detail",
     }
-    assert linkdebug_functions - app_functions == {"page_selectbox", "synthesize_pool_chart"}
+    assert linkdebug_functions - app_functions == {
+        "load_watchlist",
+        "page_selectbox",
+        "save_watchlist",
+        "set_watchlist",
+        "synthesize_pool_chart",
+    }
 
     app_source = (ROOT / "app.py").read_text(encoding="utf-8")
     linkdebug_source = (ROOT / "app_linkdebug.py").read_text(encoding="utf-8")

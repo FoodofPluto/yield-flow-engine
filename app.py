@@ -52,6 +52,12 @@ from market_research import (
     yield_explanation,
     yield_spreads,
 )
+from saved_pools import (
+    SavedPool,
+    SavedPoolStoreError,
+    UserSavedPoolsClient,
+    current_user_saved_pools_client,
+)
 from ui_shell import (
     DISCOVER_VIEWS,
     PRO_TOOL_VIEWS,
@@ -89,7 +95,6 @@ FREE_SORT_OPTIONS = ["Highest APY", "Largest TVL"]
 PRO_SORT_OPTIONS = ["FuruFlow rank", "Lowest risk", "Highest 24h volume", "Largest signal move"]
 TIMEOUT = 18
 SIGNAL_SAMPLE = 16
-WATCHLIST_FILE = Path(__file__).with_name("watchlist.json")
 FURUFLOW_STRIPE_LINK = os.getenv("FURUFLOW_STRIPE_LINK", "https://buy.stripe.com/bJefZgcgmbYecju4ztd3i00")
 AFFILIATE_LINKS = {
     "aave": "https://app.aave.com/?ref=furuflow",
@@ -918,38 +923,24 @@ def find_arbitrage_candidates(df: pd.DataFrame) -> pd.DataFrame:
     return pd.DataFrame(rows).sort_values("APY difference", ascending=False).head(30) if rows else pd.DataFrame()
 
 
-def save_watchlist(items: list[str]) -> None:
+def watch_toggle(
+    pool_id: str,
+    *,
+    watched: bool,
+    client: UserSavedPoolsClient | None,
+) -> bool:
+    if client is None:
+        st.error("Saved pools are temporarily unavailable. Your Watchlist was not changed.")
+        return False
     try:
-        WATCHLIST_FILE.write_text(json.dumps(items, indent=2), encoding="utf-8")
-    except Exception:
-        pass
-
-
-def load_watchlist() -> list[str]:
-    try:
-        if WATCHLIST_FILE.exists():
-            data = json.loads(WATCHLIST_FILE.read_text(encoding="utf-8"))
-            if isinstance(data, list):
-                return [str(x) for x in data]
-    except Exception:
-        pass
-    return []
-
-
-def set_watchlist(items: list[str]) -> None:
-    deduped = list(dict.fromkeys([str(i) for i in items]))
-    st.session_state.watchlist = deduped
-    if not st.session_state.get("furuflow_demo_active"):
-        save_watchlist(deduped)
-
-
-def watch_toggle(pool_id: str) -> None:
-    current = list(st.session_state.watchlist)
-    if pool_id in current:
-        current = [p for p in current if p != pool_id]
-    else:
-        current.append(pool_id)
-    set_watchlist(current)
+        if watched:
+            client.remove_pool(pool_id)
+        else:
+            client.save_pool(pool_id)
+    except SavedPoolStoreError as exc:
+        st.error(str(exc))
+        return False
+    return True
 
 
 def open_pool_detail(pool_id: str, *, return_route: str = "Discover", return_view: str = "Opportunities") -> None:
@@ -1046,8 +1037,11 @@ def render_opportunity_card(
     watched: bool,
     *,
     authenticated: bool,
+    watchlist_client: UserSavedPoolsClient | None,
     freshness_label: str,
+    return_route: str = "Discover",
     return_view: str = "Opportunities",
+    key_prefix: str = "discover",
 ) -> None:
     signal = row.get("signal", "Steady")
     apy_text = f"{row['apy']:.2f}%" if bool(row.get("apy_available", True)) else "Unavailable"
@@ -1103,16 +1097,21 @@ def render_opportunity_card(
     with c1:
         st.markdown("<div class='watch-wrap'>", unsafe_allow_html=True)
         label = "Remove" if watched else "Watch" if authenticated else "Sign in to save"
-        if st.button(label, key=f"watch_{idx}", width="stretch", disabled=not authenticated):
+        if st.button(
+            label if watchlist_client is not None or not authenticated else "Watchlist unavailable",
+            key=f"{key_prefix}_watch_{idx}",
+            width="stretch",
+            disabled=not authenticated or watchlist_client is None,
+        ):
             track_research_event("watchlist_action_initiated", {"pool": str(row["pool"]), "action": label})
-            watch_toggle(str(row["pool"]))
-            st.rerun()
+            if watch_toggle(str(row["pool"]), watched=watched, client=watchlist_client):
+                st.rerun()
         st.markdown("</div>", unsafe_allow_html=True)
     with c2:
         st.markdown("<div class='pool-wrap'>", unsafe_allow_html=True)
-        if st.button("View details", key=f"detail_{idx}_{row['pool']}", width="stretch"):
+        if st.button("View details", key=f"{key_prefix}_detail_{idx}_{row['pool']}", width="stretch"):
             track_research_event("pool_detail_opened", {"pool": str(row["pool"]), "view": return_view})
-            open_pool_detail(str(row["pool"]), return_view=return_view)
+            open_pool_detail(str(row["pool"]), return_route=return_route, return_view=return_view)
             st.rerun()
         st.markdown("</div>", unsafe_allow_html=True)
 
@@ -1137,7 +1136,7 @@ def render_protocol_dashboard(df: pd.DataFrame) -> None:
     st.markdown("</div>", unsafe_allow_html=True)
 
 
-def render_home_page(filtered: pd.DataFrame, full_filtered: pd.DataFrame, watchlist_df: pd.DataFrame, alert_stats: dict[str, Any], history_latest_df: pd.DataFrame, history_trend_df: pd.DataFrame, is_pro: bool) -> None:
+def render_home_page(filtered: pd.DataFrame, full_filtered: pd.DataFrame, watchlist_df: pd.DataFrame, watchlist_count: int, alert_stats: dict[str, Any], history_latest_df: pd.DataFrame, history_trend_df: pd.DataFrame, is_pro: bool) -> None:
     visible = len(filtered)
     median_apy = filtered["apy"].median() if visible else 0.0
     total_tvl = filtered["tvlUsd"].sum() if visible else 0.0
@@ -1170,7 +1169,7 @@ def render_home_page(filtered: pd.DataFrame, full_filtered: pd.DataFrame, watchl
         st.markdown("<div style='height:0.65rem;'></div>", unsafe_allow_html=True)
         stat_card("Signals logged (24h)", f"{alert_stats['signals_24h']:,}", "Captured for recap and alert workflows")
         stat_card("Best chain (24h)", str(alert_stats['best_chain']), "Chain with the most qualifying signals today")
-        stat_card("Watchlists", f"{len(watchlist_df):,}", "Pools saved to your persistent tracker")
+        stat_card("Watchlists", f"{watchlist_count:,}", "Pools saved to your persistent tracker")
         if not is_pro:
             st.markdown("<div style='height:0.65rem;'></div>", unsafe_allow_html=True)
             st.markdown("<div class='signal-card'><div class='signal-title'>FuruFlow Pro</div><div class='signal-copy'>Unlock the full Signals view, deeper Discover access, advanced ranking, Yield Spreads, and strategy workflows.</div></div>", unsafe_allow_html=True)
@@ -1615,8 +1614,19 @@ market_data_status = data_status_from_attrs(raw_df.attrs)
 market_freshness = freshness(market_data_status)
 df = enrich(raw_df, resolver_version=LINK_RESOLVER_VERSION)
 
-if "watchlist" not in st.session_state:
-    st.session_state.watchlist = [] if st.session_state.get("furuflow_demo_active") else load_watchlist()
+watchlist_client: UserSavedPoolsClient | None = None
+saved_pool_entries: tuple[SavedPool, ...] = ()
+watchlist_load_error: str | None = None
+if signed_in:
+    try:
+        watchlist_client = current_user_saved_pools_client()
+        saved_pool_entries = watchlist_client.list_saved_pools()
+    except SavedPoolStoreError as exc:
+        watchlist_load_error = str(exc)
+    except Exception:
+        watchlist_load_error = "Saved pools are temporarily unavailable."
+st.session_state.watchlist = [entry.pool_id for entry in saved_pool_entries]
+saved_pool_ids = frozenset(st.session_state.watchlist)
 
 signal_source = tuple(df.head(SIGNAL_SAMPLE)["pool"].tolist()) if market_source_status == "live" else ()
 signal_df = fetch_signal_snapshots(signal_source)
@@ -1639,7 +1649,7 @@ else:
         axis=1,
     )
 
-watchlist_df = df[df["pool"].isin(st.session_state.watchlist)].copy()
+watchlist_df = df[df["pool"].isin(saved_pool_ids)].copy()
 if market_source_status == "live":
     save_snapshot(df)
 
@@ -1749,7 +1759,7 @@ filtered = filtered.head(POOL_LIMIT)
 full_filtered = filtered.copy()
 if not is_pro:
     filtered = filtered.head(FREE_POOL_LIMIT)
-watchlist_df = df[df["pool"].isin(st.session_state.watchlist)].copy()
+watchlist_df = df[df["pool"].isin(saved_pool_ids)].copy()
 arb_df = yield_spreads(full_filtered if is_pro else filtered)
 
 content_page = page
@@ -1833,7 +1843,7 @@ elif market_filters_apply(page) and page != "Pool Detail":
     )
 
 if content_page == "Home":
-    render_home_page(filtered, full_filtered, watchlist_df, alert_stats, history_latest_df, history_trend_df, is_pro)
+    render_home_page(filtered, full_filtered, watchlist_df, len(saved_pool_entries), alert_stats, history_latest_df, history_trend_df, is_pro)
 
 elif content_page == "Scanner":
     left, right = st.columns([1.6, 1], gap="large")
@@ -1854,8 +1864,9 @@ elif content_page == "Scanner":
                     render_opportunity_card(
                         row,
                         start + i,
-                        row["pool"] in st.session_state.watchlist,
+                        row["pool"] in saved_pool_ids,
                         authenticated=signed_in,
+                        watchlist_client=watchlist_client,
                         freshness_label=market_freshness["label"],
                         return_view="Opportunities",
                     )
@@ -1973,17 +1984,17 @@ elif content_page == "Compare":
                             open_pool_detail(pool_id, return_view="Compare")
                             st.rerun()
                     with action_cols[1]:
-                        watched = pool_id in st.session_state.watchlist
+                        watched = pool_id in saved_pool_ids
                         watch_label = "Remove" if watched else "Watch" if signed_in else "Sign in to save"
                         if st.button(
-                            watch_label,
+                            watch_label if watchlist_client is not None or not signed_in else "Watchlist unavailable",
                             key=f"compare_watch_{pool_id}",
                             width="stretch",
-                            disabled=not signed_in,
+                            disabled=not signed_in or watchlist_client is None,
                         ):
                             track_research_event("watchlist_action_initiated", {"pool": pool_id, "action": watch_label})
-                            watch_toggle(pool_id)
-                            st.rerun()
+                            if watch_toggle(pool_id, watched=watched, client=watchlist_client):
+                                st.rerun()
     st.markdown("</div>", unsafe_allow_html=True)
 
 elif content_page == "Signals":
@@ -2022,8 +2033,9 @@ elif content_page == "Signals":
                 render_opportunity_card(
                     row,
                     700 + idx,
-                    row["pool"] in st.session_state.watchlist,
+                    row["pool"] in saved_pool_ids,
                     authenticated=signed_in,
+                    watchlist_client=watchlist_client,
                     freshness_label=market_freshness["label"],
                     return_view="Signals",
                 )
@@ -2121,11 +2133,30 @@ elif content_page == "Market Map":
 
 elif content_page == "Pool Detail":
     selected_pool_id = str(st.session_state.get("selected_pool_id") or st.query_params.get("pool") or "")
+    detail_return_route = str(st.session_state.get("pool_return_route") or "Discover")
+    detail_back_label = "← Back to Watchlist" if detail_return_route == "Watchlists" else "← Back to opportunities"
     pool_options = df[df["pool"].astype(str) == selected_pool_id].copy()
     if pool_options.empty:
         render_page_heading("Pool Detail")
-        render_status("empty", "Opportunity not available", "Choose an opportunity from Discover to open its contextual detail view.")
-        if st.button("Back to opportunities", key="pool_detail_empty_back"):
+        if selected_pool_id in saved_pool_ids:
+            render_status(
+                "degraded",
+                "Saved pool temporarily unavailable",
+                "The canonical saved-pool record is intact, but the current market provider did not return this pool. No APY, TVL, or risk values are inferred.",
+            )
+            st.code(selected_pool_id, language=None)
+            if st.button(
+                "Remove from Watchlist",
+                key="pool_detail_unavailable_remove",
+                disabled=watchlist_client is None,
+                width="stretch",
+            ):
+                if watch_toggle(selected_pool_id, watched=True, client=watchlist_client):
+                    return_from_pool_detail()
+                    st.rerun()
+        else:
+            render_status("empty", "Opportunity not available", "Choose an opportunity from Discover to open its contextual detail view.")
+        if st.button(detail_back_label, key="pool_detail_empty_back"):
             return_from_pool_detail()
             st.rerun()
     else:
@@ -2142,7 +2173,7 @@ elif content_page == "Pool Detail":
                 f"{market_source_label} · {market_freshness['label']}",
                 f"{market_freshness['age']}. Retrieval time is shown because the provider does not supply a pool observation timestamp.",
             )
-        if st.button("← Back to opportunities", key="pool_detail_back"):
+        if st.button(detail_back_label, key="pool_detail_back"):
             return_from_pool_detail()
             st.rerun()
         st.markdown("<div class='panel'>", unsafe_allow_html=True)
@@ -2271,17 +2302,25 @@ elif content_page == "Pool Detail":
 
             c1, c2, c3 = st.columns(3)
             with c1:
-                watched = row["pool"] in st.session_state.watchlist
+                watched = row["pool"] in saved_pool_ids
                 st.markdown("<div class='watch-wrap'>", unsafe_allow_html=True)
                 if st.button(
-                    "Remove from watchlist" if watched else "Add to watchlist" if signed_in else "Sign in to save",
+                    (
+                        "Remove from Watchlist"
+                        if watched
+                        else "Add to Watchlist"
+                        if signed_in and watchlist_client is not None
+                        else "Watchlist unavailable"
+                        if signed_in
+                        else "Sign in to save"
+                    ),
                     key=f"drill_watch_{current_pool_id}",
                     width="stretch",
-                    disabled=not signed_in,
+                    disabled=not signed_in or watchlist_client is None,
                 ):
                     track_research_event("watchlist_action_initiated", {"pool": current_pool_id, "action": "toggle"})
-                    watch_toggle(str(row["pool"]))
-                    st.rerun()
+                    if watch_toggle(str(row["pool"]), watched=watched, client=watchlist_client):
+                        st.rerun()
                 st.markdown("</div>", unsafe_allow_html=True)
             with c2:
                 if st.button(
@@ -2343,24 +2382,56 @@ elif content_page == "Watchlists":
     left, right = st.columns([1.2, 1], gap="large")
     with left:
         st.markdown("<div class='panel'>", unsafe_allow_html=True)
-        section_header("Watchlists", "Tracked pools", "This is your lightweight conviction layer. Items currently retain the existing local persistence behavior.")
-        if watchlist_df.empty:
+        section_header(
+            "Watchlist",
+            "Saved pools",
+            "Your durable shortlist, ordered by most recently saved and then canonical pool ID. Current values come from the market provider.",
+        )
+        if watchlist_load_error:
+            render_status("error", "Watchlist unavailable", watchlist_load_error)
+        elif not saved_pool_entries:
             render_status("empty", "Your watchlist is empty", "Use Watch on an opportunity card, then return here to review it.")
         else:
-            view = watchlist_df[["project", "chain", "symbol", "apy", "tvlUsd", "risk_score", "signal", "pool_url"]].copy()
-            view.columns = ["Protocol", "Chain", "Asset", "APY", "TVL (USD)", "Risk", "Signal", "Open"]
-            st.dataframe(view, width="stretch", hide_index=True, height=440, column_config={"APY": st.column_config.NumberColumn(format="%.2f%%"), "TVL (USD)": st.column_config.NumberColumn(format="$%.0f"), "Open": st.column_config.LinkColumn("Pool link", display_text="Open")})
-            st.markdown("<div class='danger-wrap'>", unsafe_allow_html=True)
-            if st.button("Clear watchlist", width="stretch"):
-                set_watchlist([])
-                st.rerun()
-            st.markdown("</div>", unsafe_allow_html=True)
+            market_rows_by_pool = {str(row["pool"]): row for _, row in df.iterrows()}
+            for idx, entry in enumerate(saved_pool_entries):
+                current_row = market_rows_by_pool.get(entry.pool_id)
+                if current_row is not None:
+                    render_opportunity_card(
+                        current_row,
+                        idx,
+                        True,
+                        authenticated=True,
+                        watchlist_client=watchlist_client,
+                        freshness_label=market_freshness["label"],
+                        return_route="Watchlists",
+                        key_prefix="watchlist",
+                    )
+                else:
+                    st.markdown("#### Saved pool · current data unavailable")
+                    st.code(entry.pool_id, language=None)
+                    st.caption(
+                        "The provider did not return this canonical pool in the current response. "
+                        "The saved record remains intact; APY, TVL, risk, and provenance are unavailable."
+                    )
+                    if entry.created_at:
+                        st.caption(f"Saved at {entry.created_at}")
+                    if st.button(
+                        "Remove from Watchlist",
+                        key=f"watchlist_unavailable_remove_{idx}",
+                        width="stretch",
+                        disabled=watchlist_client is None,
+                    ):
+                        if watch_toggle(entry.pool_id, watched=True, client=watchlist_client):
+                            st.rerun()
+                    st.divider()
+            st.caption("Saving or removing a pool does not create, change, disable, or delete Alerts.")
         st.markdown("</div>", unsafe_allow_html=True)
     with right:
         st.markdown("<div class='panel'>", unsafe_allow_html=True)
-        section_header("Watchlists overview", "Where your attention sits", "Quick visual comparison of tracked yield and signal distribution.")
+        section_header("Watchlist overview", "Where your attention sits", "Quick visual comparison of saved pools that have current market observations.")
         if not watchlist_df.empty:
-            fig = px.bar(watchlist_df.sort_values("apy", ascending=False), x="project", y="apy", color="risk_band", hover_data={"chain": True, "symbol": True, "tvlUsd": ':$,.0f'})
+            chart_watchlist = watchlist_df.sort_values(["apy", "pool"], ascending=[False, True], kind="mergesort")
+            fig = px.bar(chart_watchlist, x="project", y="apy", color="risk_band", hover_data={"chain": True, "symbol": True, "tvlUsd": ':$,.0f'})
             fig.update_xaxes(title="Protocol")
             fig.update_yaxes(title="APY %")
             st.plotly_chart(plotly_theme(fig, 300), width="stretch")
@@ -2368,7 +2439,7 @@ elif content_page == "Watchlists":
             sig_counts.columns = ["Signal", "Count"]
             st.dataframe(sig_counts, width="stretch", hide_index=True, height=180)
         else:
-            st.info("Add a few pools to see watchlist comparisons.")
+            st.info("Current market observations are unavailable for the saved pools.")
         st.markdown("</div>", unsafe_allow_html=True)
 
 elif content_page == "Pricing":

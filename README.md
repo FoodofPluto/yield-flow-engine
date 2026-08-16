@@ -125,6 +125,9 @@ staging delivery, and rollback are documented in
 Authenticated pool-alert controls, safe Telegram linkage, deterministic rule
 semantics, and the Prompt 6 staging checklist are documented in
 `docs/USER_ALERTS.md`.
+Authenticated, canonical saved-pool persistence, degraded-provider behavior,
+ownership controls, and the Prompt 7 staging checklist are documented in
+`docs/SAVED_POOLS.md`.
 
 ## Account and entitlement model
 

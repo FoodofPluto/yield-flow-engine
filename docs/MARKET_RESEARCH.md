@@ -110,9 +110,11 @@ and Pool Detail; existing Pro and direct-route authorization semantics remain.
 ## Accounts, analytics, accessibility, and limitations
 
 Signed-out users see disabled `Sign in to save` actions rather than fake local
-persistence. Signed-in behavior reuses existing watchlist functions; Prompt 4
-does not duplicate or redesign persistence. Free, Pro, and administrator
-decisions still come from authoritative server account state.
+persistence. Prompt 7 routes signed-in save/remove through authenticated
+Supabase RPCs using the canonical provider pool ID. Current market values are
+joined at read time; a missing provider row remains saved and is displayed as
+unavailable. Free, Pro, and administrator decisions still come from
+authoritative server account state.
 
 The internal event abstraction creates an allowlisted local structured
 envelope. It has no production sink and excludes email, credentials, cookies,

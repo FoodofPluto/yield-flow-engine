@@ -74,6 +74,13 @@ deriving Supabase RPCs and safe Telegram availability status; they do not send
 messages. Prompt 5's worker and delivery lifecycle remain the only delivery
 path. See `docs/USER_ALERTS.md`.
 
+`saved_pools.py` and the existing authenticated Watchlists route are the Prompt
+7 saved-pool boundary. The client uses authenticated Supabase RPCs that derive
+ownership from `auth.uid()`; `app.py` joins the durable canonical IDs to current
+market rows without storing volatile APY, TVL, risk, or signal fields. Missing
+provider rows stay saved and render as unavailable. This path is independent of
+Prompt 6 notification and Telegram automation. See `docs/SAVED_POOLS.md`.
+
 ## Tests and validation
 
 The canonical test command is `poetry run python -m pytest`. Application modules
@@ -132,7 +139,7 @@ not execute user-session market or messaging paths.
 
 | Files | Characterization | Later recommendation (not performed here) |
 |---|---|---|
-| `app_linkdebug.py` | Reduced near-copy: it has all top-level functions from `app.py` except `build_signal_card_assets`; it omits the admin shareable signal-card UI and uses a non-pool-specific `drill_watch` key | Archive after its link-debug intent and any deployment references are confirmed obsolete; keep `app.py` as canonical |
+| `app_linkdebug.py` | Reduced near-copy: it omits canonical shell/detail/alert behavior, retains the retired local-file watchlist helpers, and uses a non-pool-specific `drill_watch` key | Archive after its link-debug intent and any deployment references are confirmed obsolete; keep `app.py` as canonical |
 | `scan-watch-adaptive.patched.ps1` | Byte-for-byte duplicate of `scan-watch-adaptive.ps1` | Archive the `.patched` copy after scheduler/task references are checked |
 | `scan-watch-adaptive.backup.ps1` | Older variant without the current normalization and inline regex fallback | Archive after retaining parser fixtures for the two supported layouts |
 | `parse-engine.fixed.ps1`, `scripts/parse-engine.ps1`, `scripts/parse-engine.backup.ps1` | Byte-for-byte duplicates | Keep one canonical parser and archive the other two after wrapper imports are normalized |

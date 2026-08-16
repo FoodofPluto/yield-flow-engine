@@ -72,6 +72,12 @@ def test_pool_detail_open_and_back_preserve_results_context() -> None:
     assert pool_detail_back_state(compared) == {"current_route": "Discover", "current_view": "Compare"}
 
 
+def test_pool_detail_context_can_return_to_the_existing_watchlists_route() -> None:
+    opened = pool_detail_state("canonical-pool-123", return_route="Watchlists")
+
+    assert pool_detail_back_state(opened) == {"current_route": "Watchlists", "current_view": "Opportunities"}
+
+
 def test_pool_detail_alert_action_uses_session_state_without_a_pool_url() -> None:
     assert alert_creation_state("canonical-pool-123") == {
         "current_route": "Alerts",
