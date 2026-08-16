@@ -4,6 +4,7 @@ from ui_shell import (
     AUTHENTICATED_NAV,
     PUBLIC_NAV,
     account_control_model,
+    alert_creation_state,
     canonical_route,
     pool_detail_back_state,
     pool_detail_state,
@@ -69,6 +70,14 @@ def test_pool_detail_open_and_back_preserve_results_context() -> None:
 
     compared = pool_detail_state("pool-789", return_route="Discover", return_view="Compare")
     assert pool_detail_back_state(compared) == {"current_route": "Discover", "current_view": "Compare"}
+
+
+def test_pool_detail_alert_action_uses_session_state_without_a_pool_url() -> None:
+    assert alert_creation_state("canonical-pool-123") == {
+        "current_route": "Alerts",
+        "alert_prefill_pool_id": "canonical-pool-123",
+        "alert_form_mode": "create",
+    }
 
 
 def test_renamed_and_reorganized_pages_map_to_the_new_sitemap() -> None:

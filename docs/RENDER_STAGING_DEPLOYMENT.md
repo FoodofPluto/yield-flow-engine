@@ -83,6 +83,9 @@ and activation tickets are not logged. Gunicorn access logging remains disabled.
    `supabase/migrations/202608050001_prompt2_account_control_plane.sql` as
    described in `ACCOUNT_CONTROL_PLANE.md`. Confirm `browser_sessions` and
    `browser_session_tickets` exist. Do not use the production project.
+   Apply the Prompt 5 automation migration and Prompt 6 user-alert migration in
+   timestamp order before enabling alert controls, then run the complete pgTAP
+   suite.
 2. In a trusted local shell, generate a Fernet key for
    `FURUFLOW_SESSION_ENCRYPTION_KEY`:
 

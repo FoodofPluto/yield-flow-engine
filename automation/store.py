@@ -97,6 +97,17 @@ class SupabaseAutomationStore:
     def upsert_system_rule(self, *, chat_id: str, enabled: bool) -> None:
         self._rpc("service_upsert_system_notification_rule", destination_chat_id=chat_id, rule_enabled=enabled)
 
+    def set_user_telegram_connection(self, *, user_id: str, chat_id: str, linked: bool = True) -> str:
+        value = self._rpc(
+            "service_set_user_telegram_connection",
+            target_user_id=user_id,
+            destination_chat_id=chat_id,
+            connection_linked=linked,
+        )
+        if not isinstance(value, str):
+            raise AutomationStoreError("Telegram connection update returned an invalid response.")
+        return value
+
     def enqueue_staging_test(self, *, chat_id: str, test_key: str, environment: str) -> bool:
         value = self._rpc(
             "service_enqueue_staging_notification_test",
@@ -130,6 +141,14 @@ class SupabaseAutomationStore:
             delivery_kind=kind,
         )
         return bool(value)
+
+    def record_rule_evaluations(self, *, run_id: str, evaluated_rule_ids: list[str], triggered_rule_ids: list[str]) -> None:
+        self._rpc(
+            "service_record_notification_rule_evaluations",
+            automation_run_id=run_id,
+            evaluated_rule_ids=evaluated_rule_ids,
+            triggered_rule_ids=triggered_rule_ids,
+        )
 
     def recover_abandoned(self, *, stale_seconds: int) -> int:
         value = self._rpc("service_recover_abandoned_deliveries", stale_after_seconds=stale_seconds)
@@ -229,50 +248,101 @@ class UserNotificationClient:
             raise AutomationStoreError("Notification preference operation was rejected.")
         return response.json() if response.content else None
 
-    def list_rules(self) -> list[dict[str, Any]]:
-        value = self._request("GET", "notification_rules?select=*&order=created_at.asc")
+    def _rpc(self, name: str, **body: Any) -> Any:
+        return self._request("POST", f"rpc/{name}", body=body)
+
+    def telegram_status(self) -> dict[str, Any]:
+        value = self._rpc("get_my_telegram_status")
+        if not isinstance(value, dict):
+            raise AutomationStoreError("Telegram connection status returned an invalid response.")
+        return value
+
+    def list_alerts(self) -> list[dict[str, Any]]:
+        value = self._rpc("list_my_pool_alerts")
         return value if isinstance(value, list) else []
 
-    def create_rule(self, values: dict[str, Any]) -> dict[str, Any]:
-        allowed = {
-            "telegram_chat_id",
-            "enabled",
-            "minimum_strength",
-            "signal_tier",
-            "delivery_mode",
-            "quiet_hours_start",
-            "quiet_hours_end",
-            "timezone",
-            "cooldown_minutes",
-        }
-        body = {key: value for key, value in values.items() if key in allowed}
-        rows = self._request("POST", "notification_rules", body=body, prefer="return=representation")
-        if not isinstance(rows, list) or len(rows) != 1:
-            raise AutomationStoreError("Notification rule was not created.")
-        return rows[0]
-
-    def update_rule(self, rule_id: str, values: dict[str, Any]) -> dict[str, Any]:
-        allowed = {
-            "telegram_chat_id",
-            "enabled",
-            "minimum_strength",
-            "signal_tier",
-            "delivery_mode",
-            "quiet_hours_start",
-            "quiet_hours_end",
-            "timezone",
-            "cooldown_minutes",
-        }
-        body = {key: value for key, value in values.items() if key in allowed}
-        rows = self._request(
-            "PATCH", f"notification_rules?id=eq.{rule_id}", body=body, prefer="return=representation"
+    def create_pool_alert(
+        self,
+        *,
+        target_pool_id: str,
+        minimum_strength: int,
+        signal_tier: str,
+        delivery_mode: str,
+        quiet_hours_start: str | None,
+        quiet_hours_end: str | None,
+        timezone_name: str,
+        cooldown_minutes: int,
+        client_request_key: str,
+    ) -> dict[str, Any]:
+        value = self._rpc(
+            "create_my_pool_alert",
+            requested_target_pool_id=target_pool_id,
+            requested_minimum_strength=minimum_strength,
+            requested_signal_tier=signal_tier,
+            requested_delivery_mode=delivery_mode,
+            requested_quiet_hours_start=quiet_hours_start,
+            requested_quiet_hours_end=quiet_hours_end,
+            requested_timezone=timezone_name,
+            requested_cooldown_minutes=cooldown_minutes,
+            request_key=client_request_key,
         )
-        if not isinstance(rows, list) or len(rows) != 1:
-            raise AutomationStoreError("Notification rule was not updated.")
-        return rows[0]
+        if not isinstance(value, dict):
+            raise AutomationStoreError("Alert was not created.")
+        return value
 
-    def disable_rule(self, rule_id: str) -> dict[str, Any]:
-        return self.update_rule(rule_id, {"enabled": False})
+    def update_pool_alert(
+        self,
+        *,
+        alert_id: str,
+        minimum_strength: int,
+        signal_tier: str,
+        delivery_mode: str,
+        quiet_hours_start: str | None,
+        quiet_hours_end: str | None,
+        timezone_name: str,
+        cooldown_minutes: int,
+    ) -> dict[str, Any]:
+        value = self._rpc(
+            "update_my_pool_alert",
+            notification_rule_id=alert_id,
+            requested_minimum_strength=minimum_strength,
+            requested_signal_tier=signal_tier,
+            requested_delivery_mode=delivery_mode,
+            requested_quiet_hours_start=quiet_hours_start,
+            requested_quiet_hours_end=quiet_hours_end,
+            requested_timezone=timezone_name,
+            requested_cooldown_minutes=cooldown_minutes,
+        )
+        if not isinstance(value, dict):
+            raise AutomationStoreError("Alert was not updated.")
+        return value
+
+    def set_alert_enabled(self, alert_id: str, enabled: bool) -> bool:
+        return bool(
+            self._rpc("set_my_pool_alert_enabled", notification_rule_id=alert_id, alert_enabled=enabled)
+        )
+
+    def delete_alert(self, alert_id: str) -> bool:
+        return bool(self._rpc("delete_my_pool_alert", notification_rule_id=alert_id))
+
+    def list_rules(self) -> list[dict[str, Any]]:
+        return self.list_alerts()
+
+    def create_rule(self, values: dict[str, Any]) -> dict[str, Any]:
+        return self.create_pool_alert(
+            target_pool_id=str(values["target_pool_id"]),
+            minimum_strength=int(values.get("minimum_strength") or 0),
+            signal_tier=str(values.get("signal_tier") or "all"),
+            delivery_mode=str(values.get("delivery_mode") or "immediate"),
+            quiet_hours_start=values.get("quiet_hours_start"),
+            quiet_hours_end=values.get("quiet_hours_end"),
+            timezone_name=str(values.get("timezone") or "UTC"),
+            cooldown_minutes=int(values.get("cooldown_minutes") or 1440),
+            client_request_key=str(values["client_request_key"]),
+        )
+
+    def disable_rule(self, rule_id: str) -> bool:
+        return self.set_alert_enabled(rule_id, False)
 
     def delivery_history(self, *, limit: int = 50) -> list[dict[str, Any]]:
         safe_limit = min(max(limit, 1), 100)

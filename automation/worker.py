@@ -24,6 +24,9 @@ class AutomationStore(Protocol):
     ) -> None: ...
     def list_rules(self, *, environment: str) -> list[NotificationRule]: ...
     def upsert_system_rule(self, *, chat_id: str, enabled: bool) -> None: ...
+    def record_rule_evaluations(
+        self, *, run_id: str, evaluated_rule_ids: list[str], triggered_rule_ids: list[str]
+    ) -> None: ...
     def enqueue_delivery(
         self,
         *,
@@ -137,7 +140,20 @@ class AutomationWorker:
     def _rule_matches(rule: NotificationRule, signal: dict[str, Any]) -> bool:
         if not rule.enabled or not rule.telegram_chat_id or rule.demo_active:
             return False
-        strength = int(float(signal.get("strength_score") or 0))
+        if rule.condition_type != "signal_qualified":
+            return False
+        if rule.target_type == "pool":
+            signal_pool_id = str(signal.get("pool_id") or "").strip()
+            if not rule.target_pool_id or not signal_pool_id or signal_pool_id != rule.target_pool_id:
+                return False
+        elif rule.target_type != "any_signal":
+            return False
+        if signal.get("strength_score") is None or not str(signal.get("tier") or "").strip():
+            return False
+        try:
+            strength = int(float(signal["strength_score"]))
+        except (TypeError, ValueError):
+            return False
         if strength < rule.minimum_strength:
             return False
         tier = str(signal.get("tier") or "free").strip().lower()
@@ -229,40 +245,57 @@ class AutomationWorker:
                 **delivery_summary,
             }
 
-        if not signals:
-            self.store.finish_scan(run_id=run_id, outcome=ScanOutcome.ZERO_SIGNALS, signal_count=0)
-            delivery_summary = self.drain_deliveries(run_id=run_id)
-            self.store.heartbeat(run_id=None, worker_id=self.worker_id, state="idle")
-            return {
-                "run_id": run_id,
-                "claimed": True,
-                "outcome": ScanOutcome.ZERO_SIGNALS.value,
-                "enqueued": 0,
-                "test_enqueued": test_enqueued,
-                **delivery_summary,
-            }
-
         try:
             if self.config.system_rule_enabled:
                 self.store.upsert_system_rule(chat_id=self.config.system_chat_id, enabled=True)
             rules = self.store.list_rules(environment=self.config.environment)
+            evaluated_rule_ids = [rule.id for rule in rules]
+            if not signals:
+                self.store.record_rule_evaluations(
+                    run_id=run_id, evaluated_rule_ids=evaluated_rule_ids, triggered_rule_ids=[]
+                )
+                self.store.finish_scan(run_id=run_id, outcome=ScanOutcome.ZERO_SIGNALS, signal_count=0)
+                delivery_summary = self.drain_deliveries(run_id=run_id)
+                self.store.heartbeat(run_id=None, worker_id=self.worker_id, state="idle")
+                return {
+                    "run_id": run_id,
+                    "claimed": True,
+                    "outcome": ScanOutcome.ZERO_SIGNALS.value,
+                    "enqueued": 0,
+                    "test_enqueued": test_enqueued,
+                    **delivery_summary,
+                }
             enqueued = 0
+            triggered_rule_ids: set[str] = set()
             now = self.clock().astimezone(timezone.utc)
             for signal in signals:
                 fingerprint = self._signal_fingerprint(signal)
                 for rule in rules:
                     if not self._rule_matches(rule, signal):
                         continue
+                    triggered_rule_ids.add(rule.id)
+                    message_text = format_signal(signal)
+                    if rule.user_id is not None and rule.target_type == "pool":
+                        message_text = (
+                            "FuruFlow pool alert matched\n\n"
+                            f"Condition: qualified signal with strength at least {rule.minimum_strength}/100.\n\n"
+                            f"{message_text}"
+                        )
                     if self.store.enqueue_delivery(
                         run_id=run_id,
                         rule_id=rule.id,
                         signal_fingerprint=fingerprint,
                         logical_delivery_key=self._delivery_key(rule, fingerprint, schedule_time),
                         signal=signal,
-                        message_text=format_signal(signal),
+                        message_text=message_text,
                         available_at=self._available_at(rule, now),
                     ):
                         enqueued += 1
+            self.store.record_rule_evaluations(
+                run_id=run_id,
+                evaluated_rule_ids=evaluated_rule_ids,
+                triggered_rule_ids=sorted(triggered_rule_ids),
+            )
             self.store.finish_scan(run_id=run_id, outcome=ScanOutcome.SUCCEEDED, signal_count=len(signals))
         except Exception:
             logger.exception("automation_event=scan outcome=infrastructure_failed")

@@ -25,6 +25,7 @@ pip-audit are in the dev group. The supported interpreter range is Python
 | Alternate debug app | `poetry run streamlit run app_linkdebug.py` | Near-copy of `app.py` | Same broad app effects; retained only for later archival review |
 | Scanner CLI | `poetry run engine ...` or `python -m engine.cli ...` | `engine.cli:cli` -> `engine.scanner.rank_top_yields` -> demo or DeFiLlama provider | Demo source is local; DeFiLlama source performs an HTTP GET |
 | Durable Telegram worker | `python telegram_worker.py run` | existing scanner/scoring pipeline -> Supabase automation RPCs -> Telegram | Database-enforced idempotency, attempt history, DeFiLlama GET, Telegram POST |
+| Alert destination operator control | `python telegram_worker.py link-user`; `unlink-user` | managed environment -> service-role linkage RPC | Writes/revokes one verified account destination; prints no routing data |
 | Legacy Telegram poster | `python post_real_signals.py` | scanner/history/formatters -> `telegram_utils.send_telegram_message` | Manual compatibility path only; not repository-scheduled |
 | X poster | `python post_to_x.py` | signal/recap builders -> `post_tweet` | DeFiLlama GET in signal mode; optional X POST; otherwise local outbox write |
 | Daily/weekly recap | `python generate_daily_recap.py`; `python generate_weekly_recap.py` | `engine.recap` | Reads tracked/runtime CSV history and prints recap |
@@ -66,6 +67,12 @@ central provenance/freshness terminology, Yield Spreads presentation data, and
 a local allowlisted product-event envelope. Provider I/O and Streamlit rendering
 remain in `app.py`; identity and authorization remain outside both modules. See
 `docs/MARKET_RESEARCH.md`.
+
+`user_alerts.py` and the authenticated Alerts route in `app.py` are the Prompt 6
+control plane for pool-specific qualified-signal alerts. They use ownership-
+deriving Supabase RPCs and safe Telegram availability status; they do not send
+messages. Prompt 5's worker and delivery lifecycle remain the only delivery
+path. See `docs/USER_ALERTS.md`.
 
 ## Tests and validation
 

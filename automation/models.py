@@ -58,6 +58,10 @@ class NotificationRule:
     cooldown_minutes: int = 1440
     entitled_to_pro: bool = False
     demo_active: bool = False
+    rule_kind: str = "market"
+    target_type: str = "any_signal"
+    target_pool_id: str | None = None
+    condition_type: str = "signal_qualified"
 
     @classmethod
     def from_row(cls, row: dict[str, Any]) -> "NotificationRule":
@@ -75,6 +79,10 @@ class NotificationRule:
             cooldown_minutes=max(int(row.get("cooldown_minutes") or 1440), 1),
             entitled_to_pro=bool(row.get("entitled_to_pro")),
             demo_active=bool(row.get("demo_active")),
+            rule_kind=str(row.get("rule_kind") or "market"),
+            target_type=str(row.get("target_type") or "any_signal"),
+            target_pool_id=str(row["target_pool_id"]) if row.get("target_pool_id") else None,
+            condition_type=str(row.get("condition_type") or "signal_qualified"),
         )
 
 

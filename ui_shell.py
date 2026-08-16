@@ -59,7 +59,7 @@ PAGE_CONTEXT = {
         "See how FuruFlow frames yield, risk, freshness, and degraded source conditions.",
     ),
     "Watchlists": ("Watchlists", "Return to opportunities you have chosen to track."),
-    "Alerts": ("Alerts", "Manage alert intent without implying that unfinished delivery controls are active."),
+    "Alerts": ("Alerts", "Create and manage persistent pool alerts delivered through verified Telegram routing."),
     "Activity & Digests": ("Activity & digests", "Review observed market activity and available recap history."),
     "Pro Tools": ("Pro tools", "Compose strategy slices and inspect cross-chain yield spreads."),
     "Account & Billing": ("Account & billing", "Review the server-authoritative account and entitlement state."),
@@ -135,6 +135,14 @@ def pool_detail_back_state(state: Mapping[str, Any]) -> dict[str, str]:
     return {
         "current_route": str(state.get("pool_return_route") or "Discover"),
         "current_view": str(state.get("pool_return_view") or "Opportunities"),
+    }
+
+
+def alert_creation_state(pool_id: str) -> dict[str, str]:
+    return {
+        "current_route": "Alerts",
+        "alert_prefill_pool_id": str(pool_id),
+        "alert_form_mode": "create",
     }
 
 

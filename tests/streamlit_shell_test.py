@@ -38,3 +38,11 @@ def test_direct_admin_route_is_denied_to_signed_out_user() -> None:
     app.run()
     assert not app.exception
     assert any("Unauthorized" in warning.value for warning in app.markdown)
+
+
+def test_direct_alerts_route_requires_authentication() -> None:
+    app = AppTest.from_file("app.py", default_timeout=60)
+    app.query_params["page"] = "Alerts"
+    app.run()
+    assert not app.exception
+    assert any("Authentication required" in markdown.value for markdown in app.markdown)

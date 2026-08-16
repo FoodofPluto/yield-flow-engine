@@ -78,20 +78,20 @@ decision because resending an ambiguous item can duplicate an externally
 accepted message. Do not change a dead-letter row back to `queued` without
 first confirming the provider did not accept the prior attempt.
 
-## User notification foundation
+## User notification controls
 
-`UserNotificationClient` provides the backend boundary for creating, updating,
-disabling, and listing the authenticated user's rules, reading delivery
-history, and requesting a test. RLS derives ownership from `auth.uid()`; the
-client cannot choose a different `user_id`. Users cannot insert deliveries,
-attempts, snapshots, runs, or test-work rows directly.
+Prompt 6 turns this foundation into the authenticated Alerts product surface.
+`UserNotificationClient` calls ownership-deriving RPCs for pool-alert CRUD,
+safe Telegram status, delivery history, and tests. The client cannot choose a
+different `user_id` or submit a raw Telegram destination. Users cannot insert
+deliveries, attempts, snapshots, runs, or test-work rows directly. See
+`USER_ALERTS.md` for exact semantics, linkage, and staging validation.
 
 Free rules cannot receive Pro signals. Current `is_admin`, `pro_active`, or
 `lifetime_access` is checked during rule evaluation and again when a delivery
 is claimed. Demo access cannot cause external delivery. Disabling a rule stops
 queued work. Quiet hours defer immediate work to the quiet interval's end.
-Digest rules defer work until 09:00 in the rule's timezone. Prompt 5
-intentionally adds no large settings UI.
+Digest rules defer work until 09:00 in the rule's timezone.
 
 ## Required configuration
 

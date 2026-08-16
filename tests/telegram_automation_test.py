@@ -7,6 +7,7 @@ from typing import Any
 
 import httpx
 import pytest
+import telegram_worker
 
 from automation.models import NotificationRule, ScanOutcome, TelegramDeliveryError, TelegramReceipt
 from automation.store import AutomationStoreError, SupabaseAutomationStore, UserNotificationClient
@@ -40,6 +41,7 @@ class MemoryStore:
         self.heartbeats: list[str] = []
         self.tests: deque[dict[str, Any]] = deque()
         self.system_rule_upserts = 0
+        self.evaluations: list[tuple[str, tuple[str, ...], tuple[str, ...]]] = []
 
     def begin_run(self, *, invocation_key: str, worker_id: str, scheduled_for: datetime) -> dict[str, Any]:
         if invocation_key in self.runs:
@@ -63,6 +65,11 @@ class MemoryStore:
 
     def upsert_system_rule(self, *, chat_id: str, enabled: bool) -> None:
         self.system_rule_upserts += 1
+
+    def record_rule_evaluations(
+        self, *, run_id: str, evaluated_rule_ids: list[str], triggered_rule_ids: list[str]
+    ) -> None:
+        self.evaluations.append((run_id, tuple(evaluated_rule_ids), tuple(triggered_rule_ids)))
 
     def enqueue_delivery(self, **values: Any) -> bool:
         key = values["logical_delivery_key"]
@@ -172,6 +179,7 @@ def test_zero_signal_scan_is_success_and_does_not_send() -> None:
     assert result["outcome"] == "zero_signals"
     assert result["delivered"] == 0
     assert not telegram.calls
+    assert store.evaluations == [("run-1", (RULE.id,), ())]
 
 
 def test_provider_failure_is_distinct_and_does_not_send() -> None:
@@ -265,6 +273,48 @@ def test_entitlement_and_demo_boundaries_block_external_user_delivery() -> None:
     assert not telegram.calls
 
 
+def test_pool_alert_matches_only_exact_canonical_pool_and_complete_supported_signal() -> None:
+    pool_rule = NotificationRule(
+        id="pool-rule",
+        user_id="user-1",
+        telegram_chat_id="chat",
+        target_type="pool",
+        target_pool_id="pool-1",
+        minimum_strength=60,
+        entitled_to_pro=True,
+    )
+    store, telegram = MemoryStore([pool_rule]), FakeTelegram()
+    result = worker(store, telegram).run_scan()
+    assert result["enqueued"] == 1
+    assert store.evaluations[-1][2] == ("pool-rule",)
+    assert "FuruFlow pool alert matched" in telegram.calls[0][1]
+
+    other_store, other_telegram = MemoryStore([pool_rule]), FakeTelegram()
+    other = {**SIGNAL, "pool_id": "other-pool"}
+    assert worker(other_store, other_telegram, scanner=lambda: [other]).run_scan()["enqueued"] == 0
+    assert not other_telegram.calls
+
+    incomplete_store, incomplete_telegram = MemoryStore([pool_rule]), FakeTelegram()
+    incomplete = {**SIGNAL, "strength_score": None}
+    assert worker(incomplete_store, incomplete_telegram, scanner=lambda: [incomplete]).run_scan()["enqueued"] == 0
+    assert not incomplete_telegram.calls
+
+
+def test_paused_pool_alert_never_matches() -> None:
+    paused = NotificationRule(
+        id="paused",
+        user_id="user-1",
+        telegram_chat_id="chat",
+        enabled=False,
+        target_type="pool",
+        target_pool_id="pool-1",
+        entitled_to_pro=True,
+    )
+    store, telegram = MemoryStore([paused]), FakeTelegram()
+    assert worker(store, telegram).run_scan()["enqueued"] == 0
+    assert not telegram.calls
+
+
 def test_quiet_hours_and_digest_are_durably_deferred() -> None:
     quiet = NotificationRule(
         id="quiet", user_id=None, telegram_chat_id="chat", quiet_hours_start="11:00", quiet_hours_end="13:00"
@@ -343,7 +393,7 @@ def test_user_preference_client_cannot_choose_another_user_id() -> None:
 
     def handler(request: httpx.Request) -> httpx.Response:
         observed.append(request)
-        return httpx.Response(201, json=[{"id": "rule", "user_id": "user-from-jwt"}])
+        return httpx.Response(200, json={"id": "rule", "target_pool_id": "pool-1"})
 
     client = UserNotificationClient(
         project_url="https://project.supabase.co",
@@ -351,9 +401,40 @@ def test_user_preference_client_cannot_choose_another_user_id() -> None:
         access_token="user-token",
         transport=httpx.MockTransport(handler),
     )
-    row = client.create_rule({"telegram_chat_id": "chat", "user_id": "attacker-selected-user"})
-    assert row["user_id"] == "user-from-jwt"
+    row = client.create_rule(
+        {
+            "target_pool_id": "pool-1",
+            "client_request_key": "request-key-123",
+            "telegram_chat_id": "attacker-chat",
+            "user_id": "attacker-selected-user",
+        }
+    )
+    assert row["target_pool_id"] == "pool-1"
     assert b"attacker-selected-user" not in observed[0].content
+    assert b"attacker-chat" not in observed[0].content
+
+
+def test_trusted_link_command_uses_managed_environment_and_never_prints_routing(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    calls: list[dict[str, Any]] = []
+
+    class FakeOperatorStore:
+        def set_user_telegram_connection(self, **values: Any) -> str:
+            calls.append(values)
+            return "connection-id"
+
+    monkeypatch.setattr(telegram_worker, "SupabaseAutomationStore", FakeOperatorStore)
+    monkeypatch.setenv("FURUFLOW_LINK_USER_ID", "user-1")
+    monkeypatch.setenv("FURUFLOW_LINK_TELEGRAM_CHAT_ID", "sensitive-chat")
+    monkeypatch.setattr("sys.argv", ["telegram_worker.py", "link-user"])
+
+    assert telegram_worker.main() == 0
+    assert calls == [{"user_id": "user-1", "chat_id": "sensitive-chat", "linked": True}]
+    output = capsys.readouterr().out
+    assert output.strip() == '{"outcome": "linked"}'
+    assert "user-1" not in output
+    assert "sensitive-chat" not in output
 
 
 def test_migration_enforces_rls_transactions_attempt_limit_and_retention() -> None:

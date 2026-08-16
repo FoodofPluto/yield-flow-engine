@@ -122,6 +122,9 @@ documented in `docs/UI_SHELL.md`.
 Durable Telegram automation, retention, managed secrets, monitoring, controlled
 staging delivery, and rollback are documented in
 `docs/TELEGRAM_AUTOMATION.md`.
+Authenticated pool-alert controls, safe Telegram linkage, deterministic rule
+semantics, and the Prompt 6 staging checklist are documented in
+`docs/USER_ALERTS.md`.
 
 ## Account and entitlement model
 

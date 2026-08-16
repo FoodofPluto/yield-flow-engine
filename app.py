@@ -2,11 +2,12 @@ from __future__ import annotations
 from signal_card import build_signal_card
 from inspect import signature
 import tempfile
+import uuid
 
 import json
 import os
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from datetime import datetime, timezone
+from datetime import datetime, time, timezone
 from pathlib import Path
 from typing import Any
 from urllib.parse import quote
@@ -20,6 +21,7 @@ import streamlit as st
 
 from auth import login_form
 from auth_session import render_pending_session_activation
+from automation.store import AutomationStoreError
 from auth_service import can_access_pro, claim_session, get_current_user, is_admin, logout, validate_session
 from stripe_stub import render_checkout_section
 from utils.external_side_effects import set_demo_side_effect_block
@@ -55,6 +57,7 @@ from ui_shell import (
     PRO_TOOL_VIEWS,
     RESEARCH_VIEWS,
     account_control_model,
+    alert_creation_state,
     canonical_route,
     inject_shell_css,
     market_filters_apply,
@@ -66,6 +69,14 @@ from ui_shell import (
     render_state,
     render_status,
     route_access,
+)
+from user_alerts import (
+    UserAlert,
+    alert_explanation,
+    current_user_notification_client,
+    format_alert_time,
+    pool_label_mapping,
+    safe_pool_label,
 )
 
 APP_NAME = "FuruFlow"
@@ -1247,6 +1258,266 @@ def render_recaps_page(alert_stats: dict[str, Any], history_latest_df: pd.DataFr
         st.markdown("</div>", unsafe_allow_html=True)
 
 
+ALERT_TIMEZONES = (
+    "UTC",
+    "America/New_York",
+    "America/Chicago",
+    "America/Denver",
+    "America/Los_Angeles",
+    "Europe/London",
+)
+
+
+def _alert_form(
+    client: Any,
+    *,
+    pool_labels: dict[str, str],
+    is_pro: bool,
+    account_timezone: str,
+    existing: UserAlert | None = None,
+) -> None:
+    if not pool_labels and existing is None:
+        render_state(
+            "No current pool targets",
+            "Live pool identity is unavailable, so FuruFlow will not create an alert against guessed or sample data.",
+        )
+        return
+
+    options = list(pool_labels)
+    prefill = str(st.session_state.get("alert_prefill_pool_id") or "")
+    if existing and existing.target_pool_id not in options:
+        options.insert(0, existing.target_pool_id)
+    selected_default = existing.target_pool_id if existing else prefill if prefill in options else options[0]
+    tier_options = ["all", "free"]
+    if is_pro or (existing and existing.signal_tier == "pro"):
+        tier_options.append("pro")
+    timezone_options = list(ALERT_TIMEZONES)
+    if account_timezone and account_timezone not in timezone_options:
+        timezone_options.append(account_timezone)
+    selected_timezone = existing.timezone_name if existing else account_timezone or "UTC"
+    if selected_timezone not in timezone_options:
+        selected_timezone = "UTC"
+
+    form_key = f"alert_form_{existing.id if existing else 'create'}"
+    with st.form(form_key):
+        st.markdown(f"#### {'Edit pool alert' if existing else 'Create pool alert'}")
+        target_pool_id = st.selectbox(
+            "Pool",
+            options,
+            index=options.index(selected_default),
+            format_func=lambda pool_id: safe_pool_label(pool_id, pool_labels),
+            disabled=existing is not None,
+        )
+        minimum_strength = st.slider(
+            "Minimum signal strength",
+            min_value=0,
+            max_value=100,
+            value=existing.minimum_strength if existing else 60,
+            help="The alert matches only after this pool qualifies in the existing FuruFlow signal pipeline.",
+        )
+        signal_tier = st.selectbox(
+            "Signal tier",
+            tier_options,
+            index=tier_options.index(existing.signal_tier if existing else "all"),
+            format_func=lambda value: {"all": "Any eligible tier", "free": "Free tier", "pro": "Pro tier"}[value],
+        )
+        delivery_mode = st.selectbox(
+            "Delivery timing",
+            ["immediate", "digest"],
+            index=["immediate", "digest"].index(existing.delivery_mode if existing else "immediate"),
+            format_func=lambda value: "Immediate" if value == "immediate" else "Daily 09:00 digest window",
+        )
+        has_quiet_hours = st.toggle(
+            "Use quiet hours",
+            value=bool(existing and existing.quiet_hours_start and existing.quiet_hours_end),
+        )
+        quiet_start = quiet_end = None
+        if has_quiet_hours:
+            quiet_cols = st.columns(2)
+            with quiet_cols[0]:
+                quiet_start = st.time_input(
+                    "Quiet hours start",
+                    value=time.fromisoformat(existing.quiet_hours_start) if existing and existing.quiet_hours_start else time(22, 0),
+                )
+            with quiet_cols[1]:
+                quiet_end = st.time_input(
+                    "Quiet hours end",
+                    value=time.fromisoformat(existing.quiet_hours_end) if existing and existing.quiet_hours_end else time(7, 0),
+                )
+        timezone_name = st.selectbox(
+            "Timezone", timezone_options, index=timezone_options.index(selected_timezone)
+        )
+        cooldown_options = [60, 360, 1440, 10080]
+        existing_cooldown = existing.cooldown_minutes if existing else 1440
+        if existing_cooldown not in cooldown_options:
+            cooldown_options.append(existing_cooldown)
+            cooldown_options.sort()
+        cooldown_minutes = st.selectbox(
+            "Repeat cooldown",
+            cooldown_options,
+            index=cooldown_options.index(existing_cooldown),
+            format_func=lambda value: {
+                60: "1 hour",
+                360: "6 hours",
+                1440: "24 hours",
+                10080: "7 days",
+            }.get(value, f"{value} minutes"),
+        )
+        st.caption(
+            "Condition: the selected canonical pool must appear in a fresh successful FuruFlow scan, qualify as the chosen tier, and meet the strength threshold."
+        )
+        submitted = st.form_submit_button("Save changes" if existing else "Create alert", width="stretch")
+
+    if not submitted:
+        return
+    start_value = quiet_start.strftime("%H:%M:%S") if quiet_start else None
+    end_value = quiet_end.strftime("%H:%M:%S") if quiet_end else None
+    try:
+        if existing:
+            client.update_pool_alert(
+                alert_id=existing.id,
+                minimum_strength=minimum_strength,
+                signal_tier=signal_tier,
+                delivery_mode=delivery_mode,
+                quiet_hours_start=start_value,
+                quiet_hours_end=end_value,
+                timezone_name=timezone_name,
+                cooldown_minutes=cooldown_minutes,
+            )
+        else:
+            request_key = str(st.session_state.get("alert_create_request_key") or uuid.uuid4().hex)
+            st.session_state["alert_create_request_key"] = request_key
+            client.create_pool_alert(
+                target_pool_id=target_pool_id,
+                minimum_strength=minimum_strength,
+                signal_tier=signal_tier,
+                delivery_mode=delivery_mode,
+                quiet_hours_start=start_value,
+                quiet_hours_end=end_value,
+                timezone_name=timezone_name,
+                cooldown_minutes=cooldown_minutes,
+                client_request_key=request_key,
+            )
+    except AutomationStoreError as exc:
+        st.error(str(exc))
+        return
+    for key in ("alert_form_mode", "alert_edit_id", "alert_prefill_pool_id", "alert_create_request_key"):
+        st.session_state.pop(key, None)
+    st.success("Alert saved.")
+    st.rerun()
+
+
+def render_alerts_page(df: pd.DataFrame, *, is_pro: bool, account_timezone: str) -> None:
+    pool_labels = pool_label_mapping(df[["pool", "project", "symbol", "chain"]].to_dict("records")) if not df.empty else {}
+    try:
+        client = current_user_notification_client()
+        telegram_status = client.telegram_status()
+        alerts = [UserAlert.from_row(row) for row in client.list_alerts()]
+    except AutomationStoreError:
+        render_status(
+            "degraded",
+            "Alert controls temporarily unavailable",
+            "The authenticated alert service could not be reached. Market research remains available, and no alert state was guessed.",
+        )
+        return
+
+    linked = bool(telegram_status.get("available"))
+    status_kind = "success" if linked else "warning"
+    status_title = "Telegram connected" if linked else "Telegram connection required"
+    status_copy = (
+        "Notifications use your verified Telegram connection. Routing identifiers and bot credentials are never shown here."
+        if linked
+        else "A trusted operator must verify and link your Telegram destination before an alert can be created or resumed."
+    )
+    render_status(status_kind, status_title, status_copy)
+
+    action_cols = st.columns([1, 2])
+    with action_cols[0]:
+        if st.button("Create alert", key="alerts_create", width="stretch", disabled=not linked):
+            st.session_state["alert_form_mode"] = "create"
+            st.session_state["alert_create_request_key"] = uuid.uuid4().hex
+            st.rerun()
+    with action_cols[1]:
+        st.caption("Delivery channel: Telegram · one verified account connection · no browser-provided routing IDs")
+
+    if st.session_state.get("alert_form_mode") == "create":
+        _alert_form(
+            client,
+            pool_labels=pool_labels,
+            is_pro=is_pro,
+            account_timezone=account_timezone,
+        )
+
+    if not alerts:
+        render_state(
+            "No alerts yet",
+            "Create a pool alert to be notified when that exact pool qualifies in the existing FuruFlow signal pipeline.",
+        )
+        return
+
+    st.markdown("### Configured alerts")
+    for alert in alerts:
+        with st.container(border=True):
+            state_label = "Active" if alert.enabled else "Paused"
+            st.markdown(f"#### {safe_pool_label(alert.target_pool_id, pool_labels)}")
+            st.caption(f"{state_label} · Telegram · {alert.delivery_mode.title()} delivery")
+            st.markdown(alert_explanation(alert))
+            metadata = st.columns(3)
+            metadata[0].metric("Last evaluated", format_alert_time(alert.last_evaluated_at))
+            metadata[1].metric("Last triggered", format_alert_time(alert.last_triggered_at))
+            delivery_label = alert.last_delivery_state.replace("_", " ").title() if alert.last_delivery_state else "No delivery yet"
+            metadata[2].metric("Latest delivery", delivery_label)
+
+            controls = st.columns(4)
+            if controls[0].button("Edit", key=f"alert_edit_{alert.id}", width="stretch"):
+                st.session_state["alert_edit_id"] = alert.id
+                st.rerun()
+            if controls[1].button(
+                "Pause" if alert.enabled else "Resume",
+                key=f"alert_toggle_{alert.id}",
+                width="stretch",
+                disabled=not linked and not alert.enabled,
+            ):
+                try:
+                    client.set_alert_enabled(alert.id, not alert.enabled)
+                except AutomationStoreError as exc:
+                    st.error(str(exc))
+                else:
+                    st.rerun()
+            if controls[2].button("Send test", key=f"alert_test_{alert.id}", width="stretch", disabled=not alert.enabled):
+                try:
+                    client.request_test_delivery(alert.id)
+                except AutomationStoreError as exc:
+                    st.error(str(exc))
+                else:
+                    st.success("Test queued through the durable Telegram delivery pipeline.")
+            if controls[3].button("Delete", key=f"alert_delete_{alert.id}", width="stretch"):
+                st.session_state["alert_delete_confirm"] = alert.id
+                st.rerun()
+
+            if st.session_state.get("alert_delete_confirm") == alert.id:
+                st.warning("Delete this alert? Delivery audit records remain retained by the operational system.")
+                confirm_cols = st.columns(2)
+                if confirm_cols[0].button("Confirm delete", key=f"alert_delete_confirm_{alert.id}", width="stretch"):
+                    try:
+                        client.delete_alert(alert.id)
+                    except AutomationStoreError as exc:
+                        st.error(str(exc))
+                    else:
+                        st.session_state.pop("alert_delete_confirm", None)
+                        st.rerun()
+                if confirm_cols[1].button("Cancel", key=f"alert_delete_cancel_{alert.id}", width="stretch"):
+                    st.session_state.pop("alert_delete_confirm", None)
+                    st.rerun()
+
+            if st.session_state.get("alert_edit_id") == alert.id:
+                _alert_form(
+                    client,
+                    pool_labels=pool_labels,
+                    is_pro=is_pro,
+                    account_timezone=account_timezone,
+                    existing=alert,
+                )
 inject_css()
 inject_shell_css()
 render_pending_session_activation()
@@ -1998,7 +2269,7 @@ elif content_page == "Pool Detail":
                                 key=f"download_pool_card_{current_pool_id}",
                             )
 
-            c1, c2 = st.columns(2)
+            c1, c2, c3 = st.columns(3)
             with c1:
                 watched = row["pool"] in st.session_state.watchlist
                 st.markdown("<div class='watch-wrap'>", unsafe_allow_html=True)
@@ -2013,6 +2284,19 @@ elif content_page == "Pool Detail":
                     st.rerun()
                 st.markdown("</div>", unsafe_allow_html=True)
             with c2:
+                if st.button(
+                    "Create alert" if signed_in else "Sign in for alerts",
+                    key=f"pool_alert_{current_pool_id}",
+                    width="stretch",
+                    disabled=not signed_in or market_source_status == "sample",
+                    help="Sample-mode pools cannot become persistent alerts." if market_source_status == "sample" else None,
+                ):
+                    st.session_state.update(alert_creation_state(current_pool_id))
+                    st.query_params["page"] = "Alerts"
+                    if "pool" in st.query_params:
+                        del st.query_params["pool"]
+                    st.rerun()
+            with c3:
                 st.markdown("<div class='pool-wrap'>", unsafe_allow_html=True)
                 st.link_button("Open Pool", row["pool_url"], width="stretch")
                 st.markdown("</div>", unsafe_allow_html=True)
@@ -2125,8 +2409,8 @@ elif content_page == "Methodology & Data Status":
         st.markdown("</div>", unsafe_allow_html=True)
 
 elif content_page == "Alerts":
-    render_status("warning", "Alert controls are not available yet", "Existing alert snapshots remain visible in Activity & Digests. Delivery setup is not fabricated or activated here.")
-    render_state("Coming later", "A future release can centralize rules, delivery channels, quiet hours, and delivery history after those capabilities are implemented and validated.")
+    alert_target_df = df if market_source_status in {"live", "partial"} else df.iloc[0:0]
+    render_alerts_page(alert_target_df, is_pro=is_pro, account_timezone=str(db_user.get("timezone") or "UTC"))
 
 elif content_page == "Account & Billing":
     st.markdown("<div class='panel'>", unsafe_allow_html=True)
