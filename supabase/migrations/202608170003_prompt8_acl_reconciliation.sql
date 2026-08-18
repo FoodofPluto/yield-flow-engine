@@ -1,4 +1,4 @@
-﻿begin;
+begin;
 
 -- Prompt 2 trusted entitlement mutation:
 -- service-only; browser/API user roles must never execute it.
