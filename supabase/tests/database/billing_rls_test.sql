@@ -2,7 +2,7 @@ begin;
 create extension if not exists pgtap with schema extensions;
 
 set local search_path = public, extensions;
-select plan(25);
+select plan(38);
 
 insert into auth.users(id, aud, role, email, email_confirmed_at, raw_app_meta_data, raw_user_meta_data)
 values
@@ -72,6 +72,95 @@ select is(
   (select status from public.subscriptions where user_id = '11111111-1111-4111-8111-111111111111'),
   'canceled',
   'durable subscription state records cancellation'
+);
+select is(
+  public.service_apply_stripe_subscription(
+    null, 'cus_AAAAAAAAAAAAAAAA', 'sub_AAAAAAAAAAAAAAAA',
+    'active', null, now() + interval '30 days', true, 310, 'evt_cancel_scheduled'
+  ),
+  '11111111-1111-4111-8111-111111111111'::uuid,
+  'scheduled cancellation updates the existing durable subscription'
+);
+select ok(
+  (select subscription_pro_active from public.entitlements where user_id = '11111111-1111-4111-8111-111111111111')
+  and (select cancel_at_period_end from public.subscriptions where user_id = '11111111-1111-4111-8111-111111111111'),
+  'active scheduled cancellation preserves Pro through the paid period'
+);
+select is(
+  public.service_apply_stripe_subscription(
+    null, 'cus_AAAAAAAAAAAAAAAA', 'sub_AAAAAAAAAAAAAAAA',
+    'past_due', null, now() + interval '30 days', false, 320, 'evt_past_due'
+  ),
+  '11111111-1111-4111-8111-111111111111'::uuid,
+  'past_due updates the existing durable subscription'
+);
+select ok(
+  not (select subscription_pro_active from public.entitlements where user_id = '11111111-1111-4111-8111-111111111111'),
+  'past_due follows the strict non-active revocation policy'
+);
+select is(
+  public.service_apply_stripe_subscription(
+    null, 'cus_AAAAAAAAAAAAAAAA', 'sub_AAAAAAAAAAAAAAAA',
+    'active', null, now() + interval '30 days', false, 330, 'evt_recovered'
+  ),
+  '11111111-1111-4111-8111-111111111111'::uuid,
+  'recovery updates the existing durable subscription'
+);
+select ok(
+  (select subscription_pro_active from public.entitlements where user_id = '11111111-1111-4111-8111-111111111111'),
+  'recovery from delinquency to active restores Pro'
+);
+select is(
+  public.service_apply_stripe_subscription(
+    null, 'cus_AAAAAAAAAAAAAAAA', 'sub_AAAAAAAAAAAAAAAA',
+    'unpaid', null, now(), false, 340, 'evt_unpaid'
+  ),
+  '11111111-1111-4111-8111-111111111111'::uuid,
+  'unpaid updates the existing durable subscription'
+);
+select ok(
+  not (select subscription_pro_active from public.entitlements where user_id = '11111111-1111-4111-8111-111111111111'),
+  'unpaid does not grant Pro'
+);
+select ok(
+  not (public.service_apply_stripe_subscription(
+    null, 'cus_AAAAAAAAAAAAAAAA', 'sub_AAAAAAAAAAAAAAAA',
+    'incomplete', null, now(), false, 350, 'evt_incomplete'
+  ) is null)
+  and not (select subscription_pro_active from public.entitlements where user_id = '11111111-1111-4111-8111-111111111111'),
+  'incomplete does not grant Pro'
+);
+select ok(
+  not (public.service_apply_stripe_subscription(
+    null, 'cus_AAAAAAAAAAAAAAAA', 'sub_AAAAAAAAAAAAAAAA',
+    'incomplete_expired', null, now(), false, 360, 'evt_incomplete_expired'
+  ) is null)
+  and not (select subscription_pro_active from public.entitlements where user_id = '11111111-1111-4111-8111-111111111111'),
+  'incomplete_expired does not grant Pro'
+);
+select ok(
+  not (public.service_apply_stripe_subscription(
+    null, 'cus_AAAAAAAAAAAAAAAA', 'sub_AAAAAAAAAAAAAAAA',
+    'paused', null, now(), false, 370, 'evt_paused'
+  ) is null)
+  and not (select subscription_pro_active from public.entitlements where user_id = '11111111-1111-4111-8111-111111111111'),
+  'paused does not grant Pro'
+);
+select ok(
+  not (public.service_apply_stripe_subscription(
+    null, 'cus_AAAAAAAAAAAAAAAA', 'sub_AAAAAAAAAAAAAAAA',
+    'trialing', null, now(), false, 380, 'evt_trialing'
+  ) is null)
+  and not (select subscription_pro_active from public.entitlements where user_id = '11111111-1111-4111-8111-111111111111'),
+  'trialing does not grant Pro for the no-trial product'
+);
+select ok(
+  not (public.service_apply_stripe_subscription(
+    null, 'cus_AAAAAAAAAAAAAAAA', 'sub_AAAAAAAAAAAAAAAA',
+    'canceled', null, now(), false, 390, 'evt_terminal_canceled'
+  ) is null)
+  and not (select subscription_pro_active from public.entitlements where user_id = '11111111-1111-4111-8111-111111111111'),
+  'terminal cancellation leaves subscription-derived Pro revoked'
 );
 select is(
   public.service_apply_stripe_subscription(

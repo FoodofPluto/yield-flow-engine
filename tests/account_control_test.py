@@ -36,7 +36,9 @@ def _environment() -> dict[str, str]:
     }
 
 
-def _transport(*, entitlement: dict | None = None, unavailable: bool = False) -> httpx.MockTransport:
+def _transport(
+    *, entitlement: dict | None = None, subscription: dict | None = None, unavailable: bool = False
+) -> httpx.MockTransport:
     default = {
         "user_id": USER_A,
         "is_admin": False,
@@ -63,7 +65,7 @@ def _transport(*, entitlement: dict | None = None, unavailable: bool = False) ->
             return httpx.Response(200, json=[entitlement or default] if allowed else [])
         if path.endswith("/subscriptions"):
             allowed = bearer == "token-a" and USER_A in query
-            return httpx.Response(200, json=[] if allowed else [])
+            return httpx.Response(200, json=[subscription] if allowed and subscription else [])
         if path.endswith("/entitlements") and request.method in {"PATCH", "POST", "DELETE"}:
             return httpx.Response(403, json={"message": "RLS"})
         if "/rpc/" in path and bearer == SERVICE_KEY:
@@ -118,6 +120,46 @@ def test_free_role_is_denied_and_unavailable_state_fails_closed() -> None:
             SupabaseAccountClient(transport=_transport(unavailable=True)).get_account(USER_A, "token-a", environment="test")
     free.update({"email_verified": True, "_identity_verified": True})
     assert not auth_service.can_access_pro(free)
+
+
+def test_subscription_entitlement_survives_account_reconstruction_and_revocation_does_not_resurrect() -> None:
+    active_entitlement = {
+        "user_id": USER_A,
+        "is_admin": False,
+        "pro_active": False,
+        "subscription_pro_active": True,
+        "lifetime_access": False,
+        "demo_expires_at": None,
+        "demo_environment": None,
+    }
+    subscription = {
+        "user_id": USER_A,
+        "status": "active",
+        "current_period_end": "2027-01-01T00:00:00+00:00",
+        "cancel_at_period_end": False,
+    }
+    with patch.dict(os.environ, _environment(), clear=False):
+        first_session = SupabaseAccountClient(
+            transport=_transport(entitlement=active_entitlement, subscription=subscription)
+        ).get_account(USER_A, "token-a", environment="test")
+        reconstructed_session = SupabaseAccountClient(
+            transport=_transport(entitlement=active_entitlement, subscription=subscription)
+        ).get_account(USER_A, "token-a", environment="test")
+    for account in (first_session, reconstructed_session):
+        account.update({"email_verified": True, "_identity_verified": True})
+        assert auth_service.can_access_pro(account)
+        assert account["subscription_status"] == "active"
+
+    # A stale local object cannot become the authority after durable revocation.
+    revoked_entitlement = {**active_entitlement, "subscription_pro_active": False}
+    revoked_subscription = {**subscription, "status": "canceled", "cancel_at_period_end": False}
+    with patch.dict(os.environ, _environment(), clear=False):
+        after_revocation = SupabaseAccountClient(
+            transport=_transport(entitlement=revoked_entitlement, subscription=revoked_subscription)
+        ).get_account(USER_A, "token-a", environment="test")
+    after_revocation.update({"email_verified": True, "_identity_verified": True})
+    assert not auth_service.can_access_pro(after_revocation)
+    assert after_revocation["subscription_status"] == "canceled"
 
 
 def test_demo_is_short_lived_nonproduction_and_blocks_delivery() -> None:

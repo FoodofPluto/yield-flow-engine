@@ -184,3 +184,12 @@ users. Never use a live key.
 Local tests prove deterministic code and database behavior only; they are not
 proof that the remote Stripe webhook, portal configuration, or Render routing is
 correct. Prompt 8 becomes frozen only after this separate staging gate passes.
+
+## Checkpoint C lifecycle validation
+
+The characterized policy above remains unchanged for Checkpoint C: only
+`active` grants subscription-derived Pro, scheduled cancellation preserves it
+while Stripe remains active, and every recognized non-active state revokes it.
+The exact two-user activation, persistence, update, cancellation, delinquency,
+ordering, idempotency, ownership-conflict, invalid-signature, and frozen-feature
+staging procedure is in [CHECKPOINT_C_STAGING.md](CHECKPOINT_C_STAGING.md).

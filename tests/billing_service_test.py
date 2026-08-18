@@ -47,6 +47,7 @@ def _subscription(
     status: str = "active",
     user_id: str = USER_A,
     customer_id: str = "cus_AAAAAAAAAAAAAAAA",
+    cancel_at_period_end: bool = False,
 ) -> dict[str, Any]:
     return {
         "id": "sub_AAAAAAAAAAAAAAAA",
@@ -54,7 +55,7 @@ def _subscription(
         "status": status,
         "metadata": {"furuflow_user_id": user_id},
         "current_period_end": 1800000000,
-        "cancel_at_period_end": status == "active" and False,
+        "cancel_at_period_end": cancel_at_period_end,
         "items": {"data": [{"price": {"id": config.price_id, "product": config.product_id}}]},
     }
 
@@ -125,7 +126,11 @@ class FakeAccounts:
             {
                 "provider_customer_id": customer or mapping.get("provider_customer_id"),
                 "provider_subscription_id": subscription or mapping.get("provider_subscription_id"),
+                "latest_checkout_session_id": values.get("checkout_session_id")
+                or mapping.get("latest_checkout_session_id"),
                 "status": values["status"],
+                "current_period_end": values.get("period_end"),
+                "cancel_at_period_end": values.get("cancel_at_period_end", False),
                 "event_created": values["event_created"],
                 "event_id": values["event_id"],
             }
@@ -340,6 +345,211 @@ def test_active_then_canceled_changes_only_subscription_derived_access() -> None
     assert service.handle_webhook(b"{}", "valid")
     assert not accounts.entitlements[USER_A]["subscription_pro_active"]
     assert accounts.entitlements[USER_A]["pro_active"]
+
+
+def test_checkout_completion_activates_only_the_durable_owner_and_is_idempotent() -> None:
+    service, accounts, gateway = _service()
+    accounts.mappings[USER_A] = _mapping(USER_A, "cus_AAAAAAAAAAAAAAAA")
+    gateway.event = {
+        "id": "evt_checkout_complete",
+        "type": "checkout.session.completed",
+        "created": 100,
+        "data": {
+            "object": {
+                "id": "cs_AAAAAAAAAAAAAAAA",
+                "mode": "subscription",
+                "subscription": "sub_AAAAAAAAAAAAAAAA",
+                "client_reference_id": USER_A,
+                "metadata": {"furuflow_user_id": USER_A},
+            }
+        },
+    }
+
+    assert service.handle_webhook(b"{}", "valid")
+    assert not service.handle_webhook(b"{}", "valid")
+    assert gateway.retrieve_calls == ["sub_AAAAAAAAAAAAAAAA"]
+    assert accounts.applies == 1
+    assert accounts.mappings[USER_A]["latest_checkout_session_id"] == "cs_AAAAAAAAAAAAAAAA"
+    assert accounts.entitlements[USER_A]["subscription_pro_active"]
+    assert not accounts.entitlements[USER_B]["subscription_pro_active"]
+
+
+def test_checkout_completion_cannot_redirect_a_subscription_to_a_foreign_user() -> None:
+    service, accounts, gateway = _service()
+    accounts.mappings[USER_A] = _mapping(USER_A, "cus_AAAAAAAAAAAAAAAA")
+    gateway.event = {
+        "id": "evt_foreign_checkout",
+        "type": "checkout.session.completed",
+        "created": 100,
+        "data": {
+            "object": {
+                "id": "cs_AAAAAAAAAAAAAAAA",
+                "mode": "subscription",
+                "subscription": "sub_AAAAAAAAAAAAAAAA",
+                "client_reference_id": USER_B,
+                "metadata": {"furuflow_user_id": USER_B},
+            }
+        },
+    }
+
+    with pytest.raises(BillingOperationError, match="mapping is inconsistent"):
+        service.handle_webhook(b"{}", "valid")
+    assert accounts.applies == 0
+    assert not accounts.entitlements[USER_B]["subscription_pro_active"]
+
+
+@pytest.mark.parametrize(
+    ("status", "expected_pro"),
+    [
+        ("inactive", False),
+        ("incomplete", False),
+        ("incomplete_expired", False),
+        ("trialing", False),
+        ("active", True),
+        ("past_due", False),
+        ("canceled", False),
+        ("unpaid", False),
+        ("paused", False),
+    ],
+)
+def test_every_supported_subscription_status_has_one_deterministic_entitlement_result(
+    status: str, expected_pro: bool
+) -> None:
+    service, accounts, gateway = _service()
+    accounts.mappings[USER_A] = _mapping(USER_A, "cus_AAAAAAAAAAAAAAAA")
+    gateway.event = {
+        "id": f"evt_{status}",
+        "type": "customer.subscription.updated",
+        "created": 100,
+        "data": {"object": _subscription(service.config, status=status)},
+    }
+
+    service.handle_webhook(b"{}", "valid")
+
+    assert accounts.mappings[USER_A]["status"] == status
+    assert accounts.entitlements[USER_A]["subscription_pro_active"] is expected_pro
+    assert not accounts.entitlements[USER_B]["subscription_pro_active"]
+
+
+def test_scheduled_cancellation_preserves_pro_until_terminal_cancellation() -> None:
+    service, accounts, gateway = _service()
+    accounts.mappings[USER_A] = _mapping(USER_A, "cus_AAAAAAAAAAAAAAAA")
+    gateway.event = {
+        "id": "evt_cancel_scheduled",
+        "type": "customer.subscription.updated",
+        "created": 100,
+        "data": {
+            "object": _subscription(
+                service.config,
+                status="active",
+                cancel_at_period_end=True,
+            )
+        },
+    }
+    service.handle_webhook(b"{}", "valid")
+    assert accounts.mappings[USER_A]["status"] == "active"
+    assert accounts.mappings[USER_A]["cancel_at_period_end"] is True
+    assert accounts.mappings[USER_A]["current_period_end"] is not None
+    assert accounts.entitlements[USER_A]["subscription_pro_active"]
+
+    gateway.event = {
+        "id": "evt_cancel_terminal",
+        "type": "customer.subscription.deleted",
+        "created": 200,
+        "data": {"object": _subscription(service.config, status="canceled")},
+    }
+    service.handle_webhook(b"{}", "valid")
+    assert accounts.mappings[USER_A]["status"] == "canceled"
+    assert not accounts.entitlements[USER_A]["subscription_pro_active"]
+
+
+def test_delinquency_recovery_updates_one_subscription_without_affecting_user_b() -> None:
+    service, accounts, gateway = _service()
+    accounts.mappings[USER_A] = _mapping(USER_A, "cus_AAAAAAAAAAAAAAAA")
+    stable_mapping = accounts.mappings[USER_A]
+    for created, status in ((100, "active"), (200, "past_due"), (300, "active")):
+        gateway.event = {
+            "id": f"evt_{created}_{status}",
+            "type": "customer.subscription.updated",
+            "created": created,
+            "data": {"object": _subscription(service.config, status=status)},
+        }
+        service.handle_webhook(b"{}", "valid")
+
+    assert len(accounts.mappings) == 1
+    assert accounts.mappings[USER_A] is stable_mapping
+    assert accounts.mappings[USER_A]["provider_subscription_id"] == "sub_AAAAAAAAAAAAAAAA"
+    assert accounts.mappings[USER_A]["status"] == "active"
+    assert accounts.entitlements[USER_A]["subscription_pro_active"]
+    assert not accounts.entitlements[USER_B]["subscription_pro_active"]
+
+
+def test_invoice_failure_and_recovery_reconcile_the_current_subscription() -> None:
+    service, accounts, gateway = _service()
+    accounts.mappings[USER_A] = _mapping(
+        USER_A, "cus_AAAAAAAAAAAAAAAA", "sub_AAAAAAAAAAAAAAAA", status="active"
+    )
+    accounts.entitlements[USER_A]["subscription_pro_active"] = True
+    gateway.subscription = _subscription(service.config, status="past_due")
+    gateway.event = {
+        "id": "evt_invoice_failed",
+        "type": "invoice.payment_failed",
+        "created": 200,
+        "data": {"object": {"subscription": "sub_AAAAAAAAAAAAAAAA"}},
+    }
+    service.handle_webhook(b"{}", "valid")
+    assert not accounts.entitlements[USER_A]["subscription_pro_active"]
+
+    gateway.subscription = _subscription(service.config, status="active")
+    gateway.event = {
+        "id": "evt_invoice_recovered",
+        "type": "invoice.paid",
+        "created": 300,
+        "data": {
+            "object": {
+                "parent": {"subscription_details": {"subscription": "sub_AAAAAAAAAAAAAAAA"}}
+            }
+        },
+    }
+    service.handle_webhook(b"{}", "valid")
+    assert gateway.retrieve_calls == ["sub_AAAAAAAAAAAAAAAA", "sub_AAAAAAAAAAAAAAAA"]
+    assert accounts.entitlements[USER_A]["subscription_pro_active"]
+
+
+@pytest.mark.parametrize("status", ["active", "canceled"])
+def test_duplicate_subscription_lifecycle_event_has_exactly_one_effect(status: str) -> None:
+    service, accounts, gateway = _service()
+    accounts.mappings[USER_A] = _mapping(USER_A, "cus_AAAAAAAAAAAAAAAA")
+    gateway.event = {
+        "id": f"evt_duplicate_{status}",
+        "type": "customer.subscription.updated" if status == "active" else "customer.subscription.deleted",
+        "created": 100,
+        "data": {"object": _subscription(service.config, status=status)},
+    }
+    assert service.handle_webhook(b"{}", "valid")
+    assert not service.handle_webhook(b"{}", "valid")
+    assert accounts.applies == 1
+
+
+def test_older_cancellation_cannot_revoke_a_newer_active_state() -> None:
+    service, accounts, gateway = _service()
+    accounts.mappings[USER_A] = _mapping(USER_A, "cus_AAAAAAAAAAAAAAAA")
+    gateway.event = {
+        "id": "evt_new_active",
+        "type": "customer.subscription.updated",
+        "created": 200,
+        "data": {"object": _subscription(service.config, status="active")},
+    }
+    service.handle_webhook(b"{}", "valid")
+    gateway.event = {
+        "id": "evt_old_canceled",
+        "type": "customer.subscription.deleted",
+        "created": 100,
+        "data": {"object": _subscription(service.config, status="canceled")},
+    }
+    service.handle_webhook(b"{}", "valid")
+    assert accounts.mappings[USER_A]["status"] == "active"
+    assert accounts.entitlements[USER_A]["subscription_pro_active"]
 
 
 def test_stale_event_cannot_overwrite_newer_authoritative_state() -> None:

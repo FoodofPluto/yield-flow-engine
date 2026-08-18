@@ -28,6 +28,17 @@ def test_billing_urls_and_backend_errors_are_safe_and_non_authoritative() -> Non
     assert "Stripe-Signature" not in (ROOT / "deploy/render/nginx.conf.template").read_text(encoding="utf-8")
 
 
+def test_browser_return_query_only_renders_notice_and_cannot_grant_pro() -> None:
+    app = (ROOT / "app.py").read_text(encoding="utf-8")
+    return_block = app[app.index('if st.query_params.get("billing") == "return"') :]
+    return_block = return_block[: return_block.index('st.markdown("</div>"')]
+    assert "st.info" in return_block
+    assert "subscription_pro_active" not in return_block
+    assert "pro_active" not in return_block
+    assert "access_granted" not in return_block
+    assert "can_access_pro" not in return_block
+
+
 def test_prompt8_migration_preserves_manual_access_and_denies_browser_writes() -> None:
     sql = (ROOT / "supabase/migrations/202608170002_prompt8_production_billing.sql").read_text(encoding="utf-8")
     assert "subscription_pro_active" in sql
