@@ -9,16 +9,28 @@ import sys
 import time
 from typing import Callable, Mapping
 
+from billing_service import BillingConfig, BillingConfigurationError
+
 
 BROKER_ONLY_KEYS = (
     "SUPABASE_SERVICE_ROLE_KEY",
     "FURUFLOW_SESSION_ENCRYPTION_KEY",
+    "STRIPE_SECRET_KEY",
+    "STRIPE_WEBHOOK_SECRET",
+    "STRIPE_PRICE_ID",
+    "STRIPE_PRODUCT_ID",
 )
 BROKER_REQUIRED_KEYS = (
+    "ENVIRONMENT",
     "SUPABASE_URL",
     "SUPABASE_SERVICE_ROLE_KEY",
     "FURUFLOW_SESSION_ENCRYPTION_KEY",
     "FURUFLOW_SESSION_BRIDGE_KEY",
+    "FURUFLOW_SESSION_BROKER_PUBLIC_ORIGIN",
+    "STRIPE_SECRET_KEY",
+    "STRIPE_WEBHOOK_SECRET",
+    "STRIPE_PRICE_ID",
+    "STRIPE_PRODUCT_ID",
 )
 STREAMLIT_REQUIRED_KEYS = (
     "ENVIRONMENT",
@@ -76,6 +88,10 @@ def build_child_environments(source: Mapping[str, str]) -> tuple[dict[str, str],
 
     _required(source, STREAMLIT_REQUIRED_KEYS)
     _required(source, BROKER_REQUIRED_KEYS)
+    try:
+        BillingConfig.from_mapping(source)
+    except BillingConfigurationError as exc:
+        raise RuntimeError("Invalid trusted billing configuration.") from exc
 
     streamlit = dict(source)
     for key in BROKER_ONLY_KEYS:

@@ -43,7 +43,7 @@ separate non-root Unix identities:
 | Variable | Supervisor initially | Nginx | Streamlit | Broker |
 |---|:---:|:---:|:---:|:---:|
 | `PORT` | yes | no; rendered into config | yes | no |
-| `ENVIRONMENT` | yes | no | yes | no |
+| `ENVIRONMENT` | yes | no | yes | yes |
 | `DEV_MODE` | yes | no | yes | no |
 | `SUPABASE_URL` | yes | no | yes | yes |
 | `SUPABASE_ANON_KEY` | yes | no | yes | no |
@@ -51,16 +51,20 @@ separate non-root Unix identities:
 | `SUPABASE_REDIRECT_URL_PREVIEW` | yes | no | yes | no |
 | `SUPABASE_REDIRECT_URL_PRODUCTION` | yes | no | yes | no |
 | `FURUFLOW_SESSION_BROKER_INTERNAL_URL` | yes | no | yes, forced to loopback | no |
-| `FURUFLOW_SESSION_BROKER_PUBLIC_ORIGIN` | yes | no | yes | no |
+| `FURUFLOW_SESSION_BROKER_PUBLIC_ORIGIN` | yes | no | yes | yes |
 | `FURUFLOW_SESSION_BRIDGE_KEY` | yes | no | yes | yes |
 | `FURUFLOW_SESSION_ENCRYPTION_KEY` | yes | no | **no** | yes |
+| `STRIPE_SECRET_KEY` | yes | no | **no** | yes |
+| `STRIPE_WEBHOOK_SECRET` | yes | no | **no** | yes |
+| `STRIPE_PRICE_ID` / `STRIPE_PRODUCT_ID` | yes | no | **no** | yes |
 
 Nginx receives only a small execution environment and no `SUPABASE_*` or
 `FURUFLOW_*` values. The broker receives only its four required application
 variables plus a small execution environment. Streamlit receives the service
-environment after `SUPABASE_SERVICE_ROLE_KEY` and
-`FURUFLOW_SESSION_ENCRYPTION_KEY` have been removed. The supervisor also
-removes those two values from its own environment after starting the broker.
+environment after the service-role, session-encryption, and Stripe values have
+been removed. The supervisor also removes those broker-only values from its own
+environment after starting the broker. See `BILLING.md` for the Stripe test-mode
+and production-mode gates.
 
 This lets the existing production guard in `auth_session.py` continue to reject
 an unsafe Streamlit environment. The guard is not weakened or bypassed.
@@ -84,8 +88,8 @@ and activation tickets are not logged. Gunicorn access logging remains disabled.
    described in `ACCOUNT_CONTROL_PLANE.md`. Confirm `browser_sessions` and
    `browser_session_tickets` exist. Do not use the production project.
    Apply the Prompt 5 automation migration and Prompt 6 user-alert migration in
-   timestamp order before enabling alert controls, then run the complete pgTAP
-   suite.
+   timestamp order before enabling alert controls. Apply the Prompt 7 saved-pool
+   and Prompt 8 billing migrations, then run the complete pgTAP suite.
 2. In a trusted local shell, generate a Fernet key for
    `FURUFLOW_SESSION_ENCRYPTION_KEY`:
 
@@ -103,10 +107,12 @@ and activation tickets are not logged. Gunicorn access logging remains disabled.
    `furuflow-staging` (`free`) and one Docker cron service named
    `furuflow-telegram-worker-staging` (`starter`), both in `ohio`. There must be
    no private service or separately public Streamlit/broker service.
-5. During initial Blueprint creation, provide the web service's four `sync: false` values:
+5. During initial Blueprint creation, provide the web service's eight `sync: false` values:
    `SUPABASE_URL`, `SUPABASE_ANON_KEY`, `SUPABASE_SERVICE_ROLE_KEY`, and
-   `FURUFLOW_SESSION_ENCRYPTION_KEY`. Use only values from the staging Supabase
-   project. Do not paste any value into `render.yaml` or another tracked file.
+   `FURUFLOW_SESSION_ENCRYPTION_KEY`, plus `STRIPE_SECRET_KEY`,
+   `STRIPE_WEBHOOK_SECRET`, `STRIPE_PRICE_ID`, and `STRIPE_PRODUCT_ID`. Use only
+   values from the staging Supabase project and Stripe test mode. Do not paste
+   any value into `render.yaml` or another tracked file.
    Separately provide the cron service's `SUPABASE_URL`,
    `SUPABASE_SERVICE_ROLE_KEY`, and `TELEGRAM_BOT_TOKEN`. On an existing
    Blueprint, add new secret values manually in the dashboard.
@@ -190,10 +196,11 @@ synthetic/public data.
 Production should retain the three-service same-origin design:
 
 1. a public Nginx web service that exposes Streamlit and only the broker's exact
-   `/auth/session/activate` endpoint;
+   `/auth/session/activate`, `/billing/checkout`, `/billing/portal`, and
+   `/stripe/webhook` endpoints;
 2. a private Streamlit service that never receives the Supabase service-role or
    session-encryption key; and
-3. a private Gunicorn broker service that alone receives those credentials and
+3. a private Gunicorn broker service that alone receives those credentials and Stripe secrets and
    exposes `/v1/session/*` only on Render's private network.
 
 All production services belong in the same Render region. Streamlit and Nginx

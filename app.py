@@ -5,12 +5,12 @@ import tempfile
 import uuid
 
 import json
+import html
 import os
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, time, timezone
 from pathlib import Path
 from typing import Any
-from urllib.parse import quote
 
 import pandas as pd
 import plotly.express as px
@@ -23,7 +23,6 @@ from auth import login_form
 from auth_session import render_pending_session_activation
 from automation.store import AutomationStoreError
 from auth_service import can_access_pro, claim_session, get_current_user, is_admin, logout, validate_session
-from stripe_stub import render_checkout_section
 from utils.external_side_effects import set_demo_side_effect_block
 from history_store import load_history, save_snapshot
 from engine.performance import alert_snapshot, latest_signal_history, trend_summary_df
@@ -95,7 +94,6 @@ FREE_SORT_OPTIONS = ["Highest APY", "Largest TVL"]
 PRO_SORT_OPTIONS = ["FuruFlow rank", "Lowest risk", "Highest 24h volume", "Largest signal move"]
 TIMEOUT = 18
 SIGNAL_SAMPLE = 16
-FURUFLOW_STRIPE_LINK = os.getenv("FURUFLOW_STRIPE_LINK", "https://buy.stripe.com/bJefZgcgmbYecju4ztd3i00")
 AFFILIATE_LINKS = {
     "aave": "https://app.aave.com/?ref=furuflow",
     "aave-v3": "https://app.aave.com/?ref=furuflow",
@@ -769,20 +767,78 @@ def build_signal_card_assets(*, pool_name: str, chain: str, apy: str, tvl: str, 
     return {"preview_path": preview_path, "export_path": export_path}
 
 
-def get_checkout_link(current_user: dict[str, Any] | None = None) -> str:
-    base = FURUFLOW_STRIPE_LINK.strip()
-    current_user = current_user or get_current_user()
-    if not current_user:
-        return base
-    sep = "&" if "?" in base else "?"
-    params = []
-    current_email = (current_user.get("email") or "").strip().lower()
-    if current_email:
-        params.append(f"prefilled_email={quote(current_email)}")
-    if current_user.get("_identity_verified") and current_user.get("user_id"):
-        client_reference_id = f"furuflow_user:{current_user['user_id']}"
-        params.append(f"client_reference_id={quote(client_reference_id)}")
-    return f"{base}{sep}{'&'.join(params)}" if params else base
+def render_billing_action(
+    current_user: dict[str, Any] | None,
+    *,
+    label: str,
+    portal: bool = False,
+) -> None:
+    """Render a fixed POST action; no account or provider identifier reaches the browser."""
+
+    eligible = bool(
+        current_user
+        and current_user.get("_identity_verified")
+        and current_user.get("_account_authority") == "supabase"
+        and not current_user.get("demo_active")
+    )
+    if not eligible:
+        st.caption("Sign in with a verified non-demo account to use billing.")
+        return
+    action = "/billing/portal" if portal else "/billing/checkout"
+    safe_label = html.escape(label)
+    st.markdown(
+        f'<form method="post" action="{action}" target="_top">'
+        f'<button type="submit" style="width:100%;min-height:2.6rem;cursor:pointer">{safe_label}</button>'
+        "</form>",
+        unsafe_allow_html=True,
+    )
+
+
+def billing_access_source(user: dict[str, Any] | None) -> str:
+    user = user or {}
+    if user.get("is_admin"):
+        return "Administrator access"
+    if user.get("lifetime_access"):
+        return "Lifetime access"
+    if user.get("pro_active"):
+        return "Account grant"
+    if user.get("subscription_pro_active"):
+        return "Active subscription"
+    if user.get("demo_active"):
+        return "Time-limited demo"
+    return "Free plan"
+
+
+def subscription_summary(user: dict[str, Any] | None) -> str | None:
+    user = user or {}
+    status = user.get("subscription_status")
+    if not isinstance(status, str):
+        return None
+    labels = {
+        "active": "Active",
+        "trialing": "Trialing — access pending",
+        "past_due": "Payment needs attention — Pro access is paused",
+        "unpaid": "Unpaid — Pro access is paused",
+        "canceled": "Ended",
+        "incomplete": "Setup incomplete",
+        "incomplete_expired": "Setup expired",
+        "paused": "Paused",
+        "inactive": "No active subscription",
+    }
+    summary = labels.get(status, "Not active")
+    period_end = user.get("subscription_period_end")
+    if isinstance(period_end, str):
+        try:
+            date_label = datetime.fromisoformat(period_end.replace("Z", "+00:00")).strftime("%b %d, %Y")
+            if status == "active" and user.get("subscription_cancel_at_period_end"):
+                return f"Active until {date_label}; cancellation is scheduled"
+            if status == "active":
+                return f"Active; renews {date_label}"
+            if status in {"canceled", "unpaid", "paused"}:
+                return f"{summary}; access ended {date_label}"
+        except ValueError:
+            pass
+    return summary
 
 
 def render_link_table(source_df: pd.DataFrame, title: str, description: str, *, limit: int = 8, sort_cols: list[str] | None = None) -> None:
@@ -1011,8 +1067,7 @@ def require_pro(feature_name: str, preview_df: pd.DataFrame | None = None, previ
         st.caption(f"Signed in as {st.session_state.get('auth_email')}")
     else:
         st.info("Keep browsing in free mode, or sign in when you're ready to unlock Pro.")
-    render_checkout_section(current_email=st.session_state.get("auth_email", ""))
-    st.link_button("Upgrade to FuruFlow Pro — $20/month", get_checkout_link())
+    render_billing_action(get_current_user(), label="Upgrade to FuruFlow Pro — $20/month")
     st.markdown("</div>", unsafe_allow_html=True)
     st.stop()
 
@@ -1175,7 +1230,7 @@ def render_home_page(filtered: pd.DataFrame, full_filtered: pd.DataFrame, watchl
             st.markdown("<div class='signal-card'><div class='signal-title'>FuruFlow Pro</div><div class='signal-copy'>Unlock the full Signals view, deeper Discover access, advanced ranking, Yield Spreads, and strategy workflows.</div></div>", unsafe_allow_html=True)
             if len(full_filtered) > len(filtered):
                 st.caption(f"Free mode currently shows the top {len(filtered):,} of {len(full_filtered):,} matching pools.")
-            st.link_button("Upgrade to FuruFlow Pro — $20/month", get_checkout_link())
+            render_billing_action(db_user, label="Upgrade to FuruFlow Pro — $20/month")
     st.markdown("</div>", unsafe_allow_html=True)
 
     bottom_left, bottom_mid, bottom_right = st.columns(3, gap="large")
@@ -1253,7 +1308,7 @@ def render_recaps_page(alert_stats: dict[str, Any], history_latest_df: pd.DataFr
             st.dataframe(history_trend_df, width="stretch", hide_index=True, height=320, column_config={"APY": st.column_config.NumberColumn(format="%.2f%%"), "TVL (USD)": st.column_config.NumberColumn(format="$%.0f"), "APY Δ": st.column_config.NumberColumn(format="%.2f")})
         if not is_pro:
             st.markdown("<div class='note'>Free mode can see the recap layer. Pro is where you get the full signal engine, stronger alerts, and faster decision workflows.</div>", unsafe_allow_html=True)
-            st.link_button("Upgrade to FuruFlow Pro — $20/month", get_checkout_link())
+            render_billing_action(db_user, label="Upgrade to FuruFlow Pro — $20/month")
         st.markdown("</div>", unsafe_allow_html=True)
 
 
@@ -1892,7 +1947,7 @@ elif content_page == "Scanner":
             st.download_button("Download current table as CSV", csv, file_name="furuflow_scanner.csv", mime="text/csv")
         else:
             st.markdown("<div class='signal-card'><div class='signal-title'>CSV export is Pro</div><div class='signal-copy'>Discover stays open to everyone; export and deeper decision workflows are part of Pro.</div></div>", unsafe_allow_html=True)
-            st.link_button("Unlock CSV export", get_checkout_link(), width="stretch")
+            render_billing_action(db_user, label="Unlock CSV export")
         st.markdown("</div>", unsafe_allow_html=True)
     with right:
         st.markdown("<div class='panel'>", unsafe_allow_html=True)
@@ -2453,8 +2508,11 @@ elif content_page == "Pricing":
         st.markdown("<div class='panel'>", unsafe_allow_html=True)
         section_header("Pro · $20/month", "Add the intelligence layer", "Existing Pro entitlements unlock signals, deeper ranking, export, and Pro Tools.")
         st.markdown("- Full Signals view\n- Advanced ranking and deeper result depth\n- Strategy Builder and Yield Spreads\n- CSV export")
-        st.link_button("Upgrade to FuruFlow Pro", get_checkout_link(), width="stretch")
-        st.caption("Billing lifecycle and entitlement semantics are unchanged by this UI release.")
+        if is_pro:
+            st.success(f"Pro is active through {billing_access_source(db_user).lower()}.")
+        else:
+            render_billing_action(db_user, label="Upgrade to FuruFlow Pro")
+        st.caption("Paid access appears only after Stripe fulfillment is verified by FuruFlow.")
         st.markdown("</div>", unsafe_allow_html=True)
 
 elif content_page == "Methodology & Data Status":
@@ -2485,12 +2543,21 @@ elif content_page == "Alerts":
 
 elif content_page == "Account & Billing":
     st.markdown("<div class='panel'>", unsafe_allow_html=True)
-    section_header("Account", str(db_user.get("email") or "Signed-in account"), "Identity and privileges continue to come from the existing Supabase control plane.")
-    st.markdown(f"**Plan:** {'Admin' if admin_user else 'Pro' if is_pro else 'Free'}")
-    st.caption("Session restoration, single-session enforcement, authorization, and RLS boundaries are unchanged.")
-    if not is_pro:
-        render_checkout_section(current_email=str(db_user.get("email") or ""))
-        st.link_button("Upgrade to FuruFlow Pro", get_checkout_link(db_user), width="stretch")
+    section_header("Account & Billing", str(db_user.get("email") or "Signed-in account"), "Your plan comes from verified FuruFlow account state.")
+    st.markdown(f"**Current plan:** {'Pro' if is_pro else 'Free'}")
+    st.caption(f"Access source: {billing_access_source(db_user)}")
+    billing_status = subscription_summary(db_user)
+    if billing_status:
+        st.markdown(f"**Subscription:** {billing_status}")
+    if st.query_params.get("billing") == "return":
+        st.info("Billing returned successfully. Any plan change appears here only after secure provider confirmation.")
+    elif st.query_params.get("billing") == "cancelled":
+        st.info("Checkout was closed. Your current plan has not been changed by this return page.")
+    if not is_pro and not db_user.get("demo_active"):
+        render_billing_action(db_user, label="Upgrade to FuruFlow Pro")
+    if db_user.get("subscription_status") not in {None, "inactive", "incomplete_expired"}:
+        render_billing_action(db_user, label="Manage billing", portal=True)
+    st.caption("Account access remains available if Stripe is temporarily unavailable; billing actions may be retried later.")
     st.markdown("</div>", unsafe_allow_html=True)
 
 elif content_page == "Admin":

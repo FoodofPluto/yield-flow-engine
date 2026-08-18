@@ -86,7 +86,12 @@ class SupabaseAccountClient:
             "GET",
             "subscriptions",
             bearer=access_token,
-            params={"user_id": f"eq.{user_id}", "select": "*", "order": "updated_at.desc", "limit": "1"},
+            params={
+                "user_id": f"eq.{user_id}",
+                "select": "user_id,status,current_period_end,cancel_at_period_end,updated_at",
+                "order": "updated_at.desc",
+                "limit": "1",
+            },
         )
         if not isinstance(profile, list) or len(profile) != 1 or profile[0].get("id") != user_id:
             raise AccountStateUnavailable("The verified account profile is missing; access is denied.")
@@ -108,12 +113,13 @@ class SupabaseAccountClient:
             "timezone": profile[0].get("timezone", "UTC"),
             "is_admin": bool(row.get("is_admin")),
             "pro_active": bool(row.get("pro_active")),
+            "subscription_pro_active": bool(row.get("subscription_pro_active")),
             "lifetime_access": bool(row.get("lifetime_access")),
             "demo_active": demo_active,
             "demo_expires_at": row.get("demo_expires_at"),
             "subscription_status": subscription.get("status"),
-            "stripe_customer_id": subscription.get("provider_customer_id"),
-            "stripe_subscription_id": subscription.get("provider_subscription_id"),
+            "subscription_period_end": subscription.get("current_period_end"),
+            "subscription_cancel_at_period_end": bool(subscription.get("cancel_at_period_end")),
             "_account_authority": "supabase",
         }
 
@@ -203,6 +209,25 @@ class ServiceRoleAccountClient(SupabaseAccountClient):
             json_body={"event_provider": "stripe", "incoming_event_id": event_id, "incoming_type": event_type},
         ) is True
 
+    def get_stripe_mapping(self, user_id: str) -> dict[str, Any] | None:
+        rows = self._request(
+            "GET",
+            "subscriptions",
+            bearer=self._key,
+            params={"user_id": f"eq.{user_id}", "provider": "eq.stripe", "select": "*", "limit": "1"},
+        )
+        if not isinstance(rows, list):
+            raise AccountOperationError("Billing mapping is unavailable.")
+        return rows[0] if rows else None
+
+    def set_stripe_customer(self, *, user_id: str, customer_id: str) -> bool:
+        return self._request(
+            "POST",
+            "rpc/service_set_stripe_customer",
+            bearer=self._key,
+            json_body={"target_user_id": user_id, "customer_id": customer_id},
+        ) is True
+
     def finish_webhook_event(self, event_id: str, *, succeeded: bool, error_code: str | None = None) -> None:
         self._request(
             "POST",
@@ -223,6 +248,8 @@ class ServiceRoleAccountClient(SupabaseAccountClient):
         customer_id: str | None,
         subscription_id: str | None,
         status: str,
+        event_created: int,
+        event_id: str,
         checkout_session_id: str | None = None,
         period_end: str | None = None,
         cancel_at_period_end: bool = False,
@@ -239,9 +266,19 @@ class ServiceRoleAccountClient(SupabaseAccountClient):
                 "checkout_session_id": checkout_session_id,
                 "period_end": period_end,
                 "cancels_at_period_end": cancel_at_period_end,
+                "provider_event_created": event_created,
+                "provider_event_id": event_id,
             },
         )
         return str(value)
+
+    def reconcile_subscription_entitlement(self, user_id: str) -> bool:
+        return self._request(
+            "POST",
+            "rpc/service_reconcile_subscription_entitlement",
+            bearer=self._key,
+            json_body={"target_user_id": user_id},
+        ) is True
 
 
 def external_delivery_allowed(user: dict[str, Any] | None) -> bool:

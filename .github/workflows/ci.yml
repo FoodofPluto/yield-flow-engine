@@ -66,6 +66,7 @@ jobs:
           poetry run mypy --follow-imports=skip
           supabase_client.py
           account_control.py
+          billing_service.py
           auth_session.py
           furuflow_auth.py
           auth_service.py
@@ -75,6 +76,7 @@ jobs:
           scripts/manage_accounts.py
           scripts/migrate_legacy_accounts.py
           scripts/check_supabase_auth_health.py
+          scripts/reconcile_billing.py
 
       - name: Smoke-test CLI with local demo data
         run: poetry run engine --source demo --top 1

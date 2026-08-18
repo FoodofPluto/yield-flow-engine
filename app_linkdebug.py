@@ -1,11 +1,12 @@
 from __future__ import annotations
 
 import json
+import html
 import os
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from datetime import datetime
 from pathlib import Path
 from typing import Any
-from urllib.parse import quote
 
 import pandas as pd
 import plotly.express as px
@@ -17,7 +18,6 @@ from streamlit.components.v1 import html as st_html
 from auth import login_form
 from auth_session import render_pending_session_activation
 from auth_service import can_access_pro, claim_session, get_current_identity, get_current_user, is_admin, logout, validate_session
-from stripe_stub import render_checkout_section
 from utils.external_side_effects import set_demo_side_effect_block
 from history_store import load_history, save_snapshot
 from engine.performance import alert_snapshot, latest_signal_history, trend_summary_df
@@ -65,7 +65,6 @@ PAGE_LABELS = {
 TIMEOUT = 18
 SIGNAL_SAMPLE = 16
 WATCHLIST_FILE = Path(__file__).with_name("watchlist.json")
-FURUFLOW_STRIPE_LINK = os.getenv("FURUFLOW_STRIPE_LINK", "https://buy.stripe.com/bJefZgcgmbYecju4ztd3i00")
 AFFILIATE_LINKS = {
     "aave": "https://app.aave.com/?ref=furuflow",
     "aave-v3": "https://app.aave.com/?ref=furuflow",
@@ -685,20 +684,70 @@ def sample_pool_data(errors: list[str]) -> pd.DataFrame:
     return demo
 
 
-def get_checkout_link(current_user: dict[str, Any] | None = None) -> str:
-    base = FURUFLOW_STRIPE_LINK.strip()
+def render_billing_action(current_user: dict[str, Any] | None, *, label: str) -> None:
     current_user = current_user or get_current_user()
-    if not current_user:
-        return base
-    sep = "&" if "?" in base else "?"
-    params = []
-    current_email = (current_user.get("email") or "").strip().lower()
-    if current_email:
-        params.append(f"prefilled_email={quote(current_email)}")
-    if current_user.get("_identity_verified") and current_user.get("user_id"):
-        client_reference_id = f"furuflow_user:{current_user['user_id']}"
-        params.append(f"client_reference_id={quote(client_reference_id)}")
-    return f"{base}{sep}{'&'.join(params)}" if params else base
+    eligible = bool(
+        current_user
+        and current_user.get("_identity_verified")
+        and current_user.get("_account_authority") == "supabase"
+        and not current_user.get("demo_active")
+    )
+    if not eligible:
+        st.caption("Sign in with a verified non-demo account to use billing.")
+        return
+    st.markdown(
+        '<form method="post" action="/billing/checkout" target="_top">'
+        f'<button type="submit" style="width:100%;min-height:2.6rem;cursor:pointer">{html.escape(label)}</button>'
+        "</form>",
+        unsafe_allow_html=True,
+    )
+
+
+def billing_access_source(user: dict[str, Any] | None) -> str:
+    user = user or {}
+    if user.get("is_admin"):
+        return "Administrator access"
+    if user.get("lifetime_access"):
+        return "Lifetime access"
+    if user.get("pro_active"):
+        return "Account grant"
+    if user.get("subscription_pro_active"):
+        return "Active subscription"
+    if user.get("demo_active"):
+        return "Time-limited demo"
+    return "Free plan"
+
+
+def subscription_summary(user: dict[str, Any] | None) -> str | None:
+    user = user or {}
+    status = user.get("subscription_status")
+    if not isinstance(status, str):
+        return None
+    labels = {
+        "active": "Active",
+        "trialing": "Trialing — access pending",
+        "past_due": "Payment needs attention — Pro access is paused",
+        "unpaid": "Unpaid — Pro access is paused",
+        "canceled": "Ended",
+        "incomplete": "Setup incomplete",
+        "incomplete_expired": "Setup expired",
+        "paused": "Paused",
+        "inactive": "No active subscription",
+    }
+    summary = labels.get(status, "Not active")
+    period_end = user.get("subscription_period_end")
+    if isinstance(period_end, str):
+        try:
+            date_label = datetime.fromisoformat(period_end.replace("Z", "+00:00")).strftime("%b %d, %Y")
+            if status == "active" and user.get("subscription_cancel_at_period_end"):
+                return f"Active until {date_label}; cancellation is scheduled"
+            if status == "active":
+                return f"Active; renews {date_label}"
+            if status in {"canceled", "unpaid", "paused"}:
+                return f"{summary}; access ended {date_label}"
+        except ValueError:
+            pass
+    return summary
 
 
 def render_link_table(source_df: pd.DataFrame, title: str, description: str, *, limit: int = 8, sort_cols: list[str] | None = None) -> None:
@@ -928,8 +977,7 @@ def require_pro(feature_name: str, preview_df: pd.DataFrame | None = None, previ
         st.caption(f"Signed in as {st.session_state.get('auth_email')}")
     else:
         st.info("Keep browsing in free mode, or sign in when you're ready to unlock Pro.")
-    render_checkout_section(current_email=st.session_state.get("auth_email", ""))
-    st.link_button("Upgrade to FuruFlow Pro — $20/month", get_checkout_link())
+    render_billing_action(get_current_user(), label="Upgrade to FuruFlow Pro — $20/month")
     st.markdown("</div>", unsafe_allow_html=True)
     st.stop()
 
@@ -1070,7 +1118,7 @@ def render_home_page(filtered: pd.DataFrame, full_filtered: pd.DataFrame, watchl
             st.markdown("<div class='signal-card'><div class='signal-title'>FuruFlow Pro</div><div class='signal-copy'>Unlock the full signals view, deeper scanner access, advanced ranking, arbitrage, and strategy workflows.</div></div>", unsafe_allow_html=True)
             if len(full_filtered) > len(filtered):
                 st.caption(f"Free mode currently shows the top {len(filtered):,} of {len(full_filtered):,} matching pools.")
-            st.link_button("Upgrade to FuruFlow Pro — $20/month", get_checkout_link())
+            render_billing_action(db_user, label="Upgrade to FuruFlow Pro — $20/month")
     st.markdown("</div>", unsafe_allow_html=True)
 
     bottom_left, bottom_mid, bottom_right = st.columns(3, gap="large")
@@ -1148,7 +1196,7 @@ def render_recaps_page(alert_stats: dict[str, Any], history_latest_df: pd.DataFr
             st.dataframe(history_trend_df, width="stretch", hide_index=True, height=320, column_config={"APY": st.column_config.NumberColumn(format="%.2f%%"), "TVL (USD)": st.column_config.NumberColumn(format="$%.0f"), "APY Δ": st.column_config.NumberColumn(format="%.2f")})
         if not is_pro:
             st.markdown("<div class='note'>Free mode can see the recap layer. Pro is where you get the full signal engine, stronger alerts, and faster decision workflows.</div>", unsafe_allow_html=True)
-            st.link_button("Upgrade to FuruFlow Pro — $20/month", get_checkout_link())
+            render_billing_action(db_user, label="Upgrade to FuruFlow Pro — $20/month")
         st.markdown("</div>", unsafe_allow_html=True)
 
 
@@ -1318,7 +1366,7 @@ with st.sidebar:
 - Advanced ranking, arbitrage, and strategy builder
 - Stronger recap workflows and future alerts
 """)
-        st.link_button("Upgrade to FuruFlow Pro — $20/month", get_checkout_link())
+        render_billing_action(db_user, label="Upgrade to FuruFlow Pro — $20/month")
     st.markdown("<div class='sidebar-mini-note'>Use Home for the fastest read on the market, Signals for ranked conviction, and Recaps for the memory layer.</div>", unsafe_allow_html=True)
     st.markdown("</div>", unsafe_allow_html=True)
 
@@ -1391,7 +1439,7 @@ elif page == "Scanner":
             st.download_button("Download current table as CSV", csv, file_name="furuflow_scanner.csv", mime="text/csv")
         else:
             st.markdown("<div class='signal-card'><div class='signal-title'>CSV export is Pro</div><div class='signal-copy'>Keep the scanner open to everyone, then charge for export workflows and deeper decision tools.</div></div>", unsafe_allow_html=True)
-            st.link_button("Unlock CSV export", get_checkout_link(), width="stretch")
+            render_billing_action(db_user, label="Unlock CSV export")
         st.markdown("</div>", unsafe_allow_html=True)
     with right:
         st.markdown("<div class='panel'>", unsafe_allow_html=True)

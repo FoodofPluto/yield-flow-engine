@@ -34,9 +34,9 @@ pip-audit are in the dev group. The supported interpreter range is Python
 | Workbook ingestion | `python yf_ingest.py ...` | parser -> pandas/openpyxl | Writes the local tracker workbook |
 | Signal-card renderer | `python signal_card.py` | Pillow rendering | Writes local PNG output |
 | Auto allocator scaffold | `python bots/auto_allocator.py` | Typer scaffold/stub | Local plan/state behavior; explicitly unfinished and not scheduled |
-| Stripe webhook backend | Flask host imports `stripe_webhook_example:app` | Stripe signature/lifecycle handlers -> service-role Supabase RPCs | Receives signed Stripe requests and mutates shared subscription/entitlement state; no tracked deploy command exists |
+| Trusted session and billing broker | Gunicorn imports `session_broker:create_app()` | opaque sessions plus verified checkout/portal and signed Stripe webhook -> service-role Supabase RPCs | Render supervisor deploys it on loopback; Stripe/service-role secrets are excluded from Streamlit |
 
-`telegram_bot.py`, `test_send.py`, and `stripe_stub.py` are import helpers rather
+`telegram_bot.py`, `test_send.py`, and `stripe_stub.py` are compatibility helpers rather
 than independently managed services. The repository contains no Dockerfile,
 infrastructure-as-code, release workflow, or command that deploys hosted state.
 README deployment guidance is narrative: Streamlit Community Cloud for `app.py`

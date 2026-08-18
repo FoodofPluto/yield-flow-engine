@@ -19,6 +19,7 @@ def _env() -> dict[str, str]:
         "SUPABASE_SERVICE_ROLE_KEY": "service-role-test-value",
         "FURUFLOW_SESSION_ENCRYPTION_KEY": Fernet.generate_key().decode(),
         "FURUFLOW_SESSION_BRIDGE_KEY": "B" * 32,
+        "FURUFLOW_SESSION_BROKER_PUBLIC_ORIGIN": "https://app.invalid",
     }
 
 
@@ -49,6 +50,30 @@ class FakeStore:
         return "opaque-session" if ticket == "single-use" else None
 
 
+class FakeBillingStore(FakeStore):
+    def verified_identity(self, opaque: str) -> dict | None:
+        if opaque != "opaque-session":
+            return None
+        return {
+            "id": USER_ID,
+            "email": "verified@example.test",
+            "email_confirmed_at": "2026-08-17T00:00:00+00:00",
+        }
+
+
+class FakeBilling:
+    def __init__(self) -> None:
+        self.identities: list[dict] = []
+
+    def create_checkout(self, identity: dict) -> str:
+        self.identities.append(identity)
+        return "https://checkout.stripe.com/c/pay_test_safe"
+
+    def create_portal(self, identity: dict) -> str:
+        self.identities.append(identity)
+        return "https://billing.stripe.com/p/session/test_safe"
+
+
 def test_activation_sets_secure_httponly_host_cookie() -> None:
     with patch.dict(os.environ, _env(), clear=False):
         client = create_app(FakeStore()).test_client()
@@ -59,3 +84,22 @@ def test_activation_sets_secure_httponly_host_cookie() -> None:
     assert "HttpOnly" in cookie
     assert "SameSite=Lax" in cookie
     assert "Path=/" in cookie
+
+
+def test_billing_routes_require_same_origin_authenticated_cookie_and_ignore_browser_user_ids() -> None:
+    billing = FakeBilling()
+    with patch.dict(os.environ, _env(), clear=False):
+        client = create_app(FakeBillingStore(), billing).test_client()
+        assert client.post("/billing/checkout", headers={"Origin": "https://evil.invalid"}).status_code == 403
+        assert client.post("/billing/checkout", headers={"Origin": "https://app.invalid"}).status_code == 401
+        client.set_cookie("__Host-furuflow_session", "opaque-session", secure=True)
+        response = client.post(
+            "/billing/checkout",
+            json={"user_id": "22222222-2222-4222-8222-222222222222"},
+            headers={"Origin": "https://app.invalid"},
+        )
+    assert response.status_code == 303
+    assert response.headers["Location"].startswith("https://checkout.stripe.com/")
+    assert billing.identities == [
+        {"id": USER_ID, "email": "verified@example.test", "email_confirmed_at": "2026-08-17T00:00:00+00:00"}
+    ]

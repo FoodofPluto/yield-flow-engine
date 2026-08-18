@@ -189,30 +189,43 @@ Supabase Auth's authoritative user endpoint, not mutable user metadata.
 Required billing variables:
 
 ```env
-STRIPE_SECRET_KEY=sk_live_...
+STRIPE_SECRET_KEY=sk_test_...
 STRIPE_WEBHOOK_SECRET=whsec_...
+STRIPE_PRICE_ID=price_...
+STRIPE_PRODUCT_ID=prod_...
 ```
+
+These belong only in the trusted broker. Staging requires Stripe test mode;
+production explicitly requires a live-mode key and never inherits one from a
+test environment.
 
 `DEV_MODE=true`, loopback HTTP redirects, and custom ports are rejected in
 preview/staging/production.
 
 ## Stripe / Pro activation notes
 
-Your current Stripe buy link is a monthly Pro offer, so the production webhook should update `pro_active` based on Stripe subscription events. Fulfillment should use the internal `user_id` in `client_reference_id` or metadata, not a customer-entered email address.
+The monthly Pro offer is created through the trusted broker. It derives the
+verified Supabase UUID from the opaque browser session and never accepts an
+account or Stripe identifier from the browser.
 
 This build includes:
 
 - migration-managed Supabase `subscriptions`, `entitlements`, and `webhook_events`
-- a service-role-only webhook backend that handles `checkout.session.completed`
+- trusted checkout and portal routes in the existing session broker
+- a signed, service-role-only webhook handler for checkout, subscription, and invoice lifecycle events
 - subscription lifecycle syncing for `customer.subscription.created`, `updated`, and `deleted`
-- automatic activation/deactivation of Pro based on Stripe subscription state
+- independent subscription-derived Pro so cancellation cannot remove manual, lifetime, or admin access
 - durable webhook processing/failure/idempotency state
+- deterministic stale/out-of-order event rejection
 
 ## Recommended deployment split
 
-- **Frontend:** Streamlit app on Community Cloud
-- **Backend webhook:** a small Flask app on Render, Railway, Fly.io, or another backend host
-- **Secrets:** keep Stripe secrets on the backend only
+- **Public edge:** Nginx exposes Streamlit plus three exact billing routes
+- **Frontend:** private Streamlit process with no privileged billing credentials
+- **Trusted backend:** private Flask broker owns encrypted sessions, Stripe secrets, checkout/portal, and webhook fulfillment
+
+See `docs/BILLING.md` for the authority rule, migration, operations, rollback,
+and controlled Stripe test-mode staging checklist.
 
 ## Account control plane
 
@@ -236,7 +249,7 @@ and deployment procedures.
    and verify RLS using two staging users.
 6. Bootstrap the first admin by verified UUID from a trusted shell.
 7. Deploy production with `ENVIRONMENT=production` and `DEV_MODE=false`.
-8. Configure Stripe checkout to write the verified UUID into metadata.
+8. Configure the signed Stripe webhook and complete `docs/BILLING.md`'s controlled test-mode staging checklist.
 
 Use the reviewed migration/rollback artifacts described in
 `docs/ACCOUNT_CONTROL_PLANE.md`; reverting code alone is not a database rollback.
@@ -256,4 +269,5 @@ Recent additions include:
 
 - `app.py`
 - `.env.example`
-- `stripe_webhook_example.py`
+- `session_broker.py`
+- `billing_service.py`

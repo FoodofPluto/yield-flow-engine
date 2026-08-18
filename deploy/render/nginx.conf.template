@@ -32,6 +32,40 @@ server {
         return 404;
     }
 
+    # Public billing actions authenticate with the existing opaque HttpOnly
+    # session cookie. They accept no browser-supplied account/customer IDs.
+    location = /billing/checkout {
+        limit_except POST { deny all; }
+        proxy_pass http://127.0.0.1:8510;
+        proxy_http_version 1.1;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $furuflow_forwarded_proto;
+    }
+
+    location = /billing/portal {
+        limit_except POST { deny all; }
+        proxy_pass http://127.0.0.1:8510;
+        proxy_http_version 1.1;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $furuflow_forwarded_proto;
+    }
+
+    # Stripe is the only intended unauthenticated caller. The sidecar verifies
+    # the signature before recording or applying an event.
+    location = /stripe/webhook {
+        limit_except POST { deny all; }
+        proxy_pass http://127.0.0.1:8510;
+        proxy_http_version 1.1;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $furuflow_forwarded_proto;
+    }
+
     # Never write the single-use activation ticket query to the access log.
     location = /auth/session/activate {
         access_log off;

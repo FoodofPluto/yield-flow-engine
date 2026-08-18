@@ -16,7 +16,7 @@ from furuflow_auth import (
     provider_sign_out,
     set_auth_notice,
 )
-from supabase_client import require_production_auth_config, require_production_billing_config
+from supabase_client import require_production_auth_config
 
 logger = logging.getLogger(__name__)
 
@@ -34,7 +34,6 @@ def _environment() -> str:
 
 def _enforce_production_safety() -> None:
     require_production_auth_config()
-    require_production_billing_config()
     require_production_session_config()
     if _environment() == "production" and _truthy_env("DEV_MODE"):
         logger.critical("Refusing startup: DEV_MODE=true is not allowed when ENVIRONMENT=production.")
@@ -163,8 +162,12 @@ def can_access_pro(user: dict[str, Any] | None) -> bool:
         logger.warning("auth_event=pro_access outcome=blocked reason=account_state_unavailable")
         return False
 
-    return is_admin(user) or bool(user.get("lifetime_access")) or bool(user.get("pro_active")) or bool(
-        user.get("demo_active")
+    return (
+        is_admin(user)
+        or bool(user.get("lifetime_access"))
+        or bool(user.get("pro_active"))
+        or bool(user.get("subscription_pro_active"))
+        or bool(user.get("demo_active"))
     )
 
 

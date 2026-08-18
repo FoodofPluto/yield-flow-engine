@@ -14,6 +14,8 @@ import httpx
 from cryptography.fernet import Fernet, InvalidToken
 from flask import Flask, jsonify, make_response, request
 
+from billing_service import BillingConfigurationError, BillingOperationError, BillingService, BillingWebhookInvalid
+
 
 COOKIE_NAME = "__Host-furuflow_session"
 
@@ -48,6 +50,7 @@ class BrokerStore:
         parsed = urlparse(project_url)
         if parsed.scheme != "https" or not parsed.netloc or parsed.path not in {"", "/"}:
             raise RuntimeError("SUPABASE_URL must be the HTTPS project root.")
+        self._project_url = project_url
         self._url = project_url + "/rest/v1"
         self._key = _required("SUPABASE_SERVICE_ROLE_KEY")
         self._cipher = Fernet(_required("FURUFLOW_SESSION_ENCRYPTION_KEY").encode("ascii"))
@@ -159,6 +162,37 @@ class BrokerStore:
         )
         return tokens
 
+    def verified_identity(self, opaque: str) -> dict[str, Any] | None:
+        tokens = self.restore(opaque)
+        if not tokens or not tokens.get("access_token"):
+            return None
+        rows = self._request(
+            "GET",
+            "browser_sessions",
+            params={"opaque_hash": f"eq.{_hash(opaque)}", "select": "user_id", "limit": "1"},
+        )
+        if not rows:
+            return None
+        try:
+            with httpx.Client(timeout=5.0, transport=self._transport) as client:
+                response = client.get(
+                    f"{self._project_url}/auth/v1/user",
+                    headers={
+                        "apikey": self._key,
+                        "Authorization": f"Bearer {tokens['access_token']}",
+                        "Accept": "application/json",
+                    },
+                )
+            if response.status_code != 200:
+                return None
+            identity = response.json()
+        except (httpx.HTTPError, ValueError):
+            return None
+        verified = identity.get("email_confirmed_at") or identity.get("confirmed_at")
+        if identity.get("id") != rows[0].get("user_id") or not verified or identity.get("is_anonymous"):
+            return None
+        return identity
+
     def update(self, opaque: str, access_token: str, refresh_token: str | None) -> bool:
         rows = self._request(
             "PATCH",
@@ -182,7 +216,7 @@ class BrokerStore:
         )
 
 
-def create_app(store: BrokerStore | None = None) -> Flask:
+def create_app(store: BrokerStore | None = None, billing_service: BillingService | None = None) -> Flask:
     app = Flask(__name__)
     broker_store = store or BrokerStore()
     bridge_key = _required("FURUFLOW_SESSION_BRIDGE_KEY")
@@ -190,6 +224,23 @@ def create_app(store: BrokerStore | None = None) -> Flask:
 
     def trusted() -> bool:
         return secrets.compare_digest(request.headers.get("X-FuruFlow-Bridge-Key", ""), bridge_key)
+
+    def billing() -> BillingService:
+        nonlocal billing_service
+        if billing_service is None:
+            billing_service = BillingService()
+        return billing_service
+
+    def same_origin() -> bool:
+        expected = os.getenv("FURUFLOW_SESSION_BROKER_PUBLIC_ORIGIN", "").strip().rstrip("/")
+        supplied = request.headers.get("Origin", "").strip().rstrip("/")
+        return bool(expected and supplied and secrets.compare_digest(expected, supplied))
+
+    def current_billing_identity() -> dict[str, Any] | None:
+        opaque = request.cookies.get(COOKIE_NAME, "")
+        if not opaque or not hasattr(broker_store, "verified_identity"):
+            return None
+        return broker_store.verified_identity(opaque)
 
     @app.post("/v1/session/tickets")
     def issue_ticket():
@@ -238,6 +289,46 @@ def create_app(store: BrokerStore | None = None) -> Flask:
             return jsonify({"error": "unauthorized"}), 401
         broker_store.revoke(request.headers.get("X-FuruFlow-Session", ""))
         return "", 204
+
+    @app.post("/billing/checkout")
+    def checkout():
+        if not same_origin():
+            return jsonify({"error": "billing_request_denied"}), 403
+        identity = current_billing_identity()
+        if not identity:
+            return jsonify({"error": "authentication_required"}), 401
+        try:
+            return "", 303, {"Location": billing().create_checkout(identity), "Cache-Control": "no-store"}
+        except BillingOperationError:
+            return jsonify({"error": "checkout_unavailable"}), 409
+        except BillingConfigurationError:
+            return jsonify({"error": "billing_unavailable"}), 503
+
+    @app.post("/billing/portal")
+    def portal():
+        if not same_origin():
+            return jsonify({"error": "billing_request_denied"}), 403
+        identity = current_billing_identity()
+        if not identity:
+            return jsonify({"error": "authentication_required"}), 401
+        try:
+            return "", 303, {"Location": billing().create_portal(identity), "Cache-Control": "no-store"}
+        except BillingOperationError:
+            return jsonify({"error": "portal_unavailable"}), 409
+        except BillingConfigurationError:
+            return jsonify({"error": "billing_unavailable"}), 503
+
+    @app.post("/stripe/webhook")
+    def stripe_webhook():
+        try:
+            processed = billing().handle_webhook(request.get_data(cache=False), request.headers.get("Stripe-Signature", ""))
+            return jsonify({"received": True, "duplicate": not processed})
+        except BillingWebhookInvalid:
+            return jsonify({"error": "invalid_webhook"}), 400
+        except BillingOperationError:
+            return jsonify({"error": "fulfillment_failed"}), 500
+        except BillingConfigurationError:
+            return jsonify({"error": "billing_unavailable"}), 503
 
     return app
 

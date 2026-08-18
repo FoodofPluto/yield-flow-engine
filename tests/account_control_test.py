@@ -35,6 +35,7 @@ def _transport(*, entitlement: dict | None = None, unavailable: bool = False) ->
         "user_id": USER_A,
         "is_admin": False,
         "pro_active": False,
+        "subscription_pro_active": False,
         "lifetime_access": False,
         "demo_expires_at": None,
         "demo_environment": None,
@@ -85,7 +86,7 @@ def test_authenticated_user_cannot_write_entitlements_or_self_escalate() -> None
 
 @pytest.mark.parametrize(
     ("field", "value"),
-    (("pro_active", True), ("lifetime_access", True), ("is_admin", True)),
+    (("pro_active", True), ("subscription_pro_active", True), ("lifetime_access", True), ("is_admin", True)),
 )
 def test_authoritative_pro_admin_lifetime_roles(field: str, value: bool) -> None:
     row = {

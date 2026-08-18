@@ -86,6 +86,11 @@ Subsequent examples:
 Lifetime is retained only for explicit compatibility. Stripe never infers or
 grants lifetime access from a one-time checkout.
 
+Prompt 8 keeps this administrator-managed `pro_active` flag independent from
+Stripe's `subscription_pro_active` flag. Subscription cancellation cannot
+revoke a reviewed manual Pro, administrator, or lifetime grant. The complete
+billing rule is documented in `BILLING.md`.
+
 ## Constrained demo
 
 Demo access is an entitlement on a verified, otherwise-free account. It can be

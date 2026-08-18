@@ -40,6 +40,14 @@ services:
         sync: false
       - key: FURUFLOW_SESSION_BRIDGE_KEY
         generateValue: true
+      - key: STRIPE_SECRET_KEY
+        sync: false
+      - key: STRIPE_WEBHOOK_SECRET
+        sync: false
+      - key: STRIPE_PRICE_ID
+        sync: false
+      - key: STRIPE_PRODUCT_ID
+        sync: false
 
   - type: cron
     name: furuflow-telegram-worker-staging

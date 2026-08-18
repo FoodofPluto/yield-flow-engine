@@ -21,6 +21,10 @@ def _environment() -> dict[str, str]:
         "FURUFLOW_SESSION_BROKER_PUBLIC_ORIGIN": "https://staging.invalid",
         "FURUFLOW_SESSION_ENCRYPTION_KEY": "encryption-test-value",
         "FURUFLOW_SESSION_BRIDGE_KEY": "bridge-test-value-that-is-long-enough",
+        "STRIPE_SECRET_KEY": "sk_test_" + "S" * 32,
+        "STRIPE_WEBHOOK_SECRET": "whsec_" + "W" * 32,
+        "STRIPE_PRICE_ID": "price_" + "P" * 24,
+        "STRIPE_PRODUCT_ID": "prod_" + "R" * 24,
     }
 
 
@@ -30,10 +34,13 @@ def test_child_environments_preserve_broker_only_credentials() -> None:
     assert streamlit["FURUFLOW_SESSION_BROKER_INTERNAL_URL"] == "http://127.0.0.1:8510"
     assert "SUPABASE_SERVICE_ROLE_KEY" not in streamlit
     assert "FURUFLOW_SESSION_ENCRYPTION_KEY" not in streamlit
+    assert "STRIPE_SECRET_KEY" not in streamlit
+    assert "STRIPE_WEBHOOK_SECRET" not in streamlit
     assert streamlit["FURUFLOW_SESSION_BRIDGE_KEY"].startswith("bridge-test")
 
     assert broker["SUPABASE_SERVICE_ROLE_KEY"] == "service-role-test-value"
     assert broker["FURUFLOW_SESSION_ENCRYPTION_KEY"] == "encryption-test-value"
+    assert broker["STRIPE_SECRET_KEY"].startswith("sk_test_")
     assert "SUPABASE_ANON_KEY" not in broker
     assert "SUPABASE_REDIRECT_URL_PREVIEW" not in broker
 
@@ -51,6 +58,9 @@ def test_nginx_template_keeps_broker_internal_and_websockets_enabled() -> None:
     assert "location = /v1/session" in rendered
     assert "location ^~ /v1/session/" in rendered
     assert "location = /auth/session/activate" in rendered
+    assert "location = /billing/checkout" in rendered
+    assert "location = /billing/portal" in rendered
+    assert "location = /stripe/webhook" in rendered
     assert "proxy_pass http://127.0.0.1:8510;" in rendered
     assert "proxy_pass http://127.0.0.1:8501;" in rendered
     assert "proxy_set_header Upgrade $http_upgrade;" in rendered
@@ -75,6 +85,12 @@ def test_supervisor_binds_only_nginx_to_the_public_interface() -> None:
     assert specs["nginx"].argv == ("nginx", "-g", "daemon off;")
     assert specs["session-broker"].user == "furuflow-broker"
     assert specs["streamlit"].user == "furuflow-streamlit"
+
+
+def test_supervisor_rejects_live_billing_credentials_in_staging() -> None:
+    environment = {**_environment(), "STRIPE_SECRET_KEY": "sk_live_" + "L" * 32}
+    with pytest.raises(RuntimeError, match="billing configuration"):
+        build_child_environments(environment)
 
 
 def test_blueprint_isolates_free_web_service_from_durable_cron_worker() -> None:
