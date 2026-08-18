@@ -75,6 +75,7 @@ from ui_shell import (
     render_status,
     route_access,
 )
+from ui_theme import inject_theme_css
 from user_alerts import (
     UserAlert,
     alert_explanation,
@@ -139,27 +140,8 @@ def inject_css() -> None:
     st.markdown(
         """
         <style>
-            :root {
-                --bg: #06101d;
-                --bg-2: #0a1527;
-                --panel: rgba(13, 26, 45, 0.96);
-                --panel-2: rgba(15, 30, 50, 0.98);
-                --border: rgba(255,255,255,0.08);
-                --text: #eef4ff;
-                --muted: #aab8d4;
-                --accent: #7ce2ff;
-                --accent-2: #66d5ff;
-                --good: #35d49a;
-                --warn: #f1c96a;
-                --bad: #ff7f8e;
-                --surface-light: #f5f8ff;
-                --surface-light-2: #e7f0ff;
-                --surface-dark-text: #0d1a2b;
-                --surface-dark-text-2: #23344a;
-            }
-
             html, body, [class*="css"] {
-                font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+                font-family: var(--ff-font-body);
             }
             .stApp {
                 color: var(--text);
@@ -296,40 +278,47 @@ def inject_css() -> None:
             }
             [data-testid="stDataFrame"] { border: 1px solid var(--border); border-radius: 18px; overflow: hidden; }
 
-            /* Fix all title boxes / dropdowns / tags */
+            /* Keep form controls dark and readable without painting every nested label. */
             label, .stSelectbox label, .stMultiSelect label, .stSlider label, .stRadio label, .stCheckbox label, .stToggle label {
                 color: var(--text) !important;
                 font-weight: 800 !important;
             }
             div[data-baseweb="select"] > div,
-            .stSelectbox div[data-baseweb="select"] > div,
-            .stMultiSelect div[data-baseweb="select"] > div,
-            .stSelectbox [data-baseweb="select"] div,
-            .stMultiSelect [data-baseweb="select"] div,
             div[data-baseweb="input"] > div,
-            div[data-baseweb="input"] input,
-            div[data-baseweb="select"] input,
-            div[data-baseweb="tag"],
-            div[data-baseweb="tag"] span,
             .stNumberInput div[data-baseweb="input"] > div,
             .stTextInput div[data-baseweb="input"] > div,
-            .stTextInput input,
-            .stMultiSelect span,
-            .stSelectbox span,
-            .stMultiSelect p,
-            .stSelectbox p,
-            [data-baseweb="select"] svg {
-                background: var(--surface-light) !important;
-                color: var(--surface-dark-text) !important;
-                fill: var(--surface-dark-text) !important;
-                border-color: rgba(0,0,0,0.08) !important;
-                font-weight: 800 !important;
+            [data-testid="stTextInputRootElement"],
+            [data-testid="stNumberInputContainer"] {
+                background: var(--ff-color-surface-control) !important;
+                border-color: var(--ff-color-border-strong) !important;
+                color: var(--ff-color-text) !important;
             }
-            div[data-baseweb="select"] *,
-            div[data-baseweb="tag"] *,
-            .stMultiSelect [data-baseweb="tag"] *,
-            .stSelectbox [data-baseweb="select"] * {
-                color: var(--surface-dark-text) !important;
+            div[data-baseweb="select"] input,
+            div[data-baseweb="input"] input,
+            .stSelectbox [data-baseweb="select"] span,
+            .stMultiSelect [data-baseweb="select"] span,
+            [data-baseweb="select"] svg {
+                background: transparent !important;
+                color: var(--ff-color-text) !important;
+                fill: currentColor !important;
+            }
+            [data-testid="stTextInputRootElement"] input,
+            [data-testid="stNumberInputContainer"] input {
+                background: transparent !important;
+                color: var(--ff-color-text) !important;
+                caret-color: var(--ff-color-interactive) !important;
+            }
+            [data-testid="stTextInputRootElement"] input::placeholder,
+            [data-testid="stNumberInputContainer"] input::placeholder {
+                color: var(--ff-color-text-subtle) !important;
+                opacity: 1 !important;
+            }
+            div[data-baseweb="tag"] {
+                background: var(--ff-color-selected) !important;
+                border: 1px solid rgba(142,232,255,.28) !important;
+            }
+            div[data-baseweb="tag"], div[data-baseweb="tag"] * {
+                color: var(--ff-color-text) !important;
             }
             div[data-baseweb="popover"],
             div[data-baseweb="popover"] *,
@@ -339,29 +328,29 @@ def inject_css() -> None:
             ul[role="listbox"] *,
             li[role="option"],
             div[role="option"] {
-                background: #f7fbff !important;
-                color: var(--surface-dark-text) !important;
+                background: var(--ff-color-surface-elevated) !important;
+                color: var(--ff-color-text) !important;
                 font-weight: 800 !important;
             }
             li[role="option"]:hover,
             div[role="option"]:hover,
             li[role="option"][aria-selected="true"],
             div[role="option"][aria-selected="true"] {
-                background: #d8ebff !important;
-                color: var(--surface-dark-text) !important;
+                background: var(--ff-color-selected) !important;
+                color: var(--ff-color-text) !important;
             }
 
             .stSlider [data-baseweb="slider"] > div > div > div { background: var(--accent-2) !important; }
             .stSlider [role="slider"] {
-                background: var(--surface-light) !important;
+                background: var(--ff-color-surface-control) !important;
                 border: 2px solid #c8f7ff !important;
                 box-shadow: 0 0 0 4px rgba(124,226,255,0.15);
             }
-            .stSlider span, .stSlider p { color: var(--surface-dark-text-2) !important; }
+            .stSlider span, .stSlider p { color: var(--ff-color-text-muted) !important; }
 
-            .stDownloadButton button,
-            .stButton button,
-            .stLinkButton a {
+            .stDownloadButton button[kind="primary"],
+            .stButton button[kind="primary"],
+            .stFormSubmitButton button[kind="primary"] {
                 background: linear-gradient(180deg, #9beeff, #6eddff) !important;
                 border: 1px solid rgba(0,0,0,0.08) !important;
                 border-radius: 12px !important;
@@ -371,6 +360,13 @@ def inject_css() -> None:
                 text-decoration: none !important;
                 text-align: center !important;
                 box-shadow: none !important;
+            }
+            .stLinkButton a {
+                border-radius: 12px !important;
+                padding: 0.58rem 0.9rem !important;
+                text-decoration: none !important;
+                text-align: center !important;
+                font-weight: 900 !important;
             }
             .watch-wrap .stButton button {
                 background: linear-gradient(180deg, #b8fff0, #6bf0c9) !important;
@@ -401,7 +397,7 @@ def inject_css() -> None:
             .badge-row { display: flex; flex-wrap: wrap; gap: 0.45rem; margin-top: 0.65rem; margin-bottom: 0.65rem; }
             .badge {
                 display: inline-flex; align-items: center; gap: 0.35rem; border-radius: 999px; padding: 0.35rem 0.7rem;
-                background: var(--surface-light-2); border: 1px solid rgba(0,0,0,0.05); color: #1c2a3d;
+                background: rgba(255,255,255,.045); border: 1px solid var(--ff-color-border); color: var(--ff-color-text-muted);
                 font-size: 0.76rem; font-weight: 800;
             }
             .opp-card {
@@ -419,10 +415,10 @@ def inject_css() -> None:
             }
             .metric-strip { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 0.65rem; margin-top: 0.75rem; }
             .metric-box {
-                border-radius: 16px; padding: 0.72rem; background: #f7f9fd; border: 1px solid rgba(0,0,0,0.05);
+                border-radius: 16px; padding: 0.72rem; background: rgba(6,16,29,.58); border: 1px solid var(--ff-color-border);
             }
-            .metric-mini-label { color: #66748b; font-size: 0.72rem; font-weight: 700; margin-bottom: 0.18rem; }
-            .metric-mini-value { color: #1f2937; font-size: 1rem; font-weight: 900; }
+            .metric-mini-label { color: var(--ff-color-text-subtle); font-size: 0.72rem; font-weight: 700; margin-bottom: 0.18rem; }
+            .metric-mini-value { color: var(--ff-color-text); font-size: 1rem; font-weight: 900; }
             .watch-pill {
                 display: inline-flex; align-items: center; gap: 0.35rem; border-radius: 999px; padding: 0.25rem 0.6rem;
                 background: rgba(53,212,154,0.12); color: #caffec; font-size: 0.74rem; font-weight: 800;
@@ -787,8 +783,8 @@ def render_billing_action(
     action = "/billing/portal" if portal else "/billing/checkout"
     safe_label = html.escape(label)
     st.markdown(
-        f'<form method="post" action="{action}" target="_top">'
-        f'<button type="submit" style="width:100%;min-height:2.6rem;cursor:pointer">{safe_label}</button>'
+        f'<form class="ff-billing-action" method="post" action="{action}" target="_top">'
+        f'<button type="submit">{safe_label}</button>'
         "</form>",
         unsafe_allow_html=True,
     )
@@ -1102,28 +1098,6 @@ def render_opportunity_card(
     apy_text = f"{row['apy']:.2f}%" if bool(row.get("apy_available", True)) else "Unavailable"
     tvl_text = format_money(row["tvlUsd"]) if bool(row.get("tvl_available", True)) else "Unavailable"
     card_html = f"""
-    <style>
-        .ff-card-wrap {{
-            background: linear-gradient(180deg, rgba(14,29,49,0.98), rgba(10,21,39,0.98));
-            border: 1px solid rgba(255,255,255,0.08);
-            border-radius: 18px;
-            padding: 16px;
-            color: #eef4ff;
-            font-family: Inter, 'Segoe UI', sans-serif;
-            box-shadow: 0 14px 34px rgba(0,0,0,0.22);
-        }}
-        .ff-opp-top {{ display:flex; justify-content:space-between; gap:12px; align-items:flex-start; }}
-        .ff-opp-name {{ font-size: 1.02rem; font-weight: 700; color:#ffffff; line-height:1.15; }}
-        .ff-opp-sub {{ color:#aab8d4; font-size:0.85rem; margin-top:0.25rem; }}
-        .ff-protocol-dot {{ min-width:34px; height:34px; border-radius:999px; display:flex; align-items:center; justify-content:center; background: linear-gradient(135deg, #7ce2ff, #66d5ff); color:#072030; font-weight:800; }}
-        .ff-watch-pill {{ display:inline-flex; margin-top:10px; background:rgba(124,226,255,0.14); color:#7ce2ff; border:1px solid rgba(124,226,255,0.28); padding:5px 9px; border-radius:999px; font-size:0.78rem; font-weight:700; }}
-        .ff-badge-row {{ display:flex; flex-wrap:wrap; gap:7px; margin-top:12px; margin-bottom:12px; align-items:flex-start; }}
-        .ff-badge {{ display:inline-flex; align-items:center; background:#eef4ff; color:#17283d; border:1px solid #d7e4fb; border-radius:999px; padding:4px 9px; font-size:0.75rem; font-weight:700; white-space:normal; overflow-wrap:anywhere; line-height:1.25; max-width:100%; }}
-        .ff-metric-strip {{ display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:10px; margin-top:6px; }}
-        .ff-metric-box {{ background:#f7faff; border:1px solid #d9e7fb; border-radius:12px; padding:10px 8px; text-align:center; }}
-        .ff-metric-mini-label {{ font-size:0.70rem; font-weight:700; color:#617287; text-transform:uppercase; letter-spacing:0.05em; }}
-        .ff-metric-mini-value {{ font-size:1rem; font-weight:800; color:#122235; margin-top:2px; }}
-    </style>
     <div class="ff-card-wrap">
         <div class="ff-opp-top">
             <div>
@@ -1164,7 +1138,12 @@ def render_opportunity_card(
         st.markdown("</div>", unsafe_allow_html=True)
     with c2:
         st.markdown("<div class='pool-wrap'>", unsafe_allow_html=True)
-        if st.button("View details", key=f"{key_prefix}_detail_{idx}_{row['pool']}", width="stretch"):
+        if st.button(
+            "View details",
+            key=f"{key_prefix}_detail_{idx}_{row['pool']}",
+            type="primary",
+            width="stretch",
+        ):
             track_research_event("pool_detail_opened", {"pool": str(row["pool"]), "view": return_view})
             open_pool_detail(str(row["pool"]), return_route=return_route, return_view=return_view)
             st.rerun()
@@ -1420,7 +1399,11 @@ def _alert_form(
         st.caption(
             "Condition: the selected canonical pool must appear in a fresh successful FuruFlow scan, qualify as the chosen tier, and meet the strength threshold."
         )
-        submitted = st.form_submit_button("Save changes" if existing else "Create alert", width="stretch")
+        submitted = st.form_submit_button(
+            "Save changes" if existing else "Create alert",
+            type="primary",
+            width="stretch",
+        )
 
     if not submitted:
         return
@@ -1487,7 +1470,13 @@ def render_alerts_page(df: pd.DataFrame, *, is_pro: bool, account_timezone: str)
 
     action_cols = st.columns([1, 2])
     with action_cols[0]:
-        if st.button("Create alert", key="alerts_create", width="stretch", disabled=not linked):
+        if st.button(
+            "Create alert",
+            key="alerts_create",
+            type="primary",
+            width="stretch",
+            disabled=not linked,
+        ):
             st.session_state["alert_form_mode"] = "create"
             st.session_state["alert_create_request_key"] = uuid.uuid4().hex
             st.rerun()
@@ -1514,6 +1503,12 @@ def render_alerts_page(df: pd.DataFrame, *, is_pro: bool, account_timezone: str)
         with st.container(border=True):
             state_label = "Active" if alert.enabled else "Paused"
             st.markdown(f"#### {safe_pool_label(alert.target_pool_id, pool_labels)}")
+            state_icon = "✓" if alert.enabled else "Ⅱ"
+            state_class = "" if alert.enabled else " ff-state-pill--paused"
+            st.markdown(
+                f'<span class="ff-state-pill{state_class}">{state_icon} {state_label}</span>',
+                unsafe_allow_html=True,
+            )
             st.caption(f"{state_label} · Telegram · {alert.delivery_mode.title()} delivery")
             st.markdown(alert_explanation(alert))
             metadata = st.columns(3)
@@ -1572,6 +1567,7 @@ def render_alerts_page(df: pd.DataFrame, *, is_pro: bool, account_timezone: str)
                     account_timezone=account_timezone,
                     existing=alert,
                 )
+inject_theme_css()
 inject_css()
 inject_shell_css()
 render_pending_session_activation()
@@ -1738,7 +1734,7 @@ with st.sidebar:
             st.session_state[filter_key] = filter_value
 
     if market_filters_apply(page):
-        with st.expander("Discover filters", expanded=page == "Discover"):
+        with st.expander("Discover Filters", expanded=page == "Discover"):
             sidebar_group("Primary controls", "Search the market, narrow the chain universe, or focus on stablecoin-labelled pools.")
             search_text = st.text_input("Search protocol, pool, asset, or chain", key="market_search")
             selected_chains = st.multiselect("Chains", chains, key="market_chains", placeholder="All chains")
@@ -1852,6 +1848,7 @@ if page == "Discover":
                 st.button(
                     f"Remove {filter_label}",
                     key=f"remove_filter_{filter_id}",
+                    type="tertiary",
                     on_click=st.session_state.update,
                     args=(removed_state,),
                 )
@@ -2544,8 +2541,12 @@ elif content_page == "Alerts":
 elif content_page == "Account & Billing":
     st.markdown("<div class='panel'>", unsafe_allow_html=True)
     section_header("Account & Billing", str(db_user.get("email") or "Signed-in account"), "Your plan comes from verified FuruFlow account state.")
-    st.markdown(f"**Current plan:** {'Pro' if is_pro else 'Free'}")
-    st.caption(f"Access source: {billing_access_source(db_user)}")
+    current_plan = "Pro" if is_pro else "Free"
+    render_status(
+        "success" if is_pro else "info",
+        f"{current_plan} plan",
+        f"Access source: {billing_access_source(db_user)}. Entitlement is reconstructed from trusted account state.",
+    )
     billing_status = subscription_summary(db_user)
     if billing_status:
         st.markdown(f"**Subscription:** {billing_status}")
