@@ -4,6 +4,7 @@ import os
 from datetime import datetime, timezone
 from typing import Any
 from urllib.parse import urlparse
+from uuid import UUID
 
 import httpx
 
@@ -16,6 +17,13 @@ class AccountStateUnavailable(RuntimeError):
 
 class AccountOperationError(RuntimeError):
     """A trusted account-control operation was rejected."""
+
+
+def _canonical_user_id(value: Any) -> str:
+    try:
+        return str(UUID(str(value)))
+    except (TypeError, ValueError) as exc:
+        raise AccountOperationError("Billing account identifier is invalid.") from exc
 
 
 def _parse_time(value: Any) -> datetime | None:
@@ -162,10 +170,11 @@ class ServiceRoleAccountClient(SupabaseAccountClient):
         ) is True
 
     def get_entitlement(self, user_id: str) -> dict[str, Any]:
+        user_id = _canonical_user_id(user_id)
         rows = self._request(
             "GET", "entitlements", bearer=self._key, params={"user_id": f"eq.{user_id}", "select": "*", "limit": "1"}
         )
-        if not isinstance(rows, list) or len(rows) != 1:
+        if not isinstance(rows, list) or len(rows) != 1 or rows[0].get("user_id") != user_id:
             raise AccountOperationError("Target entitlement record is unavailable.")
         return rows[0]
 
@@ -210,6 +219,7 @@ class ServiceRoleAccountClient(SupabaseAccountClient):
         ) is True
 
     def get_stripe_mapping(self, user_id: str) -> dict[str, Any] | None:
+        user_id = _canonical_user_id(user_id)
         rows = self._request(
             "GET",
             "subscriptions",
@@ -218,7 +228,11 @@ class ServiceRoleAccountClient(SupabaseAccountClient):
         )
         if not isinstance(rows, list):
             raise AccountOperationError("Billing mapping is unavailable.")
-        return rows[0] if rows else None
+        if not rows:
+            return None
+        if len(rows) != 1 or rows[0].get("user_id") != user_id or rows[0].get("provider") != "stripe":
+            raise AccountOperationError("Billing mapping ownership is invalid.")
+        return rows[0]
 
     def set_stripe_customer(self, *, user_id: str, customer_id: str) -> bool:
         return self._request(

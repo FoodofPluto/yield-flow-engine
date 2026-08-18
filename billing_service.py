@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import re
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Any, Mapping, Protocol
@@ -130,7 +131,9 @@ def _uuid(value: Any) -> str | None:
 
 
 def _string_id(value: Any, prefix: str) -> str | None:
-    return value if isinstance(value, str) and value.startswith(prefix) and len(value) <= 255 else None
+    if not isinstance(value, str) or len(value) > 255:
+        return None
+    return value if re.fullmatch(rf"{re.escape(prefix)}[A-Za-z0-9_]+", value) else None
 
 
 def _timestamp(value: Any) -> str | None:
@@ -174,15 +177,31 @@ class BillingService:
             entitlement = self.accounts.get_entitlement(user_id)
         except AccountOperationError as exc:
             raise BillingOperationError("Billing account state is temporarily unavailable.") from exc
+        if _uuid(entitlement.get("user_id")) != user_id:
+            raise BillingOperationError("Billing account state is temporarily unavailable.")
         if _demo_active(entitlement):
             raise BillingOperationError("Demo accounts cannot create billing state.")
         return user_id, email.strip().lower()
 
-    def _customer_for(self, user_id: str, email: str) -> tuple[str, Mapping[str, Any] | None]:
+    def _owned_mapping(self, user_id: str, *, unavailable_message: str) -> Mapping[str, Any] | None:
         try:
             mapping = self.accounts.get_stripe_mapping(user_id)
         except AccountOperationError as exc:
-            raise BillingOperationError("Billing setup is temporarily unavailable.") from exc
+            raise BillingOperationError(unavailable_message) from exc
+        if mapping is None:
+            return None
+        if _uuid(mapping.get("user_id")) != user_id or mapping.get("provider") != "stripe":
+            raise BillingOperationError(unavailable_message)
+        customer = mapping.get("provider_customer_id")
+        subscription = mapping.get("provider_subscription_id")
+        if customer is not None and not _string_id(customer, "cus_"):
+            raise BillingOperationError(unavailable_message)
+        if subscription is not None and not _string_id(subscription, "sub_"):
+            raise BillingOperationError(unavailable_message)
+        return mapping
+
+    def _customer_for(self, user_id: str, email: str) -> tuple[str, Mapping[str, Any] | None]:
+        mapping = self._owned_mapping(user_id, unavailable_message="Billing setup is temporarily unavailable.")
         existing = _string_id((mapping or {}).get("provider_customer_id"), "cus_")
         if existing:
             return existing, mapping
@@ -196,7 +215,10 @@ class BillingService:
             if not customer_id:
                 raise BillingOperationError("Billing setup is temporarily unavailable.")
             self.accounts.set_stripe_customer(user_id=user_id, customer_id=customer_id)
-            return customer_id, self.accounts.get_stripe_mapping(user_id)
+            mapping = self._owned_mapping(user_id, unavailable_message="Billing setup is temporarily unavailable.")
+            if not mapping or mapping.get("provider_customer_id") != customer_id:
+                raise BillingOperationError("Billing setup is temporarily unavailable.")
+            return customer_id, mapping
         except BillingOperationError:
             raise
         except AccountOperationError as exc:
@@ -230,10 +252,7 @@ class BillingService:
 
     def create_portal(self, identity: Mapping[str, Any]) -> str:
         user_id, _email = self._eligible_identity(identity)
-        try:
-            mapping = self.accounts.get_stripe_mapping(user_id)
-        except AccountOperationError as exc:
-            raise BillingOperationError("Billing management is temporarily unavailable.") from exc
+        mapping = self._owned_mapping(user_id, unavailable_message="Billing management is temporarily unavailable.")
         customer_id = _string_id((mapping or {}).get("provider_customer_id"), "cus_")
         subscription_id = _string_id((mapping or {}).get("provider_subscription_id"), "sub_")
         if not customer_id or not subscription_id:

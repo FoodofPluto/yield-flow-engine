@@ -8,7 +8,9 @@ flow is:
 `verified Supabase identity -> opaque broker session -> trusted checkout -> Stripe customer/subscription -> signed webhook -> subscriptions -> subscription_pro_active -> normal authorization`
 
 Streamlit receives neither Stripe secrets nor the Supabase service-role key. The
-browser POSTs only to fixed `/billing/checkout` or `/billing/portal` paths. The
+browser POSTs only to fixed `/billing/checkout` or `/billing/portal` paths. Both
+commands reject query strings and request bodies because no account, plan, or
+provider value is a legitimate browser input. The
 sidecar resolves the `__Host-furuflow_session` cookie, revalidates its encrypted
 Supabase access token with Auth, and checks that the returned UUID matches the
 stored browser-session owner. Request bodies cannot select an account, customer,
@@ -49,7 +51,10 @@ identity. The service-role RPC repeats the verified-user and demo checks, so a
 bad caller cannot bypass them. Customer creation uses a stable environment/user
 idempotency key, then `service_set_stripe_customer` binds exactly one Stripe
 customer to one FuruFlow UUID. The partial unique customer index prevents one
-customer from belonging to multiple accounts.
+customer from belonging to multiple accounts. Service-role reads also verify
+that the returned subscription row carries the requested UUID and the Stripe
+provider; malformed, missing, or cross-user rows fail before Checkout or Portal
+session creation.
 
 Checkout uses only the configured monthly Pro price. FuruFlow supplies its UUID
 as Stripe metadata and `client_reference_id` from trusted server state. Success
@@ -72,7 +77,9 @@ Handled events are:
 
 Every subscription must contain both the configured Pro price and product.
 Customer/subscription mappings must agree with optional FuruFlow metadata. A
-cross-user conflict fails fulfillment without changing either account.
+cross-user conflict fails fulfillment without changing either account. Once an
+account has an authenticated checkout customer mapping, later webhook fields
+may confirm that customer but cannot replace it with another customer ID.
 
 `subscriptions.last_provider_event_created` and
 `last_provider_event_id` form the ordering key. An event applies only when its
@@ -177,4 +184,3 @@ users. Never use a live key.
 Local tests prove deterministic code and database behavior only; they are not
 proof that the remote Stripe webhook, portal configuration, or Render routing is
 correct. Prompt 8 becomes frozen only after this separate staging gate passes.
-

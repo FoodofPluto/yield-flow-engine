@@ -242,6 +242,10 @@ def create_app(store: BrokerStore | None = None, billing_service: BillingService
             return None
         return broker_store.verified_identity(opaque)
 
+    def has_billing_request_input() -> bool:
+        """Billing actions are fixed commands and accept no browser-selected values."""
+        return bool(request.args or request.get_data(cache=True))
+
     @app.post("/v1/session/tickets")
     def issue_ticket():
         if not trusted():
@@ -297,6 +301,8 @@ def create_app(store: BrokerStore | None = None, billing_service: BillingService
         identity = current_billing_identity()
         if not identity:
             return jsonify({"error": "authentication_required"}), 401
+        if has_billing_request_input():
+            return jsonify({"error": "billing_request_denied"}), 400
         try:
             return "", 303, {"Location": billing().create_checkout(identity), "Cache-Control": "no-store"}
         except BillingOperationError:
@@ -311,6 +317,8 @@ def create_app(store: BrokerStore | None = None, billing_service: BillingService
         identity = current_billing_identity()
         if not identity:
             return jsonify({"error": "authentication_required"}), 401
+        if has_billing_request_input():
+            return jsonify({"error": "billing_request_denied"}), 400
         try:
             return "", 303, {"Location": billing().create_portal(identity), "Cache-Control": "no-store"}
         except BillingOperationError:

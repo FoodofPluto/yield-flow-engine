@@ -2,7 +2,7 @@ begin;
 create extension if not exists pgtap with schema extensions;
 
 set local search_path = public, extensions;
-select plan(23);
+select plan(25);
 
 insert into auth.users(id, aud, role, email, email_confirmed_at, raw_app_meta_data, raw_user_meta_data)
 values
@@ -93,6 +93,19 @@ select throws_ok(
   )$$,
   'provider event user mapping mismatch',
   'User B assertion cannot redirect User A webhook state'
+);
+select throws_ok(
+  $$select public.service_apply_stripe_subscription(
+    null, 'cus_REPLACEMENTCUSTOMER', 'sub_AAAAAAAAAAAAAAAA',
+    'active', null, now(), false, 500, 'evt_customer_replacement'
+  )$$,
+  'provider customer mapping mismatch',
+  'signed event cannot replace the persisted customer mapping'
+);
+select is(
+  (select provider_customer_id from public.subscriptions where user_id = '11111111-1111-4111-8111-111111111111'),
+  'cus_AAAAAAAAAAAAAAAA',
+  'ownership conflict leaves the customer mapping unchanged'
 );
 select ok(public.service_begin_webhook_event('stripe', 'evt_duplicate', 'customer.subscription.updated'),
   'first webhook delivery is claimed');

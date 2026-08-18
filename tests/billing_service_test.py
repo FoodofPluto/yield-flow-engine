@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from copy import deepcopy
 from dataclasses import replace
 from datetime import datetime, timedelta, timezone
 from typing import Any, Mapping
@@ -31,19 +32,25 @@ def _config() -> BillingConfig:
     )
 
 
-def _identity(user_id: str = USER_A) -> dict[str, Any]:
+def _identity(user_id: str = USER_A, *, email: str = "member@example.test") -> dict[str, Any]:
     return {
         "id": user_id,
-        "email": "member@example.test",
+        "email": email,
         "email_confirmed_at": "2026-08-17T00:00:00+00:00",
         "is_anonymous": False,
     }
 
 
-def _subscription(config: BillingConfig, *, status: str = "active", user_id: str = USER_A) -> dict[str, Any]:
+def _subscription(
+    config: BillingConfig,
+    *,
+    status: str = "active",
+    user_id: str = USER_A,
+    customer_id: str = "cus_AAAAAAAAAAAAAAAA",
+) -> dict[str, Any]:
     return {
         "id": "sub_AAAAAAAAAAAAAAAA",
-        "customer": "cus_AAAAAAAAAAAAAAAA",
+        "customer": customer_id,
         "status": status,
         "metadata": {"furuflow_user_id": user_id},
         "current_period_end": 1800000000,
@@ -72,7 +79,9 @@ class FakeAccounts:
         for owner, mapping in self.mappings.items():
             if owner != user_id and mapping.get("provider_customer_id") == customer_id:
                 raise AccountOperationError("mapped")
-        mapping = self.mappings.setdefault(user_id, {"status": "inactive"})
+        mapping = self.mappings.setdefault(
+            user_id, {"user_id": user_id, "provider": "stripe", "status": "inactive"}
+        )
         existing = mapping.get("provider_customer_id")
         if existing and existing != customer_id:
             raise AccountOperationError("different")
@@ -104,7 +113,10 @@ class FakeAccounts:
         owner = mapped_owner or target
         if not owner or (target and target != owner):
             raise AccountOperationError("mapping mismatch")
-        mapping = self.mappings.setdefault(owner, {})
+        mapping = self.mappings.setdefault(owner, {"user_id": owner, "provider": "stripe"})
+        existing_customer = mapping.get("provider_customer_id")
+        if existing_customer and customer and existing_customer != customer:
+            raise AccountOperationError("customer mapping mismatch")
         prior = (mapping.get("event_created", 0), mapping.get("event_id", ""))
         incoming = (values["event_created"], values["event_id"])
         if incoming <= prior:
@@ -127,17 +139,21 @@ class FakeGateway:
     def __init__(self, config: BillingConfig) -> None:
         self.config = config
         self.customer_calls = 0
+        self.customer_params: list[dict[str, str]] = []
         self.checkout_params: list[dict[str, Any]] = []
         self.portal_params: list[dict[str, Any]] = []
+        self.retrieve_calls: list[str] = []
+        self.construct_calls = 0
         self.event: Mapping[str, Any] | None = None
         self.subscription = _subscription(config)
 
     def create_customer(self, *, email: str, user_id: str, idempotency_key: str) -> Mapping[str, Any]:
         self.customer_calls += 1
-        assert email == "member@example.test"
-        assert user_id == USER_A
-        assert USER_A in idempotency_key
-        return {"id": "cus_AAAAAAAAAAAAAAAA"}
+        self.customer_params.append(
+            {"email": email, "user_id": user_id, "idempotency_key": idempotency_key}
+        )
+        suffix = "A" if user_id == USER_A else "B"
+        return {"id": "cus_" + suffix * 16}
 
     def create_checkout(self, **params: Any) -> Mapping[str, Any]:
         self.checkout_params.append(params)
@@ -147,10 +163,12 @@ class FakeGateway:
         self.portal_params.append(params)
         return {"url": "https://billing.stripe.com/p/session/test_safe"}
 
-    def retrieve_subscription(self, _subscription_id: str) -> Mapping[str, Any]:
+    def retrieve_subscription(self, subscription_id: str) -> Mapping[str, Any]:
+        self.retrieve_calls.append(subscription_id)
         return self.subscription
 
     def construct_event(self, _payload: bytes, signature: str, _secret: str) -> Mapping[str, Any]:
+        self.construct_calls += 1
         if signature != "valid" or self.event is None:
             raise ValueError("invalid")
         return self.event
@@ -161,6 +179,16 @@ def _service() -> tuple[BillingService, FakeAccounts, FakeGateway]:
     accounts = FakeAccounts()
     gateway = FakeGateway(config)
     return BillingService(config=config, accounts=accounts, gateway=gateway), accounts, gateway  # type: ignore[arg-type]
+
+
+def _mapping(user_id: str, customer: str, subscription: str | None = None, *, status: str = "inactive") -> dict[str, Any]:
+    return {
+        "user_id": user_id,
+        "provider": "stripe",
+        "provider_customer_id": customer,
+        "provider_subscription_id": subscription,
+        "status": status,
+    }
 
 
 def test_verified_checkout_derives_identity_and_reuses_one_customer_mapping() -> None:
@@ -199,21 +227,79 @@ def test_demo_user_cannot_create_customer_or_checkout() -> None:
     with pytest.raises(BillingOperationError, match="Demo"):
         service.create_checkout(_identity())
     assert gateway.customer_calls == 0
+    assert not gateway.checkout_params
+
+
+def test_mismatched_entitlement_owner_fails_before_any_stripe_call() -> None:
+    service, accounts, gateway = _service()
+    accounts.entitlements[USER_A]["user_id"] = USER_B
+    with pytest.raises(BillingOperationError, match="account state"):
+        service.create_checkout(_identity())
+    assert gateway.customer_calls == 0
+    assert not gateway.checkout_params
+
+
+@pytest.mark.parametrize(
+    "mapping",
+    [
+        _mapping(USER_B, "cus_BBBBBBBBBBBBBBBB"),
+        _mapping(USER_A, "not-a-customer"),
+        {**_mapping(USER_A, "cus_AAAAAAAAAAAAAAAA"), "provider": "other"},
+    ],
+)
+def test_foreign_or_malformed_mapping_fails_before_customer_or_checkout(mapping: dict[str, Any]) -> None:
+    service, accounts, gateway = _service()
+    accounts.mappings[USER_A] = mapping
+    with pytest.raises(BillingOperationError, match="setup"):
+        service.create_checkout(_identity())
+    assert gateway.customer_calls == 0
+    assert not gateway.checkout_params
 
 
 def test_portal_uses_only_server_mapping_and_free_state_fails_safely() -> None:
     service, accounts, gateway = _service()
     with pytest.raises(BillingOperationError, match="No managed subscription"):
         service.create_portal(_identity())
-    accounts.mappings[USER_A] = {
-        "provider_customer_id": "cus_AAAAAAAAAAAAAAAA",
-        "provider_subscription_id": "sub_AAAAAAAAAAAAAAAA",
-        "status": "active",
-    }
+    accounts.mappings[USER_A] = _mapping(
+        USER_A, "cus_AAAAAAAAAAAAAAAA", "sub_AAAAAAAAAAAAAAAA", status="active"
+    )
     assert service.create_portal(_identity()).startswith("https://billing.stripe.com/")
     assert gateway.portal_params == [
         {"customer": "cus_AAAAAAAAAAAAAAAA", "return_url": "http://localhost:8501/?billing=return"}
     ]
+
+
+def test_demo_and_foreign_mapping_cannot_create_portal_session() -> None:
+    service, accounts, gateway = _service()
+    accounts.mappings[USER_A] = _mapping(
+        USER_B, "cus_BBBBBBBBBBBBBBBB", "sub_BBBBBBBBBBBBBBBB", status="active"
+    )
+    with pytest.raises(BillingOperationError, match="management"):
+        service.create_portal(_identity())
+    accounts.mappings[USER_A] = _mapping(
+        USER_A, "cus_AAAAAAAAAAAAAAAA", "sub_AAAAAAAAAAAAAAAA", status="active"
+    )
+    accounts.entitlements[USER_A]["demo_expires_at"] = (
+        datetime.now(timezone.utc) + timedelta(minutes=10)
+    ).isoformat()
+    with pytest.raises(BillingOperationError, match="Demo"):
+        service.create_portal(_identity())
+    assert not gateway.portal_params
+
+
+def test_equal_emails_do_not_override_uuid_customer_ownership() -> None:
+    service, accounts, gateway = _service()
+    accounts.mappings[USER_A] = _mapping(USER_A, "cus_AAAAAAAAAAAAAAAA")
+    accounts.mappings[USER_B] = _mapping(USER_B, "cus_BBBBBBBBBBBBBBBB")
+    shared_email = "same-address@example.test"
+    service.create_checkout(_identity(USER_A, email=shared_email))
+    service.create_checkout(_identity(USER_B, email=shared_email))
+    assert [params["customer"] for params in gateway.checkout_params] == [
+        "cus_AAAAAAAAAAAAAAAA",
+        "cus_BBBBBBBBBBBBBBBB",
+    ]
+    assert [params["client_reference_id"] for params in gateway.checkout_params] == [USER_A, USER_B]
+    assert gateway.customer_calls == 0
 
 
 def test_invalid_signature_is_rejected_before_durable_event_write() -> None:
@@ -234,7 +320,7 @@ def test_unknown_event_is_recorded_and_duplicate_is_idempotent() -> None:
 
 def test_active_then_canceled_changes_only_subscription_derived_access() -> None:
     service, accounts, gateway = _service()
-    accounts.mappings[USER_A] = {"provider_customer_id": "cus_AAAAAAAAAAAAAAAA", "status": "inactive"}
+    accounts.mappings[USER_A] = _mapping(USER_A, "cus_AAAAAAAAAAAAAAAA")
     gateway.event = {
         "id": "evt_active",
         "type": "customer.subscription.created",
@@ -258,7 +344,7 @@ def test_active_then_canceled_changes_only_subscription_derived_access() -> None
 
 def test_stale_event_cannot_overwrite_newer_authoritative_state() -> None:
     service, accounts, gateway = _service()
-    accounts.mappings[USER_A] = {"provider_customer_id": "cus_AAAAAAAAAAAAAAAA", "status": "inactive"}
+    accounts.mappings[USER_A] = _mapping(USER_A, "cus_AAAAAAAAAAAAAAAA")
     gateway.event = {
         "id": "evt_new",
         "type": "customer.subscription.updated",
@@ -279,7 +365,7 @@ def test_stale_event_cannot_overwrite_newer_authoritative_state() -> None:
 
 def test_webhook_for_mapped_customer_cannot_modify_another_user() -> None:
     service, accounts, gateway = _service()
-    accounts.mappings[USER_A] = {"provider_customer_id": "cus_AAAAAAAAAAAAAAAA", "status": "inactive"}
+    accounts.mappings[USER_A] = _mapping(USER_A, "cus_AAAAAAAAAAAAAAAA")
     gateway.event = {
         "id": "evt_cross_user",
         "type": "customer.subscription.created",
@@ -289,6 +375,33 @@ def test_webhook_for_mapped_customer_cannot_modify_another_user() -> None:
     with pytest.raises(BillingOperationError):
         service.handle_webhook(b"{}", "valid")
     assert not accounts.entitlements[USER_B]["subscription_pro_active"]
+
+
+def test_signed_webhook_cannot_replace_existing_customer_mapping() -> None:
+    service, accounts, gateway = _service()
+    accounts.mappings[USER_A] = _mapping(
+        USER_A, "cus_AAAAAAAAAAAAAAAA", "sub_AAAAAAAAAAAAAAAA", status="active"
+    )
+    accounts.entitlements[USER_A]["subscription_pro_active"] = True
+    before_mapping = deepcopy(accounts.mappings)
+    before_entitlements = deepcopy(accounts.entitlements)
+    gateway.event = {
+        "id": "evt_customer_conflict",
+        "type": "customer.subscription.updated",
+        "created": 500,
+        "data": {
+            "object": _subscription(
+                service.config,
+                user_id=USER_A,
+                customer_id="cus_REPLACEMENTCUSTOMER",
+            )
+        },
+    }
+    with pytest.raises(BillingOperationError):
+        service.handle_webhook(b"{}", "valid")
+    assert accounts.mappings == before_mapping
+    assert accounts.entitlements == before_entitlements
+    assert accounts.applies == 0
 
 
 def test_environment_separation_rejects_live_key_outside_production() -> None:

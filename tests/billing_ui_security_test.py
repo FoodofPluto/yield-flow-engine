@@ -37,3 +37,11 @@ def test_prompt8_migration_preserves_manual_access_and_denies_browser_writes() -
     assert "provider event user mapping mismatch" in sql
     assert "revoke all on function public.service_apply_stripe_subscription" in sql
     assert "from public, anon, authenticated" in sql
+
+
+def test_followup_migration_freezes_authenticated_customer_ownership() -> None:
+    sql = (ROOT / "supabase/migrations/202608180001_billing_authorization_boundary.sql").read_text(encoding="utf-8")
+    assert "provider customer mapping mismatch" in sql
+    assert "existing_customer_id <> customer_id" in sql
+    assert "invalid Stripe checkout session" in sql
+    assert "from public, anon, authenticated" in sql

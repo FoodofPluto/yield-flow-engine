@@ -11,7 +11,13 @@ import httpx
 import pytest
 
 import auth_service
-from account_control import AccountStateUnavailable, ServiceRoleAccountClient, SupabaseAccountClient, external_delivery_allowed
+from account_control import (
+    AccountOperationError,
+    AccountStateUnavailable,
+    ServiceRoleAccountClient,
+    SupabaseAccountClient,
+    external_delivery_allowed,
+)
 
 
 USER_A = "11111111-1111-4111-8111-111111111111"
@@ -159,6 +165,29 @@ def test_service_role_rpc_is_the_only_write_path_and_bootstrap_is_idempotent() -
             actor_user_id=USER_A,
             reason="test",
         )
+
+
+@pytest.mark.parametrize(
+    "path,row",
+    [
+        ("entitlements", {"user_id": USER_B}),
+        ("subscriptions", {"user_id": USER_B, "provider": "stripe"}),
+        ("subscriptions", {"user_id": USER_A, "provider": "other"}),
+    ],
+)
+def test_service_role_billing_reads_reject_mismatched_owner_or_provider(path: str, row: dict[str, str]) -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path.endswith("/" + path):
+            return httpx.Response(200, json=[row])
+        return httpx.Response(404)
+
+    with patch.dict(os.environ, _environment(), clear=False):
+        client = ServiceRoleAccountClient(service_role_key=SERVICE_KEY, transport=httpx.MockTransport(handler))
+        with pytest.raises(AccountOperationError):
+            if path == "entitlements":
+                client.get_entitlement(USER_A)
+            else:
+                client.get_stripe_mapping(USER_A)
 
 
 def test_reviewed_migration_entitlement_writes_are_idempotent_and_audited_once() -> None:
