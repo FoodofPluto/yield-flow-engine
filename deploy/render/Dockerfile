@@ -23,4 +23,4 @@ RUN chown -R root:root /app \
     && chown furuflow-streamlit:furuflow-streamlit /app/pool_history.json \
     && chmod 600 /app/pool_history.json
 
-CMD ["python", "deploy/render/supervise.py"]
+CMD ["python", "-m", "deploy.render.supervise"]
