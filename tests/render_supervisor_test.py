@@ -108,3 +108,11 @@ def test_blueprint_isolates_free_web_service_from_durable_cron_worker() -> None:
     assert 'FURUFLOW_SYSTEM_TELEGRAM_RULE_ENABLED\n        value: "false"' in blueprint
     assert "FURUFLOW_HISTORY_PATH\n        value: /tmp/furuflow/pool_history.json" in blueprint
     assert "dockerfilePath: ./deploy/render/Dockerfile" in blueprint
+
+
+def test_container_keeps_application_source_read_only_and_does_not_prepare_history_beside_code() -> None:
+    dockerfile = Path("deploy/render/Dockerfile").read_text(encoding="utf-8")
+
+    assert "chmod -R a+rX /app" in dockerfile
+    assert "touch /app/pool_history.json" not in dockerfile
+    assert "chown furuflow-streamlit:furuflow-streamlit /app/pool_history.json" not in dockerfile

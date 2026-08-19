@@ -25,7 +25,7 @@ from automation.store import AutomationStoreError
 from auth_service import can_access_pro, claim_session, get_current_user, is_admin, logout, validate_session
 from utils.external_side_effects import set_demo_side_effect_block
 from history_store import load_history, save_snapshot
-from engine.performance import alert_snapshot, latest_signal_history, trend_summary_df
+from engine.performance import SignalHistoryReadError, alert_snapshot, latest_signal_history, trend_summary_df
 from engine.recap import build_daily_recap, build_weekly_recap
 from engine.scoring import (
     label_pool_risk as label_risk,
@@ -61,6 +61,8 @@ from saved_pools import (
 from ui_shell import (
     DISCOVER_VIEWS,
     PRO_TOOL_VIEWS,
+    SIGNAL_ENGINE_TABLE_COLUMNS,
+    STRATEGY_RESULTS_TABLE_COLUMNS,
     RESEARCH_VIEWS,
     account_control_model,
     alert_creation_state,
@@ -1013,6 +1015,8 @@ def return_from_pool_detail() -> None:
     st.session_state["current_route"] = route
     if route == "Discover":
         st.session_state["discover_view"] = destination["current_view"]
+    elif route == "Pro Tools":
+        st.session_state["pro_tools_view"] = destination["current_view"]
     st.query_params["page"] = route
     if "pool" in st.query_params:
         del st.query_params["pool"]
@@ -1249,7 +1253,14 @@ def render_home_page(filtered: pd.DataFrame, full_filtered: pd.DataFrame, watchl
         st.markdown("</div>", unsafe_allow_html=True)
 
 
-def render_recaps_page(alert_stats: dict[str, Any], history_latest_df: pd.DataFrame, history_trend_df: pd.DataFrame, is_pro: bool) -> None:
+def render_recaps_page(
+    alert_stats: dict[str, Any],
+    history_latest_df: pd.DataFrame,
+    history_trend_df: pd.DataFrame,
+    is_pro: bool,
+    *,
+    history_load_error: bool = False,
+) -> None:
     st.markdown("<div class='panel'>", unsafe_allow_html=True)
     section_header("Activity & digests", "The memory layer behind the signal engine", "Review what the engine saw, what kept repeating, and where durable opportunities may be forming.")
     summary_cols = st.columns(3)
@@ -1277,8 +1288,14 @@ def render_recaps_page(alert_stats: dict[str, Any], history_latest_df: pd.DataFr
     with history_left:
         st.markdown("<div class='panel'>", unsafe_allow_html=True)
         section_header("Latest signal history", "Recent logged signals", "Review what the engine actually saw instead of relying on memory.")
-        if history_latest_df.empty:
-            st.info("Run post_real_signals.py once to begin populating signal history.")
+        if history_load_error:
+            render_status(
+                "error",
+                "Signal history unavailable",
+                "Signal activity could not be loaded. Try again later; this is not an empty-history state.",
+            )
+        elif history_latest_df.empty:
+            st.info("No signal history yet. Signal activity will appear here once qualifying yield movements are detected.")
         else:
             latest_view = history_latest_df[["name", "chain", "apy", "tvl", "strength_score", "tier"]].copy()
             latest_view.columns = ["Pool", "Chain", "APY", "TVL (USD)", "Score", "Tier"]
@@ -1596,7 +1613,8 @@ with st.sidebar:
     navigation_slot = st.empty()
     with st.expander("Account", expanded=False):
         account_summary_slot = st.empty()
-        login_form()
+        with st.container(key="account_auth_controls"):
+            login_form()
 
 account_user = get_current_user()
 signed_in = bool(account_user and account_user.get("_identity_verified"))
@@ -1709,9 +1727,16 @@ watchlist_df = df[df["pool"].isin(saved_pool_ids)].copy()
 if market_source_status == "live":
     save_snapshot(df)
 
-history_latest_df = latest_signal_history(limit=12)
-history_trend_df = trend_summary_df(limit=10)
-alert_stats = alert_snapshot()
+signal_history_load_error = False
+try:
+    history_latest_df = latest_signal_history(limit=12)
+    history_trend_df = trend_summary_df(limit=10)
+    alert_stats = alert_snapshot()
+except SignalHistoryReadError:
+    signal_history_load_error = True
+    history_latest_df = pd.DataFrame()
+    history_trend_df = pd.DataFrame()
+    alert_stats = {"signals_24h": 0, "pro_24h": 0, "best_chain": "Unavailable"}
 
 with st.sidebar:
     chains = sorted(df["chain"].dropna().unique().tolist())
@@ -2108,9 +2133,9 @@ elif content_page == "Signals":
     with left:
         st.markdown("<div class='panel'>", unsafe_allow_html=True)
         section_header("Signal engine", "Rules-based yield movement", "Existing deterministic labels surface APY spikes, farm rotations, emerging pools, and whale inflows from recent pool chart movement.")
-        sig_view = filtered[["project", "chain", "symbol", "signal", "signal_strength", "apy_delta_7", "tvl_delta_7_pct", "apy_volatility", "pool_url"]].copy().head(20)
-        sig_view.columns = ["Protocol", "Chain", "Asset", "Signal", "Strength", "7d APY Δ", "7d TVL Δ %", "APY volatility", "Open"]
-        st.dataframe(sig_view, width="stretch", hide_index=True, height=560, column_config={"Strength": st.column_config.NumberColumn(format="%.1f"), "7d APY Δ": st.column_config.NumberColumn(format="%.2f"), "7d TVL Δ %": st.column_config.NumberColumn(format="%.2f"), "APY volatility": st.column_config.NumberColumn(format="%.2f"), "Open": st.column_config.LinkColumn("Pool link", display_text="Open")})
+        sig_view = filtered[[column for column, _ in SIGNAL_ENGINE_TABLE_COLUMNS]].copy().head(20)
+        sig_view.columns = [label for _, label in SIGNAL_ENGINE_TABLE_COLUMNS]
+        st.dataframe(sig_view, width="stretch", hide_index=True, height=560, column_config={"Strength": st.column_config.NumberColumn(format="%.1f"), "7d APY Δ": st.column_config.NumberColumn(format="%.2f"), "7d TVL Δ %": st.column_config.NumberColumn(format="%.2f"), "APY volatility": st.column_config.NumberColumn(format="%.2f"), "Pool": st.column_config.LinkColumn("Pool", display_text="Open")})
         st.markdown("</div>", unsafe_allow_html=True)
     with right:
         st.markdown("<div class='panel'>", unsafe_allow_html=True)
@@ -2191,7 +2216,15 @@ elif content_page == "Market Map":
 elif content_page == "Pool Detail":
     selected_pool_id = str(st.session_state.get("selected_pool_id") or st.query_params.get("pool") or "")
     detail_return_route = str(st.session_state.get("pool_return_route") or "Discover")
-    detail_back_label = "← Back to Watchlist" if detail_return_route == "Watchlists" else "← Back to opportunities"
+    detail_return_view = str(st.session_state.get("pool_return_view") or "Opportunities")
+    if detail_return_route == "Watchlists":
+        detail_back_label = "← Back to Watchlist"
+    elif detail_return_route == "Pro Tools":
+        detail_back_label = "← Back to Strategy Results"
+    elif detail_return_view == "Signals":
+        detail_back_label = "← Back to Signals"
+    else:
+        detail_back_label = "← Back to opportunities"
     pool_options = df[df["pool"].astype(str) == selected_pool_id].copy()
     if pool_options.empty:
         render_page_heading("Pool Detail")
@@ -2423,17 +2456,50 @@ elif content_page == "Strategy Builder":
         st.markdown("</div>", unsafe_allow_html=True)
     with right:
         st.markdown("<div class='panel'>", unsafe_allow_html=True)
-        section_header("Strategy results", "Top matching pools", "Use this as a shortlist generator, then move candidates to Watchlists or contextual Pool Detail.")
+        section_header("Strategy results", "Top matching pools", "Use the selected-pool actions below to save a candidate to Watchlist or open contextual Pool Detail.")
         if strategy_df.empty:
             st.info("No pools match the current strategy builder settings.")
         else:
-            view = strategy_df[["project", "chain", "symbol", "apy", "tvlUsd", "risk_score", "signal", "pool_url"]].copy()
-            view.columns = ["Protocol", "Chain", "Asset", "APY", "TVL (USD)", "Risk", "Signal", "Open"]
-            st.dataframe(view, width="stretch", hide_index=True, height=520, column_config={"APY": st.column_config.NumberColumn(format="%.2f%%"), "TVL (USD)": st.column_config.NumberColumn(format="$%.0f"), "Open": st.column_config.LinkColumn("Pool link", display_text="Open")})
+            view = strategy_df[[column for column, _ in STRATEGY_RESULTS_TABLE_COLUMNS]].copy()
+            view.columns = [label for _, label in STRATEGY_RESULTS_TABLE_COLUMNS]
+            st.dataframe(view, width="stretch", hide_index=True, height=520, column_config={"APY": st.column_config.NumberColumn(format="%.2f%%"), "TVL (USD)": st.column_config.NumberColumn(format="$%.0f"), "Pool": st.column_config.LinkColumn("Pool", display_text="Open")})
+            strategy_rows = {str(row["pool"]): row for _, row in strategy_df.iterrows()}
+            selected_strategy_pool = st.selectbox(
+                "Strategy result pool",
+                tuple(strategy_rows),
+                format_func=lambda pool_id: (
+                    f"{strategy_rows[pool_id]['project']} · {strategy_rows[pool_id]['symbol']} · "
+                    f"{strategy_rows[pool_id]['chain']}"
+                ),
+                key="strategy_result_pool",
+            )
+            selected_is_saved = selected_strategy_pool in saved_pool_ids
+            action_left, action_right = st.columns(2)
+            with action_left:
+                watch_label = "Remove from Watchlist" if selected_is_saved else "Save to Watchlist"
+                if st.button(
+                    watch_label,
+                    key="strategy_result_watch",
+                    width="stretch",
+                    disabled=watchlist_client is None,
+                ):
+                    if watch_toggle(selected_strategy_pool, watched=selected_is_saved, client=watchlist_client):
+                        st.rerun()
+            with action_right:
+                if st.button("Open Pool Detail", key="strategy_result_detail", type="primary", width="stretch"):
+                    track_research_event("pool_detail_opened", {"pool": selected_strategy_pool, "view": "Strategy Builder"})
+                    open_pool_detail(selected_strategy_pool, return_route="Pro Tools", return_view="Strategy Builder")
+                    st.rerun()
         st.markdown("</div>", unsafe_allow_html=True)
 
 elif content_page == "Activity & Digests":
-    render_recaps_page(alert_stats, history_latest_df, history_trend_df, is_pro)
+    render_recaps_page(
+        alert_stats,
+        history_latest_df,
+        history_trend_df,
+        is_pro,
+        history_load_error=signal_history_load_error,
+    )
 
 elif content_page == "Watchlists":
     left, right = st.columns([1.2, 1], gap="large")

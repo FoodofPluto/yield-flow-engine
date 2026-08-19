@@ -70,6 +70,27 @@ PAGE_CONTEXT = {
 DISCOVER_VIEWS = ("Opportunities", "Signals", "Compare")
 RESEARCH_VIEWS = ("Market Map", "Protocols")
 PRO_TOOL_VIEWS = ("Strategy Builder", "Yield Spreads")
+SIGNAL_ENGINE_TABLE_COLUMNS = (
+    ("pool_url", "Pool"),
+    ("project", "Protocol"),
+    ("chain", "Chain"),
+    ("symbol", "Asset"),
+    ("signal", "Signal"),
+    ("signal_strength", "Strength"),
+    ("apy_delta_7", "7d APY Δ"),
+    ("tvl_delta_7_pct", "7d TVL Δ %"),
+    ("apy_volatility", "APY volatility"),
+)
+STRATEGY_RESULTS_TABLE_COLUMNS = (
+    ("pool_url", "Pool"),
+    ("project", "Protocol"),
+    ("chain", "Chain"),
+    ("symbol", "Asset"),
+    ("apy", "APY"),
+    ("tvlUsd", "TVL (USD)"),
+    ("risk_score", "Risk"),
+    ("signal", "Signal"),
+)
 
 
 def visible_navigation(*, signed_in: bool, is_pro: bool, is_admin: bool) -> tuple[NavItem, ...]:
@@ -335,4 +356,4 @@ def render_state(title: str, message: str) -> None:
 
 
 def market_filters_apply(route: str) -> bool:
-    return route in {"Home", "Discover", "Research", "Pool Detail", "Watchlists", "Pro Tools"}
+    return route in {"Home", "Discover", "Research", "Pool Detail", "Watchlists"}

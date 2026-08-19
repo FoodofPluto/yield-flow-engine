@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
 import json
+from pathlib import Path
 
 import pandas as pd
 
@@ -86,6 +87,108 @@ def test_default_history_path_remains_compatible_without_override(tmp_path, monk
 
     assert destination.is_file()
     assert history_store.load_history("pool-0").shape[0] == 1
+
+
+def test_runtime_data_directory_precedes_safe_temporary_default(tmp_path, monkeypatch) -> None:
+    runtime_directory = tmp_path / "runtime-data"
+    monkeypatch.delenv(history_store.HISTORY_PATH_ENV, raising=False)
+    monkeypatch.setenv(history_store.RUNTIME_DATA_DIR_ENV, str(runtime_directory))
+    monkeypatch.setattr(history_store, "HISTORY_FILE", Path("/app/pool_history.json"))
+
+    assert history_store.save_snapshot(_frame("2026-08-18T20:00:00+00:00", count=1)) is True
+    assert (runtime_directory / "pool_history.json").is_file()
+    assert history_store._history_file().parent == runtime_directory
+
+
+def test_explicit_path_precedes_runtime_data_directory(tmp_path, monkeypatch) -> None:
+    destination = tmp_path / "explicit" / "history.json"
+    monkeypatch.setenv(history_store.HISTORY_PATH_ENV, str(destination))
+    monkeypatch.setenv(history_store.RUNTIME_DATA_DIR_ENV, str(tmp_path / "ignored-runtime"))
+
+    assert history_store._history_file() == destination
+    assert history_store.save_snapshot(_frame("2026-08-18T20:00:00+00:00", count=1)) is True
+    assert destination.is_file()
+
+
+def test_atomic_temporary_file_is_next_to_runtime_destination(tmp_path, monkeypatch) -> None:
+    destination = tmp_path / "runtime" / "pool_history.json"
+    monkeypatch.setenv(history_store.HISTORY_PATH_ENV, str(destination))
+    writes: list[Path] = []
+    original_write_text = Path.write_text
+
+    def recording_write_text(path: Path, *args, **kwargs):
+        writes.append(path)
+        return original_write_text(path, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "write_text", recording_write_text)
+
+    assert history_store.save_snapshot(_frame("2026-08-18T20:00:00+00:00", count=1)) is True
+    assert len(writes) == 1
+    assert writes[0].parent == destination.parent
+    assert writes[0].name.startswith(f".{destination.name}.")
+    assert writes[0].suffix == ".tmp"
+
+
+def test_filesystem_write_failure_is_controlled_and_leaves_no_partial_file(tmp_path, monkeypatch, caplog) -> None:
+    destination = tmp_path / "runtime" / "pool_history.json"
+    monkeypatch.setenv(history_store.HISTORY_PATH_ENV, str(destination))
+
+    def denied_write(_path: Path, *_args, **_kwargs):
+        raise PermissionError("simulated read-only filesystem")
+
+    monkeypatch.setattr(Path, "write_text", denied_write)
+
+    assert history_store.save_snapshot(_frame("2026-08-18T20:00:00+00:00", count=1)) is False
+    assert not destination.exists()
+    assert not list(destination.parent.glob("*.tmp"))
+    assert "PermissionError" in caplog.text
+    assert "simulated read-only filesystem" not in caplog.text
+
+
+def test_atomic_replace_retries_one_transient_permission_failure(tmp_path, monkeypatch) -> None:
+    destination = tmp_path / "runtime" / "pool_history.json"
+    monkeypatch.setenv(history_store.HISTORY_PATH_ENV, str(destination))
+    original_replace = Path.replace
+    calls = 0
+
+    def transient_replace(path: Path, target: Path):
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            raise PermissionError("simulated transient scanner lock")
+        return original_replace(path, target)
+
+    monkeypatch.setattr(Path, "replace", transient_replace)
+
+    assert history_store.save_snapshot(_frame("2026-08-18T20:00:00+00:00", count=1)) is True
+    assert calls == 2
+    assert destination.is_file()
+
+
+def test_persistent_atomic_replace_failure_is_controlled(tmp_path, monkeypatch, caplog) -> None:
+    destination = tmp_path / "runtime" / "pool_history.json"
+    monkeypatch.setenv(history_store.HISTORY_PATH_ENV, str(destination))
+
+    def denied_replace(_path: Path, _target: Path):
+        raise PermissionError("simulated persistent scanner lock")
+
+    monkeypatch.setattr(Path, "replace", denied_replace)
+
+    assert history_store.save_snapshot(_frame("2026-08-18T20:00:00+00:00", count=1)) is False
+    assert not destination.exists()
+    assert not list(destination.parent.glob("*.tmp"))
+    assert "atomic replace (PermissionError)" in caplog.text
+
+
+def test_corrupt_and_non_object_history_are_treated_as_empty(tmp_path, monkeypatch) -> None:
+    destination = tmp_path / "pool_history.json"
+    monkeypatch.setenv(history_store.HISTORY_PATH_ENV, str(destination))
+
+    destination.write_text("{broken", encoding="utf-8")
+    assert history_store.load_history("pool-0").empty
+
+    destination.write_text("[]", encoding="utf-8")
+    assert history_store.load_history("pool-0").empty
 
 
 def test_snapshot_store_retains_configured_pool_limit(tmp_path, monkeypatch) -> None:

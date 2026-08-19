@@ -11,6 +11,7 @@ from ui_shell import (
     route_access,
     update_route_state,
     visible_navigation,
+    market_filters_apply,
 )
 
 
@@ -112,3 +113,8 @@ def test_account_control_model_is_compact_and_uses_server_derived_roles() -> Non
     assert account_control_model(user, is_pro=False, is_admin=False)["plan"] == "Free"
     assert account_control_model(user, is_pro=True, is_admin=False)["plan"] == "Pro"
     assert account_control_model(user, is_pro=True, is_admin=True)["plan"] == "Admin"
+
+
+def test_discover_filter_controls_do_not_render_as_a_second_pro_tools_workflow() -> None:
+    assert market_filters_apply("Discover") is True
+    assert market_filters_apply("Pro Tools") is False

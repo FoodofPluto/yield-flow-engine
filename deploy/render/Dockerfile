@@ -18,9 +18,6 @@ RUN python -m pip install --requirement requirements.txt
 
 COPY . .
 RUN chown -R root:root /app \
-    && chmod -R a+rX /app \
-    && touch /app/pool_history.json \
-    && chown furuflow-streamlit:furuflow-streamlit /app/pool_history.json \
-    && chmod 600 /app/pool_history.json
+    && chmod -R a+rX /app
 
 CMD ["python", "-m", "deploy.render.supervise"]

@@ -62,6 +62,7 @@ def _authenticated_app(
     *,
     page: str,
     market_pool_id: str = "canonical-pool-1",
+    is_pro: bool = False,
 ) -> AppTest:
     import auth_service
     import saved_pools
@@ -79,7 +80,7 @@ def _authenticated_app(
     monkeypatch.setattr(auth_service, "get_current_user", lambda: user)
     monkeypatch.setattr(auth_service, "claim_session", lambda: None)
     monkeypatch.setattr(auth_service, "validate_session", lambda: True)
-    monkeypatch.setattr(auth_service, "can_access_pro", lambda _user: False)
+    monkeypatch.setattr(auth_service, "can_access_pro", lambda _user: is_pro)
     monkeypatch.setattr(saved_pools, "current_user_saved_pools_client", lambda: client)
     monkeypatch.setattr(requests, "get", lambda *_args, **_kwargs: FakeMarketResponse(market_pool_id))
     monkeypatch.delenv("FURUFLOW_MARKET_SAMPLE_MODE", raising=False)
@@ -152,3 +153,36 @@ def test_missing_provider_pool_stays_saved_shows_degraded_state_and_can_be_remov
     _button(app, "Remove from Watchlist").click().run()
     assert "saved-pool-now-missing" not in client.rows
     assert any("Your watchlist is empty" in markdown.value for markdown in app.markdown)
+
+
+def test_strategy_results_actions_use_canonical_watchlist_and_pool_detail_primitives(monkeypatch) -> None:
+    client = FakeSavedPoolsClient()
+    app = _authenticated_app(monkeypatch, client, page="Pro Tools", is_pro=True)
+    next(slider for slider in app.slider if slider.label == "Strategy minimum APY").set_value(0.0).run()
+    next(slider for slider in app.slider if slider.label == "Strategy minimum TVL").set_value(0).run()
+    next(slider for slider in app.slider if slider.label == "Strategy maximum risk").set_value(100).run()
+    strategy_tables = [element.value for element in app.dataframe if "Risk" in element.value.columns]
+    assert strategy_tables
+    assert strategy_tables[-1].columns[0] == "Pool"
+
+    _button(app, "Save to Watchlist").click().run()
+    assert client.save_calls == ["canonical-pool-1"]
+    assert tuple(client.rows) == ("canonical-pool-1",)
+
+    _button(app, "Open Pool Detail").click().run()
+    assert app.query_params["page"] == ["Pool Detail"]
+    assert app.query_params["pool"] == ["canonical-pool-1"]
+    assert any(button.label == "← Back to Strategy Results" for button in app.button)
+
+    _button(app, "← Back to Strategy Results").click().run()
+    assert app.query_params["page"] == ["Pro Tools"]
+    assert client.rows["canonical-pool-1"].pool_id == "canonical-pool-1"
+
+
+def test_signal_engine_renders_pool_link_as_first_visible_table_column(monkeypatch) -> None:
+    app = _authenticated_app(monkeypatch, FakeSavedPoolsClient(), page="Discover", is_pro=True)
+    next(radio for radio in app.radio if radio.label == "Discover view").set_value("Signals").run()
+
+    signal_tables = [element.value for element in app.dataframe if "Strength" in element.value.columns]
+    assert signal_tables
+    assert signal_tables[-1].columns[0] == "Pool"

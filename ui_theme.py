@@ -146,6 +146,76 @@ UI_THEME_CSS = """
         cursor: not-allowed !important;
     }
 
+    /* Streamlit 1.60 renders selectboxes with React Aria rather than BaseWeb. */
+    [data-testid="stSelectbox"] [role="group"] {
+        background: var(--ff-color-surface-control) !important;
+        border-color: var(--ff-color-border-strong) !important;
+        color: var(--ff-color-text) !important;
+    }
+    [data-testid="stSelectbox"] [role="combobox"],
+    [data-testid="stSelectbox"] [role="group"] button,
+    [data-testid="stSelectbox"] [role="group"] svg {
+        background: transparent !important;
+        color: var(--ff-color-text) !important;
+        fill: currentColor !important;
+    }
+    [data-testid="stSelectbox"] [role="group"]:hover {
+        background: var(--ff-color-hover) !important;
+        border-color: rgba(142, 232, 255, .45) !important;
+    }
+    [data-testid="stSelectbox"] [role="group"]:focus-within {
+        border-color: var(--ff-color-focus) !important;
+        box-shadow: 0 0 0 2px rgba(255, 215, 106, .28) !important;
+    }
+    [role="listbox"] {
+        background: var(--ff-color-surface-elevated) !important;
+        color: var(--ff-color-text) !important;
+    }
+    [role="option"] {
+        background: var(--ff-color-surface-elevated) !important;
+        color: var(--ff-color-text) !important;
+    }
+    [role="option"]:hover,
+    [role="option"][data-focused="true"] {
+        background: var(--ff-color-hover) !important;
+        color: var(--ff-color-interactive-hover) !important;
+    }
+    [role="option"][aria-selected="true"] {
+        background: var(--ff-color-selected) !important;
+        color: var(--ff-color-text) !important;
+    }
+
+    /* The account container scopes authentication submit-button states. */
+    .st-key-account_auth_controls button[data-testid^="stBaseButton-"],
+    .st-key-account_auth_controls [data-testid="stFormSubmitButton"] button {
+        background: var(--ff-color-surface-control) !important;
+        border: 1px solid var(--ff-color-border-strong) !important;
+        color: var(--ff-color-text) !important;
+    }
+    .st-key-account_auth_controls button[data-testid^="stBaseButton-"] *,
+    .st-key-account_auth_controls [data-testid="stFormSubmitButton"] button * {
+        background: transparent !important;
+        color: inherit !important;
+    }
+    .st-key-account_auth_controls button[data-testid^="stBaseButton-"]:hover,
+    .st-key-account_auth_controls [data-testid="stFormSubmitButton"] button:hover {
+        background: var(--ff-color-hover) !important;
+        border-color: rgba(142, 232, 255, .45) !important;
+        color: var(--ff-color-interactive-hover) !important;
+    }
+    .st-key-account_auth_controls button[data-testid^="stBaseButton-"]:active,
+    .st-key-account_auth_controls [data-testid="stFormSubmitButton"] button:active {
+        background: var(--ff-color-selected) !important;
+        color: var(--ff-color-text) !important;
+    }
+    .st-key-account_auth_controls button[data-testid^="stBaseButton-"]:disabled,
+    .st-key-account_auth_controls [data-testid="stFormSubmitButton"] button:disabled {
+        background: var(--ff-color-surface-secondary) !important;
+        border-style: dashed !important;
+        color: var(--ff-color-text-muted) !important;
+        opacity: .68 !important;
+    }
+
     .ff-card-wrap {
         min-width: 0;
         padding: var(--ff-space-4);

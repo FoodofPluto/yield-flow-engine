@@ -1,14 +1,19 @@
 from __future__ import annotations
 
 import json
+import logging
 import os
 from pathlib import Path
+import tempfile
 import threading
+import uuid
 
 import pandas as pd
 
-HISTORY_FILE = Path(__file__).with_name("pool_history.json")
+LOGGER = logging.getLogger(__name__)
 HISTORY_PATH_ENV = "FURUFLOW_HISTORY_PATH"
+RUNTIME_DATA_DIR_ENV = "FURUFLOW_RUNTIME_DATA_DIR"
+HISTORY_FILE = Path(tempfile.gettempdir()) / "furuflow" / "pool_history.json"
 MAX_POINTS_PER_POOL = 90
 MAX_TRACKED_POOLS = 2_000
 _HISTORY_LOCK = threading.Lock()
@@ -16,7 +21,12 @@ _HISTORY_LOCK = threading.Lock()
 
 def _history_file() -> Path:
     configured = os.getenv(HISTORY_PATH_ENV, "").strip()
-    return Path(configured) if configured else HISTORY_FILE
+    if configured:
+        return Path(configured)
+    runtime_directory = os.getenv(RUNTIME_DATA_DIR_ENV, "").strip()
+    if runtime_directory:
+        return Path(runtime_directory) / "pool_history.json"
+    return HISTORY_FILE
 
 
 def _read_raw(history_file: Path | None = None) -> dict:
@@ -24,9 +34,27 @@ def _read_raw(history_file: Path | None = None) -> dict:
     if not history_file.exists():
         return {}
     try:
-        return json.loads(history_file.read_text(encoding="utf-8"))
-    except Exception:
+        value = json.loads(history_file.read_text(encoding="utf-8"))
+        return value if isinstance(value, dict) else {}
+    except (OSError, UnicodeError, json.JSONDecodeError) as exc:
+        LOGGER.warning("History snapshot could not be loaded (%s).", type(exc).__name__)
         return {}
+
+
+def _temporary_history_file(history_file: Path) -> Path:
+    return history_file.with_name(f".{history_file.name}.{uuid.uuid4().hex}.tmp")
+
+
+def _replace_history_file(temporary: Path, history_file: Path) -> None:
+    for attempt in range(3):
+        try:
+            temporary.replace(history_file)
+            return
+        except PermissionError:
+            # Windows file scanners can briefly hold a just-written file.
+            # Bounded immediate retries preserve atomicity without delaying UI.
+            if attempt == 2:
+                raise
 
 
 def load_history(pool_id: str) -> pd.DataFrame:
@@ -42,9 +70,9 @@ def load_history(pool_id: str) -> pd.DataFrame:
     return frame.dropna(subset=["timestamp"]).sort_values("timestamp")
 
 
-def save_snapshot(df: pd.DataFrame) -> None:
+def save_snapshot(df: pd.DataFrame) -> bool:
     if df is None or df.empty:
-        return
+        return True
 
     snapshot = df.head(MAX_TRACKED_POOLS)
     timestamp = str(df.attrs.get("retrieved_at") or pd.Timestamp.utcnow().isoformat())
@@ -72,7 +100,19 @@ def save_snapshot(df: pd.DataFrame) -> None:
                 points.append(point)
             history[pool_id] = points[-MAX_POINTS_PER_POOL:]
 
-        history_file.parent.mkdir(parents=True, exist_ok=True)
-        temporary = history_file.with_suffix(history_file.suffix + ".tmp")
-        temporary.write_text(json.dumps(history, separators=(",", ":")), encoding="utf-8")
-        temporary.replace(history_file)
+        temporary = _temporary_history_file(history_file)
+        operation = "directory preparation"
+        try:
+            history_file.parent.mkdir(parents=True, exist_ok=True)
+            operation = "temporary write"
+            temporary.write_text(json.dumps(history, separators=(",", ":")), encoding="utf-8")
+            operation = "atomic replace"
+            _replace_history_file(temporary, history_file)
+        except OSError as exc:
+            LOGGER.warning("History snapshot could not be persisted during %s (%s).", operation, type(exc).__name__)
+            try:
+                temporary.unlink(missing_ok=True)
+            except OSError as cleanup_exc:
+                LOGGER.warning("Incomplete history snapshot cleanup failed (%s).", type(cleanup_exc).__name__)
+            return False
+    return True
