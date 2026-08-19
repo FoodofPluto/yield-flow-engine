@@ -69,6 +69,7 @@ class ChildSpec:
 class ManagedChild:
     name: str
     process: subprocess.Popen[bytes]
+    user: str | None
 
 
 def _required(source: Mapping[str, str], keys: tuple[str, ...]) -> None:
@@ -180,10 +181,37 @@ def _specs(
     )
 
 
+def _signal_child(child: ManagedChild, signum: int) -> bool:
+    """Signal a child, retrying as its UID when the supervisor lacks CAP_KILL."""
+
+    try:
+        child.process.send_signal(signum)
+        return True
+    except ProcessLookupError:
+        return True
+    except PermissionError:
+        if not child.user:
+            return False
+
+    signal_name = signal.Signals(signum).name.removeprefix("SIG")
+    try:
+        result = subprocess.run(
+            ("kill", f"-{signal_name}", str(child.process.pid)),
+            check=False,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            preexec_fn=_privilege_dropper(child.user),
+        )
+    except (OSError, subprocess.SubprocessError):
+        return False
+    return result.returncode == 0
+
+
 def _stop(children: list[ManagedChild]) -> None:
     for child in children:
         if child.process.poll() is None:
-            child.process.terminate()
+            if not _signal_child(child, signal.SIGTERM):
+                print(f"supervisor could not terminate {child.name}; container teardown will reclaim it", file=sys.stderr)
 
     deadline = time.monotonic() + 10.0
     while time.monotonic() < deadline and any(child.process.poll() is None for child in children):
@@ -191,7 +219,8 @@ def _stop(children: list[ManagedChild]) -> None:
 
     for child in children:
         if child.process.poll() is None:
-            child.process.kill()
+            if not _signal_child(child, signal.SIGKILL):
+                print(f"supervisor could not kill {child.name}; container teardown will reclaim it", file=sys.stderr)
     for child in children:
         try:
             child.process.wait(timeout=2.0)
@@ -232,7 +261,7 @@ def main() -> int:
                 env=spec.environment,
                 preexec_fn=_privilege_dropper(spec.user) if spec.user else None,
             )
-            children.append(ManagedChild(spec.name, process))
+            children.append(ManagedChild(spec.name, process, spec.user))
             print(f"supervisor started {spec.name} pid={process.pid}", flush=True)
             if spec.name == "session-broker":
                 for key in BROKER_ONLY_KEYS:

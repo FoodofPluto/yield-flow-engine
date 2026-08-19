@@ -95,8 +95,8 @@ def test_alert_state_is_textual_and_does_not_render_a_raw_chat_identifier() -> N
 
 
 def test_signal_and_strategy_tables_put_pool_navigation_first() -> None:
-    assert SIGNAL_ENGINE_TABLE_COLUMNS[0] == ("pool_url", "Pool")
-    assert STRATEGY_RESULTS_TABLE_COLUMNS[0] == ("pool_url", "Pool")
+    assert SIGNAL_ENGINE_TABLE_COLUMNS[0] == ("pool_detail_url", "Pool")
+    assert STRATEGY_RESULTS_TABLE_COLUMNS[0] == ("pool_detail_url", "Pool")
 
 
 def test_discover_controls_are_not_duplicated_on_pro_tools() -> None:

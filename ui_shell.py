@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from html import escape
 from typing import Any, Mapping, MutableMapping
+from urllib.parse import urlencode
 
 import streamlit as st
 
@@ -71,7 +72,7 @@ DISCOVER_VIEWS = ("Opportunities", "Signals", "Compare")
 RESEARCH_VIEWS = ("Market Map", "Protocols")
 PRO_TOOL_VIEWS = ("Strategy Builder", "Yield Spreads")
 SIGNAL_ENGINE_TABLE_COLUMNS = (
-    ("pool_url", "Pool"),
+    ("pool_detail_url", "Pool"),
     ("project", "Protocol"),
     ("chain", "Chain"),
     ("symbol", "Asset"),
@@ -82,7 +83,7 @@ SIGNAL_ENGINE_TABLE_COLUMNS = (
     ("apy_volatility", "APY volatility"),
 )
 STRATEGY_RESULTS_TABLE_COLUMNS = (
-    ("pool_url", "Pool"),
+    ("pool_detail_url", "Pool"),
     ("project", "Protocol"),
     ("chain", "Chain"),
     ("symbol", "Asset"),
@@ -91,6 +92,51 @@ STRATEGY_RESULTS_TABLE_COLUMNS = (
     ("risk_score", "Risk"),
     ("signal", "Signal"),
 )
+
+POOL_DETAIL_RETURN_VIEWS = {
+    "Discover": frozenset(DISCOVER_VIEWS),
+    "Pro Tools": frozenset(PRO_TOOL_VIEWS),
+    "Watchlists": frozenset({"Opportunities"}),
+}
+
+
+def pool_detail_url(
+    pool_id: str,
+    *,
+    public_origin: str,
+    return_route: str,
+    return_view: str,
+) -> str:
+    """Build a canonical in-app Pool Detail URL with allowlisted return context."""
+
+    allowed_views = POOL_DETAIL_RETURN_VIEWS.get(return_route)
+    if allowed_views is None or return_view not in allowed_views:
+        raise ValueError("Invalid Pool Detail return context.")
+    origin = public_origin.strip().rstrip("/")
+    if not origin:
+        raise ValueError("Pool Detail public origin is required.")
+    query = urlencode(
+        {
+            "page": "Pool Detail",
+            "pool": str(pool_id),
+            "return_route": return_route,
+            "return_view": return_view,
+        }
+    )
+    return f"{origin}/?{query}"
+
+
+def pool_detail_query_context(params: Mapping[str, Any]) -> dict[str, str]:
+    """Return only valid, non-secret Pool Detail navigation context from a URL."""
+
+    return_route = str(params.get("return_route") or "")
+    return_view = str(params.get("return_view") or "")
+    if return_view not in POOL_DETAIL_RETURN_VIEWS.get(return_route, frozenset()):
+        return {}
+    return {
+        "pool_return_route": return_route,
+        "pool_return_view": return_view,
+    }
 
 
 def visible_navigation(*, signed_in: bool, is_pro: bool, is_admin: bool) -> tuple[NavItem, ...]:

@@ -70,7 +70,9 @@ from ui_shell import (
     inject_shell_css,
     market_filters_apply,
     pool_detail_back_state,
+    pool_detail_query_context,
     pool_detail_state,
+    pool_detail_url,
     render_brand,
     render_navigation,
     render_page_heading,
@@ -1607,6 +1609,8 @@ if legacy_view:
 st.session_state["current_route"] = page
 if st.query_params.get("pool"):
     st.session_state["selected_pool_id"] = str(st.query_params["pool"])
+if page == "Pool Detail":
+    st.session_state.update(pool_detail_query_context(st.query_params))
 
 with st.sidebar:
     render_brand()
@@ -2133,7 +2137,16 @@ elif content_page == "Signals":
     with left:
         st.markdown("<div class='panel'>", unsafe_allow_html=True)
         section_header("Signal engine", "Rules-based yield movement", "Existing deterministic labels surface APY spikes, farm rotations, emerging pools, and whale inflows from recent pool chart movement.")
-        sig_view = filtered[[column for column, _ in SIGNAL_ENGINE_TABLE_COLUMNS]].copy().head(20)
+        signal_table_source = filtered.copy()
+        signal_table_source["pool_detail_url"] = signal_table_source["pool"].map(
+            lambda pool_id: pool_detail_url(
+                str(pool_id),
+                public_origin=os.getenv("FURUFLOW_SESSION_BROKER_PUBLIC_ORIGIN", "http://localhost:8501"),
+                return_route="Discover",
+                return_view="Signals",
+            )
+        )
+        sig_view = signal_table_source[[column for column, _ in SIGNAL_ENGINE_TABLE_COLUMNS]].copy().head(20)
         sig_view.columns = [label for _, label in SIGNAL_ENGINE_TABLE_COLUMNS]
         st.dataframe(sig_view, width="stretch", hide_index=True, height=560, column_config={"Strength": st.column_config.NumberColumn(format="%.1f"), "7d APY Δ": st.column_config.NumberColumn(format="%.2f"), "7d TVL Δ %": st.column_config.NumberColumn(format="%.2f"), "APY volatility": st.column_config.NumberColumn(format="%.2f"), "Pool": st.column_config.LinkColumn("Pool", display_text="Open")})
         st.markdown("</div>", unsafe_allow_html=True)
@@ -2460,7 +2473,16 @@ elif content_page == "Strategy Builder":
         if strategy_df.empty:
             st.info("No pools match the current strategy builder settings.")
         else:
-            view = strategy_df[[column for column, _ in STRATEGY_RESULTS_TABLE_COLUMNS]].copy()
+            strategy_table_source = strategy_df.copy()
+            strategy_table_source["pool_detail_url"] = strategy_table_source["pool"].map(
+                lambda pool_id: pool_detail_url(
+                    str(pool_id),
+                    public_origin=os.getenv("FURUFLOW_SESSION_BROKER_PUBLIC_ORIGIN", "http://localhost:8501"),
+                    return_route="Pro Tools",
+                    return_view="Strategy Builder",
+                )
+            )
+            view = strategy_table_source[[column for column, _ in STRATEGY_RESULTS_TABLE_COLUMNS]].copy()
             view.columns = [label for _, label in STRATEGY_RESULTS_TABLE_COLUMNS]
             st.dataframe(view, width="stretch", hide_index=True, height=520, column_config={"APY": st.column_config.NumberColumn(format="%.2f%%"), "TVL (USD)": st.column_config.NumberColumn(format="$%.0f"), "Pool": st.column_config.LinkColumn("Pool", display_text="Open")})
             strategy_rows = {str(row["pool"]): row for _, row in strategy_df.iterrows()}

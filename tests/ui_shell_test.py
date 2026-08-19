@@ -1,5 +1,9 @@
 from __future__ import annotations
 
+from urllib.parse import parse_qs, urlparse
+
+import pytest
+
 from ui_shell import (
     AUTHENTICATED_NAV,
     PUBLIC_NAV,
@@ -7,7 +11,9 @@ from ui_shell import (
     alert_creation_state,
     canonical_route,
     pool_detail_back_state,
+    pool_detail_query_context,
     pool_detail_state,
+    pool_detail_url,
     route_access,
     update_route_state,
     visible_navigation,
@@ -77,6 +83,40 @@ def test_pool_detail_context_can_return_to_the_existing_watchlists_route() -> No
     opened = pool_detail_state("canonical-pool-123", return_route="Watchlists")
 
     assert pool_detail_back_state(opened) == {"current_route": "Watchlists", "current_view": "Opportunities"}
+
+
+def test_table_pool_link_uses_canonical_contextual_pool_detail_url() -> None:
+    url = pool_detail_url(
+        "canonical-pool-123",
+        public_origin="https://furuflow-staging.onrender.com/",
+        return_route="Discover",
+        return_view="Signals",
+    )
+    parsed = urlparse(url)
+    query = parse_qs(parsed.query)
+
+    assert f"{parsed.scheme}://{parsed.netloc}" == "https://furuflow-staging.onrender.com"
+    assert query == {
+        "page": ["Pool Detail"],
+        "pool": ["canonical-pool-123"],
+        "return_route": ["Discover"],
+        "return_view": ["Signals"],
+    }
+    assert pool_detail_query_context({key: values[0] for key, values in query.items()}) == {
+        "pool_return_route": "Discover",
+        "pool_return_view": "Signals",
+    }
+
+
+def test_pool_detail_url_rejects_unrecognized_return_context() -> None:
+    assert pool_detail_query_context({"return_route": "Admin", "return_view": "Secrets"}) == {}
+    with pytest.raises(ValueError, match="return context"):
+        pool_detail_url(
+            "canonical-pool-123",
+            public_origin="https://furuflow-staging.onrender.com",
+            return_route="Admin",
+            return_view="Secrets",
+        )
 
 
 def test_pool_detail_alert_action_uses_session_state_without_a_pool_url() -> None:

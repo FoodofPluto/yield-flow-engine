@@ -1,9 +1,17 @@
 from pathlib import Path
 from tempfile import TemporaryDirectory
+from unittest.mock import Mock, patch
 
 import pytest
 
-from deploy.render.supervise import INTERNAL_BROKER_URL, _specs, build_child_environments, render_nginx_config
+from deploy.render.supervise import (
+    INTERNAL_BROKER_URL,
+    ManagedChild,
+    _signal_child,
+    _specs,
+    build_child_environments,
+    render_nginx_config,
+)
 
 
 def _environment() -> dict[str, str]:
@@ -87,6 +95,28 @@ def test_supervisor_binds_only_nginx_to_the_public_interface() -> None:
     assert specs["nginx"].argv == ("nginx", "-g", "daemon off;")
     assert specs["session-broker"].user == "furuflow-broker"
     assert specs["streamlit"].user == "furuflow-streamlit"
+
+
+def test_supervisor_shutdown_retries_permission_denied_signal_as_child_user() -> None:
+    process = Mock(pid=42)
+    process.send_signal.side_effect = PermissionError(1, "Operation not permitted")
+    child = ManagedChild("streamlit", process, "furuflow-streamlit")
+    completed = Mock(returncode=0)
+
+    with patch("deploy.render.supervise.subprocess.run", return_value=completed) as run:
+        assert _signal_child(child, 15) is True
+
+    run.assert_called_once()
+    argv = run.call_args.args[0]
+    assert argv == ("kill", "-TERM", "42")
+    assert run.call_args.kwargs["preexec_fn"] is not None
+
+
+def test_supervisor_shutdown_permission_failure_is_controlled() -> None:
+    process = Mock(pid=43)
+    process.send_signal.side_effect = PermissionError(1, "Operation not permitted")
+
+    assert _signal_child(ManagedChild("nginx", process, None), 15) is False
 
 
 def test_supervisor_rejects_live_billing_credentials_in_staging() -> None:
