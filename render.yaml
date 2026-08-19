@@ -13,6 +13,8 @@ services:
         value: staging
       - key: DEV_MODE
         value: "false"
+      - key: FURUFLOW_HISTORY_PATH
+        value: /tmp/furuflow/pool_history.json
       - key: SUPABASE_URL
         sync: false
       - key: SUPABASE_ANON_KEY

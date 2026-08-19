@@ -1,22 +1,30 @@
 from __future__ import annotations
 
 import json
+import os
 from pathlib import Path
 import threading
 
 import pandas as pd
 
 HISTORY_FILE = Path(__file__).with_name("pool_history.json")
+HISTORY_PATH_ENV = "FURUFLOW_HISTORY_PATH"
 MAX_POINTS_PER_POOL = 90
 MAX_TRACKED_POOLS = 2_000
 _HISTORY_LOCK = threading.Lock()
 
 
-def _read_raw() -> dict:
-    if not HISTORY_FILE.exists():
+def _history_file() -> Path:
+    configured = os.getenv(HISTORY_PATH_ENV, "").strip()
+    return Path(configured) if configured else HISTORY_FILE
+
+
+def _read_raw(history_file: Path | None = None) -> dict:
+    history_file = history_file or _history_file()
+    if not history_file.exists():
         return {}
     try:
-        return json.loads(HISTORY_FILE.read_text(encoding="utf-8"))
+        return json.loads(history_file.read_text(encoding="utf-8"))
     except Exception:
         return {}
 
@@ -43,7 +51,8 @@ def save_snapshot(df: pd.DataFrame) -> None:
     pool_ids = tuple(dict.fromkeys(str(value).strip() for value in snapshot["pool"] if str(value).strip()))
 
     with _HISTORY_LOCK:
-        existing = _read_raw()
+        history_file = _history_file()
+        existing = _read_raw(history_file)
         history = {pool_id: list(existing.get(pool_id, [])) for pool_id in pool_ids}
         for _, row in snapshot.iterrows():
             pool_id = str(row.get("pool", "")).strip()
@@ -63,6 +72,7 @@ def save_snapshot(df: pd.DataFrame) -> None:
                 points.append(point)
             history[pool_id] = points[-MAX_POINTS_PER_POOL:]
 
-        temporary = HISTORY_FILE.with_suffix(HISTORY_FILE.suffix + ".tmp")
+        history_file.parent.mkdir(parents=True, exist_ok=True)
+        temporary = history_file.with_suffix(history_file.suffix + ".tmp")
         temporary.write_text(json.dumps(history, separators=(",", ":")), encoding="utf-8")
-        temporary.replace(HISTORY_FILE)
+        temporary.replace(history_file)

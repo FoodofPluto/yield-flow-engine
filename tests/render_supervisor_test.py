@@ -17,6 +17,7 @@ def _environment() -> dict[str, str]:
         "SUPABASE_SERVICE_ROLE_KEY": "service-role-test-value",
         "SUPABASE_REDIRECT_URL_PREVIEW": "https://staging.invalid",
         "SUPABASE_REDIRECT_URL_PRODUCTION": "https://staging.invalid",
+        "FURUFLOW_HISTORY_PATH": "/tmp/furuflow/pool_history.json",
         "FURUFLOW_SESSION_BROKER_INTERNAL_URL": INTERNAL_BROKER_URL,
         "FURUFLOW_SESSION_BROKER_PUBLIC_ORIGIN": "https://staging.invalid",
         "FURUFLOW_SESSION_ENCRYPTION_KEY": "encryption-test-value",
@@ -37,6 +38,7 @@ def test_child_environments_preserve_broker_only_credentials() -> None:
     assert "STRIPE_SECRET_KEY" not in streamlit
     assert "STRIPE_WEBHOOK_SECRET" not in streamlit
     assert streamlit["FURUFLOW_SESSION_BRIDGE_KEY"].startswith("bridge-test")
+    assert streamlit["FURUFLOW_HISTORY_PATH"] == "/tmp/furuflow/pool_history.json"
 
     assert broker["SUPABASE_SERVICE_ROLE_KEY"] == "service-role-test-value"
     assert broker["FURUFLOW_SESSION_ENCRYPTION_KEY"] == "encryption-test-value"
@@ -104,4 +106,5 @@ def test_blueprint_isolates_free_web_service_from_durable_cron_worker() -> None:
     assert "plan: starter" in blueprint
     assert "dockerCommand: python telegram_worker.py run" in blueprint
     assert 'FURUFLOW_SYSTEM_TELEGRAM_RULE_ENABLED\n        value: "false"' in blueprint
+    assert "FURUFLOW_HISTORY_PATH\n        value: /tmp/furuflow/pool_history.json" in blueprint
     assert "dockerfilePath: ./deploy/render/Dockerfile" in blueprint
