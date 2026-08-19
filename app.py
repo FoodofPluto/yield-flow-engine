@@ -51,6 +51,7 @@ from market_research import (
     yield_explanation,
     yield_spreads,
 )
+from market_data import provider_pool_frame
 from saved_pools import (
     SavedPool,
     SavedPoolStoreError,
@@ -442,7 +443,6 @@ def inject_css() -> None:
     )
 
 
-@st.cache_data(ttl=900, show_spinner=False)
 def fetch_pools() -> pd.DataFrame:
     if os.getenv("FURUFLOW_MARKET_SAMPLE_MODE", "").strip().lower() in {"1", "true", "yes"}:
         return sample_pool_data(["Explicit FURUFLOW_MARKET_SAMPLE_MODE development fixture"])
@@ -457,7 +457,7 @@ def fetch_pools() -> pd.DataFrame:
             response.raise_for_status()
             payload = response.json()
             rows = payload.get("data", payload)
-            df = pd.DataFrame(rows)
+            df = provider_pool_frame(rows)
             if not df.empty:
                 required_identity = {"pool", "chain", "project", "symbol"}
                 if not required_identity.issubset(df.columns):
@@ -488,7 +488,7 @@ def fetch_pools() -> pd.DataFrame:
     return unavailable
 
 
-@st.cache_data(ttl=3600, show_spinner=False)
+@st.cache_data(ttl=3600, max_entries=64, show_spinner=False)
 def fetch_pool_chart(pool_id: str) -> pd.DataFrame:
     urls = [
         f"https://yields.llama.fi/chart/{pool_id}",
@@ -522,7 +522,7 @@ def fetch_pool_chart(pool_id: str) -> pd.DataFrame:
     return pd.DataFrame()
 
 
-@st.cache_data(ttl=1800, show_spinner=False)
+@st.cache_data(ttl=1800, max_entries=4, show_spinner=False)
 def fetch_signal_snapshots(pool_ids: tuple[str, ...]) -> pd.DataFrame:
     rows: list[dict[str, Any]] = []
     pool_ids = tuple(str(p) for p in pool_ids[:SIGNAL_SAMPLE])
@@ -594,7 +594,6 @@ def derive_chart_signal(pool_id: str, chart: pd.DataFrame) -> dict[str, Any]:
     }
 
 
-@st.cache_data(show_spinner=False)
 def enrich(df: pd.DataFrame, resolver_version: str = LINK_RESOLVER_VERSION) -> pd.DataFrame:
     data = df.copy()
 
@@ -652,6 +651,13 @@ def enrich(df: pd.DataFrame, resolver_version: str = LINK_RESOLVER_VERSION) -> p
     )
     data = data.sort_values(["rank_score", "apy", "tvlUsd"], ascending=[False, False, False])
     return data
+
+
+@st.cache_data(ttl=900, max_entries=1, show_spinner=False)
+def fetch_enriched_pools(resolver_version: str = LINK_RESOLVER_VERSION) -> pd.DataFrame:
+    """Return one bounded public snapshot without hashing a DataFrame argument."""
+
+    return enrich(fetch_pools(), resolver_version=resolver_version)
 
 
 def protocol_meta(project_key: str, field: str, default: Any) -> Any:
@@ -1658,12 +1664,11 @@ if not allowed:
     st.stop()
 
 with st.spinner("Refreshing market data…"):
-    raw_df = fetch_pools()
-market_source_status = str(raw_df.attrs.get("source_status", "live"))
-market_source_label = str(raw_df.attrs.get("source_label", "DeFiLlama Yields"))
-market_data_status = data_status_from_attrs(raw_df.attrs)
+    df = fetch_enriched_pools(resolver_version=LINK_RESOLVER_VERSION)
+market_source_status = str(df.attrs.get("source_status", "live"))
+market_source_label = str(df.attrs.get("source_label", "DeFiLlama Yields"))
+market_data_status = data_status_from_attrs(df.attrs)
 market_freshness = freshness(market_data_status)
-df = enrich(raw_df, resolver_version=LINK_RESOLVER_VERSION)
 
 watchlist_client: UserSavedPoolsClient | None = None
 saved_pool_entries: tuple[SavedPool, ...] = ()

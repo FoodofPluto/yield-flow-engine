@@ -13,3 +13,4 @@
 account-migration-*.json
 reviewed-account-map.json
 furuflow.pre-supabase-migration.db
+pool_history.json
