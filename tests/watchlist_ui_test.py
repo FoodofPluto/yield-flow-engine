@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone
+from urllib.parse import parse_qs, urlparse
 
 import requests
 import streamlit as st
@@ -177,6 +178,37 @@ def test_strategy_results_actions_use_canonical_watchlist_and_pool_detail_primit
     _button(app, "← Back to Strategy Results").click().run()
     assert app.query_params["page"] == ["Pro Tools"]
     assert client.rows["canonical-pool-1"].pool_id == "canonical-pool-1"
+
+
+def test_pro_tools_renders_only_pro_workflows_and_preserves_both_tools(monkeypatch) -> None:
+    app = _authenticated_app(monkeypatch, FakeSavedPoolsClient(), page="Pro Tools", is_pro=True)
+
+    assert not any(expander.label in {"Discover Filters", "Advanced filters & sorting"} for expander in app.expander)
+    assert any(slider.label == "Strategy minimum APY" for slider in app.slider)
+    assert any("Strategy builder" in markdown.value for markdown in app.markdown)
+
+    next(radio for radio in app.radio if radio.label == "Pro tools view").set_value("Yield Spreads").run()
+
+    assert not app.exception
+    assert any("Yield spreads" in markdown.value for markdown in app.markdown)
+    assert not any("Discovery guidance" in markdown.value for markdown in app.markdown)
+
+
+def test_opportunities_table_puts_canonical_contextual_pool_link_first(monkeypatch) -> None:
+    app = _authenticated_app(monkeypatch, FakeSavedPoolsClient(), page="Discover", is_pro=True)
+    opportunity_tables = [element.value for element in app.dataframe if "Strategy" in element.value.columns]
+
+    assert opportunity_tables
+    opportunities = opportunity_tables[-1]
+    assert opportunities.columns[0] == "Pool"
+    parsed = urlparse(opportunities.iloc[0, 0])
+    assert f"{parsed.scheme}://{parsed.netloc}" == "http://localhost:8501"
+    assert parse_qs(parsed.query) == {
+        "page": ["Pool Detail"],
+        "pool": ["canonical-pool-1"],
+        "return_route": ["Discover"],
+        "return_view": ["Opportunities"],
+    }
 
 
 def test_signal_engine_renders_pool_link_as_first_visible_table_column(monkeypatch) -> None:

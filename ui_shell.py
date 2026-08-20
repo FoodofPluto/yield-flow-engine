@@ -71,6 +71,19 @@ PAGE_CONTEXT = {
 DISCOVER_VIEWS = ("Opportunities", "Signals", "Compare")
 RESEARCH_VIEWS = ("Market Map", "Protocols")
 PRO_TOOL_VIEWS = ("Strategy Builder", "Yield Spreads")
+OPPORTUNITIES_TABLE_COLUMNS = (
+    ("pool_detail_url", "Pool"),
+    ("project", "Protocol"),
+    ("chain", "Chain"),
+    ("symbol", "Asset"),
+    ("strategy_type", "Strategy"),
+    ("apy", "APY"),
+    ("apyBase", "Base"),
+    ("apyReward", "Rewards"),
+    ("tvlUsd", "TVL (USD)"),
+    ("risk_score", "Risk"),
+    ("signal", "Signal"),
+)
 SIGNAL_ENGINE_TABLE_COLUMNS = (
     ("pool_detail_url", "Pool"),
     ("project", "Protocol"),

@@ -60,6 +60,7 @@ from saved_pools import (
 )
 from ui_shell import (
     DISCOVER_VIEWS,
+    OPPORTUNITIES_TABLE_COLUMNS,
     PRO_TOOL_VIEWS,
     SIGNAL_ENGINE_TABLE_COLUMNS,
     STRATEGY_RESULTS_TABLE_COLUMNS,
@@ -919,11 +920,16 @@ def compact_table(df: pd.DataFrame) -> pd.DataFrame:
     ):
         if available_col in source:
             source.loc[~source[available_col].astype(bool), value_col] = pd.NA
-    table = source[[
-        "project", "chain", "symbol", "strategy_type", "apy", "apyBase", "apyReward", "tvlUsd", "risk_score", "signal", "pool_url"
-    ]].rename(columns={
-        "project": "Protocol", "chain": "Chain", "symbol": "Asset", "strategy_type": "Strategy", "apy": "APY", "apyBase": "Base", "apyReward": "Rewards", "tvlUsd": "TVL (USD)", "risk_score": "Risk", "signal": "Signal", "pool_url": "Open"
-    })
+    source["pool_detail_url"] = source["pool"].map(
+        lambda pool_id: pool_detail_url(
+            str(pool_id),
+            public_origin=os.getenv("FURUFLOW_SESSION_BROKER_PUBLIC_ORIGIN", "http://localhost:8501"),
+            return_route="Discover",
+            return_view="Opportunities",
+        )
+    )
+    table = source[[column for column, _ in OPPORTUNITIES_TABLE_COLUMNS]].copy()
+    table.columns = [label for _, label in OPPORTUNITIES_TABLE_COLUMNS]
     return table
 
 
@@ -1970,7 +1976,7 @@ elif content_page == "Scanner":
                     "Rewards": st.column_config.NumberColumn(format="%.2f%%", width="small"),
                     "TVL (USD)": st.column_config.NumberColumn(format="$%.0f", width="medium"),
                     "Risk": st.column_config.NumberColumn(width="small"),
-                    "Open": st.column_config.LinkColumn("Pool link", display_text="Open"),
+                    "Pool": st.column_config.LinkColumn("Pool", display_text="Open"),
                 },
             )
         if is_pro:

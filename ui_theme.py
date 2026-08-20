@@ -171,6 +171,26 @@ UI_THEME_CSS = """
         background: var(--ff-color-surface-elevated) !important;
         color: var(--ff-color-text) !important;
     }
+    /* React Aria portals the menu to body and publishes its viewport-safe
+       height on this overlay. Keep the virtualized listbox inside that bound
+       so longer Pro sort menus scroll instead of being clipped by the overlay. */
+    [data-testid="stSelectboxVirtualDropdown"] [role="listbox"] {
+        max-height: inherit !important;
+        overflow-y: auto !important;
+        overscroll-behavior: contain;
+    }
+    @media (max-width: 1100px) {
+        /* Streamlit 1.60 can mark a sidebar menu for top placement while its
+           generated transform still sends it below the mobile viewport. This
+           fallback is deliberately limited to the Discover Sort by menu. */
+        [data-testid="stSelectboxVirtualDropdown"]:has([role="listbox"][aria-label="Sort by"]) {
+            inset: auto auto .75rem .75rem !important;
+            transform: none !important;
+            width: min(var(--trigger-width), calc(100vw - 1.5rem)) !important;
+            max-width: calc(100vw - 1.5rem) !important;
+            max-height: min(300px, calc(100dvh - 1.5rem)) !important;
+        }
+    }
     [role="option"] {
         background: var(--ff-color-surface-elevated) !important;
         color: var(--ff-color-text) !important;

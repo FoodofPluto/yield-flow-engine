@@ -3,7 +3,12 @@ from __future__ import annotations
 from pathlib import Path
 
 from ui_theme import UI_THEME_CSS
-from ui_shell import SIGNAL_ENGINE_TABLE_COLUMNS, STRATEGY_RESULTS_TABLE_COLUMNS, market_filters_apply
+from ui_shell import (
+    OPPORTUNITIES_TABLE_COLUMNS,
+    SIGNAL_ENGINE_TABLE_COLUMNS,
+    STRATEGY_RESULTS_TABLE_COLUMNS,
+    market_filters_apply,
+)
 
 
 ROOT = Path(__file__).parents[1]
@@ -62,6 +67,21 @@ def test_react_aria_selectbox_is_readable_closed_open_focused_and_selected() -> 
     assert "color: var(--ff-color-text) !important" in UI_THEME_CSS
 
 
+def test_react_aria_selectbox_listbox_respects_the_portal_viewport_boundary() -> None:
+    dropdown_start = UI_THEME_CSS.index('[data-testid="stSelectboxVirtualDropdown"] [role="listbox"]')
+    dropdown_css = UI_THEME_CSS[dropdown_start:]
+
+    assert "max-height: inherit !important" in dropdown_css
+    assert "overflow-y: auto !important" in dropdown_css
+    assert "overscroll-behavior: contain" in dropdown_css
+    sort_portal = '[data-testid="stSelectboxVirtualDropdown"]:has([role="listbox"][aria-label="Sort by"])'
+    assert sort_portal in dropdown_css
+    assert "@media (max-width: 1100px)" in dropdown_css
+    assert "inset: auto auto .75rem .75rem !important" in dropdown_css
+    assert "transform: none !important" in dropdown_css
+    assert "max-height: min(300px, calc(100dvh - 1.5rem)) !important" in dropdown_css
+
+
 def test_page_uses_shared_card_styles_and_explicit_action_hierarchy() -> None:
     app_source = (ROOT / "app.py").read_text(encoding="utf-8")
 
@@ -95,6 +115,7 @@ def test_alert_state_is_textual_and_does_not_render_a_raw_chat_identifier() -> N
 
 
 def test_signal_and_strategy_tables_put_pool_navigation_first() -> None:
+    assert OPPORTUNITIES_TABLE_COLUMNS[0] == ("pool_detail_url", "Pool")
     assert SIGNAL_ENGINE_TABLE_COLUMNS[0] == ("pool_detail_url", "Pool")
     assert STRATEGY_RESULTS_TABLE_COLUMNS[0] == ("pool_detail_url", "Pool")
 
