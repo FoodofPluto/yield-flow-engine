@@ -279,6 +279,32 @@ def sort_pools(frame: pd.DataFrame, sort_by: str) -> pd.DataFrame:
     return frame.sort_values(columns, ascending=ascending, na_position="last", kind="mergesort")
 
 
+def pool_universe(frame: pd.DataFrame, search: str = "") -> pd.DataFrame:
+    """Return the legitimate provider universe in stable identity-first order.
+
+    Unlike Discover filtering, this browser does not impose yield, TVL, risk,
+    ranking, or entitlement thresholds. Search is presentation-only and keeps
+    canonical provider pool IDs intact.
+    """
+
+    if frame.empty:
+        return frame.copy()
+    out = frame.drop_duplicates(subset=["pool"], keep="first").copy()
+    needle = str(search or "").strip().casefold()
+    if needle:
+        matches = pd.Series(False, index=out.index)
+        for column in ("project", "symbol", "chain", "pool", "poolMeta"):
+            if column in out:
+                matches |= out[column].fillna("").astype(str).str.casefold().str.contains(needle, regex=False)
+        out = out[matches]
+    return out.sort_values(
+        ["project", "chain", "symbol", "pool"],
+        ascending=[True, True, True, True],
+        key=lambda values: values.fillna("").astype(str).str.casefold(),
+        kind="mergesort",
+    )
+
+
 def update_comparison(selected: Iterable[str], pool_id: str, *, selected_state: bool) -> tuple[str, ...]:
     values = list(dict.fromkeys(str(item) for item in selected if item))
     pool_id = str(pool_id)

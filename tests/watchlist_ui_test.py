@@ -33,15 +33,16 @@ class FakeSavedPoolsClient:
 
 
 class FakeMarketResponse:
-    def __init__(self, pool_id: str = "canonical-pool-1") -> None:
+    def __init__(self, pool_id: str = "canonical-pool-1", rows: list[dict[str, object]] | None = None) -> None:
         self.pool_id = pool_id
+        self.rows = rows
 
     def raise_for_status(self) -> None:
         return None
 
     def json(self) -> dict[str, object]:
         return {
-            "data": [
+            "data": self.rows or [
                 {
                     "pool": self.pool_id,
                     "chain": "Ethereum",
@@ -63,6 +64,7 @@ def _authenticated_app(
     *,
     page: str,
     market_pool_id: str = "canonical-pool-1",
+    market_rows: list[dict[str, object]] | None = None,
     is_pro: bool = False,
 ) -> AppTest:
     import auth_service
@@ -83,7 +85,7 @@ def _authenticated_app(
     monkeypatch.setattr(auth_service, "validate_session", lambda: True)
     monkeypatch.setattr(auth_service, "can_access_pro", lambda _user: is_pro)
     monkeypatch.setattr(saved_pools, "current_user_saved_pools_client", lambda: client)
-    monkeypatch.setattr(requests, "get", lambda *_args, **_kwargs: FakeMarketResponse(market_pool_id))
+    monkeypatch.setattr(requests, "get", lambda *_args, **_kwargs: FakeMarketResponse(market_pool_id, market_rows))
     monkeypatch.delenv("FURUFLOW_MARKET_SAMPLE_MODE", raising=False)
     st.cache_data.clear()
     app = AppTest.from_file("app.py", default_timeout=60)
@@ -114,6 +116,8 @@ def test_discover_save_is_durable_idempotent_and_restored_in_a_later_session(mon
     assert not later.exception
     assert any(button.label == "Remove" for button in later.button)
     assert any(button.label == "View details" for button in later.button)
+    assert any(button.label == "Create alert" for button in later.button)
+    assert any(button.label == "Research" for button in later.button)
 
 
 def test_watchlist_opens_existing_pool_detail_and_back_returns_to_watchlist(monkeypatch) -> None:
@@ -169,6 +173,7 @@ def test_strategy_results_actions_use_canonical_watchlist_and_pool_detail_primit
     _button(app, "Save to Watchlist").click().run()
     assert client.save_calls == ["canonical-pool-1"]
     assert tuple(client.rows) == ("canonical-pool-1",)
+    assert any(button.label == "Research" for button in app.button)
 
     _button(app, "Open Pool Detail").click().run()
     assert app.query_params["page"] == ["Pool Detail"]
@@ -178,7 +183,6 @@ def test_strategy_results_actions_use_canonical_watchlist_and_pool_detail_primit
     _button(app, "← Back to Strategy Results").click().run()
     assert app.query_params["page"] == ["Pro Tools"]
     assert client.rows["canonical-pool-1"].pool_id == "canonical-pool-1"
-
 
 def test_pro_tools_renders_only_pro_workflows_and_preserves_both_tools(monkeypatch) -> None:
     app = _authenticated_app(monkeypatch, FakeSavedPoolsClient(), page="Pro Tools", is_pro=True)
@@ -192,6 +196,18 @@ def test_pro_tools_renders_only_pro_workflows_and_preserves_both_tools(monkeypat
     assert not app.exception
     assert any("Yield spreads" in markdown.value for markdown in app.markdown)
     assert not any("Discovery guidance" in markdown.value for markdown in app.markdown)
+
+
+def test_strategy_result_carries_canonical_pool_into_research(monkeypatch) -> None:
+    app = _authenticated_app(monkeypatch, FakeSavedPoolsClient(), page="Pro Tools", is_pro=True)
+    next(slider for slider in app.slider if slider.label == "Strategy minimum APY").set_value(0.0).run()
+    next(slider for slider in app.slider if slider.label == "Strategy minimum TVL").set_value(0).run()
+    next(slider for slider in app.slider if slider.label == "Strategy maximum risk").set_value(100).run()
+
+    next(button for button in app.button if button.key == "strategy_result_research").click().run()
+    assert app.query_params["page"] == ["Research"]
+    selection = next(multiselect for multiselect in app.multiselect if multiselect.label == "Selected pools")
+    assert selection.value == ["canonical-pool-1"]
 
 
 def test_opportunities_table_puts_canonical_contextual_pool_link_first(monkeypatch) -> None:
@@ -212,9 +228,154 @@ def test_opportunities_table_puts_canonical_contextual_pool_link_first(monkeypat
 
 
 def test_signal_engine_renders_pool_link_as_first_visible_table_column(monkeypatch) -> None:
-    app = _authenticated_app(monkeypatch, FakeSavedPoolsClient(), page="Discover", is_pro=True)
-    next(radio for radio in app.radio if radio.label == "Discover view").set_value("Signals").run()
+    app = _authenticated_app(monkeypatch, FakeSavedPoolsClient(), page="Signals", is_pro=True)
 
     signal_tables = [element.value for element in app.dataframe if "Strength" in element.value.columns]
     assert signal_tables
     assert signal_tables[-1].columns[0] == "Pool"
+    parsed = urlparse(signal_tables[-1].iloc[0]["Pool"])
+    assert parse_qs(parsed.query)["return_route"] == ["Signals"]
+    assert any(button.label == "Research" for button in app.button)
+    rendered = "\n".join(markdown.value for markdown in app.markdown)
+    assert "evidence to investigate, not a recommendation" in rendered
+
+
+def test_discover_all_pools_reaches_non_curated_pool_with_canonical_actions(monkeypatch) -> None:
+    rows = [
+        {
+            "pool": "curated-pool",
+            "chain": "Ethereum",
+            "project": "aave-v3",
+            "symbol": "USDC",
+            "apy": 5.0,
+            "apyBase": 5.0,
+            "apyReward": 0.0,
+            "tvlUsd": 10_000_000,
+            "stablecoin": True,
+        },
+        {
+            "pool": "broader-pool",
+            "chain": "Base",
+            "project": "zeta-protocol",
+            "symbol": "ETH",
+            "apy": 2.0,
+            "apyBase": 2.0,
+            "apyReward": 0.0,
+            "tvlUsd": 100_000,
+            "stablecoin": False,
+        },
+    ]
+    client = FakeSavedPoolsClient()
+    app = _authenticated_app(
+        monkeypatch,
+        client,
+        page="Discover",
+        is_pro=True,
+        market_rows=rows,
+    )
+
+    curated_tables = [element.value for element in app.dataframe if "Strategy" in element.value.columns]
+    assert curated_tables[-1]["Protocol"].tolist() == ["aave-v3"]
+
+    next(radio for radio in app.radio if radio.label == "Discover view").set_value("All Pools").run()
+    assert not app.exception
+    assert not any(expander.label == "Discover Filters" for expander in app.expander)
+    universe_tables = [element.value for element in app.dataframe if "Strategy" in element.value.columns]
+    assert universe_tables[-1]["Protocol"].tolist() == ["aave-v3", "zeta-protocol"]
+    broader_url = universe_tables[-1].loc[universe_tables[-1]["Protocol"] == "zeta-protocol", "Pool"].iloc[0]
+    parsed = urlparse(broader_url)
+    assert parse_qs(parsed.query) == {
+        "page": ["Pool Detail"],
+        "pool": ["broader-pool"],
+        "return_route": ["Discover"],
+        "return_view": ["All Pools"],
+    }
+    action_pool = next(selectbox for selectbox in app.selectbox if selectbox.label == "Pool actions")
+    action_pool.set_value("broader-pool").run()
+    assert any(button.label == "Watch" for button in app.button)
+    assert any(button.label == "Create alert" for button in app.button)
+    _button(app, "Watch").click().run()
+    assert client.save_calls == ["broader-pool"]
+    assert "broader-pool" in client.rows
+    _button(app, "View details").click().run()
+    assert app.query_params["pool"] == ["broader-pool"]
+    assert any(button.label == "← Back to All Pools" for button in app.button)
+
+
+def test_research_is_selected_pool_analysis_not_discover_repeated(monkeypatch) -> None:
+    rows = [
+        {
+            "pool": "pool-a",
+            "chain": "Ethereum",
+            "project": "aave-v3",
+            "symbol": "USDC",
+            "apy": 5.0,
+            "apyBase": 4.0,
+            "apyReward": 1.0,
+            "tvlUsd": 10_000_000,
+            "stablecoin": True,
+        },
+        {
+            "pool": "pool-b",
+            "chain": "Base",
+            "project": "morpho",
+            "symbol": "USDC",
+            "apy": 7.0,
+            "apyBase": 7.0,
+            "apyReward": 0.0,
+            "tvlUsd": 20_000_000,
+            "stablecoin": True,
+        },
+    ]
+    app = _authenticated_app(
+        monkeypatch,
+        FakeSavedPoolsClient(("pool-a",)),
+        page="Research",
+        is_pro=True,
+        market_rows=rows,
+    )
+
+    assert not any(expander.label in {"Discover Filters", "Advanced filters & sorting"} for expander in app.expander)
+    assert not any(radio.label == "Research view" for radio in app.radio)
+    selected = next(multiselect for multiselect in app.multiselect if multiselect.label == "Selected pools")
+    selected.set_value(["pool-a", "pool-b"]).run()
+    assert not app.exception
+    assert any("Observed current metrics" in markdown.value for markdown in app.markdown)
+    assert any("Calculated context" in markdown.value for markdown in app.markdown)
+    research_tables = [element.value for element in app.dataframe if "Strategy" in element.value.columns]
+    parsed = urlparse(research_tables[-1].iloc[0]["Pool"])
+    assert parse_qs(parsed.query)["return_route"] == ["Research"]
+    assert any(button.label == "Create alert" for button in app.button)
+
+
+def test_pool_detail_carries_pool_into_research_without_pool_url_state(monkeypatch) -> None:
+    app = _authenticated_app(monkeypatch, FakeSavedPoolsClient(), page="Pool Detail")
+    app.query_params["pool"] = "canonical-pool-1"
+    app.run()
+
+    next(button for button in app.button if str(button.key).startswith("pool_research_")).click().run()
+    assert not app.exception
+    assert app.query_params["page"] == ["Research"]
+    assert "pool" not in app.query_params
+    selection = next(multiselect for multiselect in app.multiselect if multiselect.label == "Selected pools")
+    assert selection.value == ["canonical-pool-1"]
+
+
+def test_methodology_documents_actual_product_model_and_limitations(monkeypatch) -> None:
+    app = _authenticated_app(monkeypatch, FakeSavedPoolsClient(), page="Methodology & Data Status")
+    rendered = "\n".join(markdown.value for markdown in app.markdown)
+
+    for concept in (
+        "Data sources and freshness",
+        "Pool identity",
+        "Metrics",
+        "Discovery methodology",
+        "Signals methodology",
+        "Risk interpretation",
+        "Watchlists and alerts",
+        "Pro Tools",
+        "Limitations",
+    ):
+        assert concept in rendered
+    assert "DeFiLlama Yields" in rendered
+    assert "descriptive, not predictive" in rendered

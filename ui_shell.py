@@ -22,16 +22,17 @@ PUBLIC_NAV = (
     NavItem("Home", "Home", "Explore"),
     NavItem("Discover", "Discover", "Explore"),
     NavItem("Research", "Research", "Explore"),
-    NavItem("Pricing", "Pricing", "Explore"),
-    NavItem("Methodology & Data Status", "Methodology & data", "Explore"),
+    NavItem("Signals", "Signals", "Analyze"),
+    NavItem("Methodology & Data Status", "Methodology & data", "Learn & account"),
+    NavItem("Pricing", "Pricing", "Learn & account"),
 )
 
 AUTHENTICATED_NAV = (
-    NavItem("Watchlists", "Watchlists", "Your workspace", requires_auth=True),
-    NavItem("Alerts", "Alerts", "Your workspace", requires_auth=True),
-    NavItem("Activity & Digests", "Activity & digests", "Your workspace", requires_auth=True),
-    NavItem("Pro Tools", "Pro tools", "Your workspace", requires_auth=True, pro_context=True),
-    NavItem("Account & Billing", "Account & billing", "Your workspace", requires_auth=True),
+    NavItem("Watchlists", "Watchlist", "Monitor", requires_auth=True),
+    NavItem("Alerts", "Alerts", "Monitor", requires_auth=True),
+    NavItem("Activity & Digests", "Activity & digests", "Monitor", requires_auth=True),
+    NavItem("Pro Tools", "Pro tools", "Analyze", requires_auth=True, pro_context=True),
+    NavItem("Account & Billing", "Account & billing", "Learn & account", requires_auth=True),
 )
 
 ADMIN_NAV = NavItem("Admin", "Admin", "Restricted", requires_auth=True, admin_only=True)
@@ -40,36 +41,37 @@ ALL_ROUTES = frozenset(item.route for item in (*PUBLIC_NAV, *AUTHENTICATED_NAV, 
 
 LEGACY_ROUTE_ALIASES = {
     "Scanner": ("Discover", "Opportunities"),
-    "Signals": ("Discover", "Signals"),
-    "Market Map": ("Research", "Market Map"),
+    "Signal Engine": ("Signals", None),
+    "Market Map": ("Research", "Comparison"),
     "Pool Explorer": ("Discover", "Opportunities"),
     "Watchlist": ("Watchlists", None),
     "Recaps": ("Activity & Digests", None),
-    "Protocol Dashboard": ("Research", "Protocols"),
+    "Protocol Dashboard": ("Research", "Comparison"),
     "Strategy Builder": ("Pro Tools", "Strategy Builder"),
     "Arbitrage": ("Pro Tools", "Yield Spreads"),
 }
 
 PAGE_CONTEXT = {
     "Home": ("Market briefing", "A concise view of yield conditions, tracked opportunities, and recent activity."),
-    "Discover": ("Discover", "Explore opportunities, compare visible pools, and inspect Pro signals in one workflow."),
-    "Research": ("Research", "Understand market structure through chain, protocol, risk, and capital-depth views."),
+    "Discover": ("Discover", "Explore curated opportunities or search the broader current pool universe."),
+    "Research": ("Research", "Compare a deliberately selected set of pools, their tradeoffs, and current evidence."),
+    "Signals": ("Signals", "Investigate material yield and liquidity movement detected by FuruFlow."),
     "Pricing": ("Pricing", "Understand what is available in Free and Pro before choosing an account plan."),
     "Methodology & Data Status": (
         "Methodology & data status",
         "See how FuruFlow frames yield, risk, freshness, and degraded source conditions.",
     ),
-    "Watchlists": ("Watchlists", "Return to opportunities you have chosen to track."),
+    "Watchlists": ("Watchlist", "Monitor the pools you deliberately saved and decide what deserves attention."),
     "Alerts": ("Alerts", "Create and manage persistent pool alerts delivered through verified Telegram routing."),
     "Activity & Digests": ("Activity & digests", "Review observed market activity and available recap history."),
     "Pro Tools": ("Pro tools", "Compose strategy slices and inspect cross-chain yield spreads."),
     "Account & Billing": ("Account & billing", "Review the server-authoritative account and entitlement state."),
     "Admin": ("Admin", "Restricted account administration guidance for verified administrators."),
-    "Pool Detail": ("Pool detail", "Inspect the selected opportunity without losing the results context."),
+    "Pool Detail": ("Pool detail", "Understand one pool and continue into monitoring, alerts, or focused research."),
 }
 
-DISCOVER_VIEWS = ("Opportunities", "Signals", "Compare")
-RESEARCH_VIEWS = ("Market Map", "Protocols")
+DISCOVER_VIEWS = ("Opportunities", "All Pools")
+RESEARCH_VIEWS = ("Comparison",)
 PRO_TOOL_VIEWS = ("Strategy Builder", "Yield Spreads")
 OPPORTUNITIES_TABLE_COLUMNS = (
     ("pool_detail_url", "Pool"),
@@ -108,8 +110,11 @@ STRATEGY_RESULTS_TABLE_COLUMNS = (
 
 POOL_DETAIL_RETURN_VIEWS = {
     "Discover": frozenset(DISCOVER_VIEWS),
+    "Research": frozenset(RESEARCH_VIEWS),
+    "Signals": frozenset({"Signals"}),
     "Pro Tools": frozenset(PRO_TOOL_VIEWS),
     "Watchlists": frozenset({"Opportunities"}),
+    "Alerts": frozenset({"Alerts"}),
 }
 
 
@@ -162,7 +167,27 @@ def visible_navigation(*, signed_in: bool, is_pro: bool, is_admin: bool) -> tupl
                 items.append(item)
     if signed_in and is_admin:
         items.append(ADMIN_NAV)
-    return tuple(items)
+    section_order = {"Explore": 0, "Monitor": 1, "Analyze": 2, "Learn & account": 3, "Restricted": 4}
+    route_order = {
+        route: index
+        for index, route in enumerate(
+            (
+                "Home",
+                "Discover",
+                "Research",
+                "Watchlists",
+                "Alerts",
+                "Activity & Digests",
+                "Signals",
+                "Pro Tools",
+                "Methodology & Data Status",
+                "Pricing",
+                "Account & Billing",
+                "Admin",
+            )
+        )
+    }
+    return tuple(sorted(items, key=lambda item: (section_order[item.section], route_order[item.route])))
 
 
 def canonical_route(route: str | None) -> tuple[str, str | None]:
@@ -223,6 +248,19 @@ def alert_creation_state(pool_id: str) -> dict[str, str]:
         "current_route": "Alerts",
         "alert_prefill_pool_id": str(pool_id),
         "alert_form_mode": "create",
+    }
+
+
+def research_selection_state(pool_id: str, selected: tuple[str, ...] = ()) -> dict[str, Any]:
+    """Carry canonical pool context into bounded Research state without a URL secret."""
+
+    pool_id = str(pool_id)
+    values = list(dict.fromkeys(str(item) for item in selected if item))
+    if pool_id not in values:
+        values.append(pool_id)
+    return {
+        "current_route": "Research",
+        "research_selection": values[-4:],
     }
 
 
@@ -354,11 +392,17 @@ def render_navigation(*, current_route: str, signed_in: bool, is_pro: bool, is_a
     return selected
 
 
-def render_page_heading(route: str, *, view: str | None = None, detail_label: str | None = None) -> None:
+def render_page_heading(
+    route: str,
+    *,
+    view: str | None = None,
+    detail_label: str | None = None,
+    parent_route: str | None = None,
+) -> None:
     title, copy = PAGE_CONTEXT.get(route, PAGE_CONTEXT["Home"])
     if route == "Pool Detail" and detail_label:
         title = detail_label
-    parent = "Discover" if route == "Pool Detail" else route
+    parent = parent_route or ("Discover" if route == "Pool Detail" else route)
     breadcrumb = f"FuruFlow / {parent}"
     if view:
         breadcrumb += f" / {view}"
@@ -415,4 +459,4 @@ def render_state(title: str, message: str) -> None:
 
 
 def market_filters_apply(route: str) -> bool:
-    return route in {"Home", "Discover", "Research", "Pool Detail", "Watchlists"}
+    return route in {"Home", "Discover", "Pool Detail"}

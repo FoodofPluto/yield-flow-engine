@@ -12,14 +12,14 @@ def test_signed_out_shell_navigation_and_pool_detail_round_trip() -> None:
     assert not app.exception
 
     labels = [button.label for button in app.button]
-    assert labels[:5] == ["Home", "Discover", "Research", "Pricing", "Methodology & data"]
+    assert labels[:6] == ["Home", "Discover", "Research", "Signals", "Methodology & data", "Pricing"]
     assert "Admin" not in labels
-    assert "Watchlists" not in labels
+    assert "Watchlist" not in labels
 
     _button(app, "Discover").click().run()
     assert not app.exception
     assert app.radio[0].label == "Discover view"
-    assert app.radio[0].options == ["Opportunities", "Signals", "Compare"]
+    assert app.radio[0].options == ["Opportunities", "All Pools"]
 
     _button(app, "View details").click().run()
     assert not app.exception

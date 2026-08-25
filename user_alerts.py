@@ -80,6 +80,17 @@ def pool_label_mapping(rows: list[Mapping[str, Any]]) -> dict[str, str]:
     return labels
 
 
+def deterministic_pool_options(pool_labels: Mapping[str, str]) -> tuple[str, ...]:
+    """Order alert targets by meaningful label with canonical ID tie-breaking."""
+
+    return tuple(
+        sorted(
+            (str(pool_id) for pool_id in pool_labels),
+            key=lambda pool_id: (str(pool_labels[pool_id]).casefold(), pool_id.casefold()),
+        )
+    )
+
+
 def format_alert_time(value: str | None) -> str:
     if not value:
         return "Not yet"

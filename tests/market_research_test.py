@@ -17,6 +17,7 @@ from market_research import (
     filter_query,
     freshness,
     parse_filter_query,
+    pool_universe,
     remove_filter,
     risk_explanation,
     track_research_event,
@@ -131,6 +132,18 @@ def test_discovery_search_filters_sort_and_zero_results_are_deterministic() -> N
     assert filtered["pool"].tolist() == ["a", "b", "c"]
     assert apply_discovery_filters(frame, replace(DEFAULT_FILTERS, search="no match", min_tvl=0)).empty
     assert apply_discovery_filters(frame, replace(DEFAULT_FILTERS, min_apy=5, min_tvl=0))["pool"].tolist() == ["a"]
+
+
+def test_pool_universe_ignores_discovery_thresholds_and_orders_canonical_rows() -> None:
+    frame = pools()
+    duplicate = frame.iloc[[0]].copy()
+    duplicate["apy"] = 99.0
+    universe = pool_universe(pd.concat([frame, duplicate], ignore_index=True))
+
+    assert universe["pool"].tolist() == ["b", "a", "c"]
+    assert universe["pool"].is_unique
+    assert pool_universe(frame, "unknown")["pool"].tolist() == ["c"]
+    assert pool_universe(frame, "c")["pool"].tolist() == ["b", "a", "c"]
 
 
 def test_provenance_fresh_aging_stale_and_unavailable() -> None:

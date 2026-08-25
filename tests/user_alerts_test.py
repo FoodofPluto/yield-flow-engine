@@ -1,6 +1,13 @@
 from __future__ import annotations
 
-from user_alerts import UserAlert, alert_explanation, format_alert_time, pool_label_mapping, safe_pool_label
+from user_alerts import (
+    UserAlert,
+    alert_explanation,
+    deterministic_pool_options,
+    format_alert_time,
+    pool_label_mapping,
+    safe_pool_label,
+)
 
 
 def test_user_alert_from_rpc_row_preserves_persistent_controls() -> None:
@@ -59,6 +66,16 @@ def test_pool_labels_use_canonical_ids_and_fail_safe_when_market_data_is_missing
     assert labels == {"pool-1": "Aave · USDC · Ethereum"}
     assert safe_pool_label("pool-1", labels) == "Aave · USDC · Ethereum"
     assert safe_pool_label("unavailable-canonical-pool", labels) == "Pool unavailable-…"
+
+
+def test_alert_pool_options_are_meaningful_and_deterministic() -> None:
+    labels = {
+        "pool-z": "Morpho · USDC · Base",
+        "pool-b": "Aave · USDT · Ethereum",
+        "pool-a": "Aave · USDT · Ethereum",
+    }
+
+    assert deterministic_pool_options(labels) == ("pool-a", "pool-b", "pool-z")
 
 
 def test_alert_timestamps_are_utc_and_malformed_values_do_not_leak() -> None:

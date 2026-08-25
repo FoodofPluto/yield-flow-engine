@@ -4,6 +4,8 @@ import pytest
 from streamlit.testing.v1 import AppTest
 import streamlit as st
 
+from saved_pools import SavedPool
+
 
 @pytest.fixture(autouse=True)
 def _clear_streamlit_cache_after_test():
@@ -64,6 +66,23 @@ class FakeNotificationClient:
         return f"test-{alert_id}"
 
 
+class FakeSavedPoolsClient:
+    def __init__(self, pool_ids: tuple[str, ...] = ()) -> None:
+        self.pool_ids = set(pool_ids)
+
+    def list_saved_pools(self) -> tuple[SavedPool, ...]:
+        return tuple(SavedPool(pool_id, "2026-08-16T12:00:00+00:00") for pool_id in sorted(self.pool_ids))
+
+    def save_pool(self, pool_id: str) -> SavedPool:
+        self.pool_ids.add(pool_id)
+        return SavedPool(pool_id)
+
+    def remove_pool(self, pool_id: str) -> bool:
+        existed = pool_id in self.pool_ids
+        self.pool_ids.discard(pool_id)
+        return existed
+
+
 class FakeMarketResponse:
     def raise_for_status(self) -> None:
         return None
@@ -87,11 +106,17 @@ class FakeMarketResponse:
 
 
 def _authenticated_alert_app(
-    monkeypatch, client: FakeNotificationClient, *, page: str = "Alerts", pool_id: str | None = None
+    monkeypatch,
+    client: FakeNotificationClient,
+    *,
+    page: str = "Alerts",
+    pool_id: str | None = None,
+    saved_pool_ids: tuple[str, ...] = (),
 ) -> AppTest:
     import auth_service
     import user_alerts
     import requests
+    import saved_pools
 
     user = {
         "id": "user-1",
@@ -108,6 +133,7 @@ def _authenticated_alert_app(
     monkeypatch.setattr(auth_service, "validate_session", lambda: True)
     monkeypatch.setattr(auth_service, "can_access_pro", lambda _user: False)
     monkeypatch.setattr(user_alerts, "current_user_notification_client", lambda: client)
+    monkeypatch.setattr(saved_pools, "current_user_saved_pools_client", lambda: FakeSavedPoolsClient(saved_pool_ids))
     monkeypatch.setattr(requests, "get", lambda *_args, **_kwargs: FakeMarketResponse())
     monkeypatch.delenv("FURUFLOW_MARKET_SAMPLE_MODE", raising=False)
     st.cache_data.clear()
@@ -192,6 +218,24 @@ def test_pool_detail_create_alert_preserves_canonical_context_without_pool_query
 
     assert not app.exception
     next(button for button in app.button if button.label == "Create alert").click().run()
+    assert app.query_params["page"] == ["Alerts"]
+    assert "pool" not in app.query_params
+    assert any(selectbox.label == "Pool" and selectbox.value == "canonical-pool-1" for selectbox in app.selectbox)
+
+
+@pytest.mark.parametrize("source_page", ["Discover", "Watchlists"])
+def test_discover_and_watchlist_create_alert_preselect_canonical_pool(monkeypatch, source_page: str) -> None:
+    app = _authenticated_alert_app(
+        monkeypatch,
+        FakeNotificationClient(),
+        page=source_page,
+        saved_pool_ids=("canonical-pool-1",) if source_page == "Watchlists" else (),
+    )
+
+    if source_page == "Discover":
+        next(radio for radio in app.radio if radio.label == "Discover view").set_value("All Pools").run()
+    next(button for button in app.button if button.label == "Create alert").click().run()
+    assert not app.exception
     assert app.query_params["page"] == ["Alerts"]
     assert "pool" not in app.query_params
     assert any(selectbox.label == "Pool" and selectbox.value == "canonical-pool-1" for selectbox in app.selectbox)

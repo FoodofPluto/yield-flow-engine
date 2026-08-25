@@ -76,10 +76,18 @@ def test_react_aria_selectbox_listbox_respects_the_portal_viewport_boundary() ->
     assert "overscroll-behavior: contain" in dropdown_css
     sort_portal = '[data-testid="stSelectboxVirtualDropdown"]:has([role="listbox"][aria-label="Sort by"])'
     assert sort_portal in dropdown_css
+    assert dropdown_css.index(sort_portal) < dropdown_css.index("@media (max-width: 1100px)")
     assert "@media (max-width: 1100px)" in dropdown_css
     assert "inset: auto auto .75rem .75rem !important" in dropdown_css
     assert "transform: none !important" in dropdown_css
     assert "max-height: min(300px, calc(100dvh - 1.5rem)) !important" in dropdown_css
+
+
+def test_theme_keeps_portalled_tooltips_readable_on_dark_surfaces() -> None:
+    assert '[data-testid="stTooltipContent"]' in UI_THEME_CSS
+    assert "background: var(--ff-color-surface-elevated) !important" in UI_THEME_CSS
+    assert '[data-testid="stTooltipContent"] *' in UI_THEME_CSS
+    assert "color: inherit !important" in UI_THEME_CSS
 
 
 def test_page_uses_shared_card_styles_and_explicit_action_hierarchy() -> None:

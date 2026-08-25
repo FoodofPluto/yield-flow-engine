@@ -20,16 +20,20 @@ def test_linkdebug_is_a_reduced_app_copy_with_known_canonical_shell_features_mis
         "_alert_form",
         "build_signal_card_assets",
         "fetch_enriched_pools",
+        "open_research",
         "open_pool_detail",
         "render_alerts_page",
         "return_from_pool_detail",
+        "start_alert_creation",
     }
     assert linkdebug_functions - app_functions == {
         "load_watchlist",
         "page_selectbox",
+        "render_protocol_dashboard",
         "save_watchlist",
         "set_watchlist",
         "synthesize_pool_chart",
+        "top_n_summary",
     }
 
     app_source = (ROOT / "app.py").read_text(encoding="utf-8")

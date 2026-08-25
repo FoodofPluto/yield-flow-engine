@@ -179,6 +179,15 @@ UI_THEME_CSS = """
         overflow-y: auto !important;
         overscroll-behavior: contain;
     }
+    /* Sort lives low in the sidebar even at desktop widths. Keep its portal
+       inside the viewport so every option is pointer- and keyboard-reachable. */
+    [data-testid="stSelectboxVirtualDropdown"]:has([role="listbox"][aria-label="Sort by"]) {
+        inset: auto auto .75rem .75rem !important;
+        transform: none !important;
+        width: min(var(--trigger-width), calc(100vw - 1.5rem)) !important;
+        max-width: calc(100vw - 1.5rem) !important;
+        max-height: min(300px, calc(100dvh - 1.5rem)) !important;
+    }
     @media (max-width: 1100px) {
         /* Streamlit 1.60 can mark a sidebar menu for top placement while its
            generated transform still sends it below the mobile viewport. This
@@ -203,6 +212,19 @@ UI_THEME_CSS = """
     [role="option"][aria-selected="true"] {
         background: var(--ff-color-selected) !important;
         color: var(--ff-color-text) !important;
+    }
+
+    /* Streamlit renders help text in a body-level light tooltip by default.
+       Keep that portal aligned with the dark shell so inherited paragraph
+       text remains readable on hover and keyboard focus. */
+    [data-testid="stTooltipContent"] {
+        background: var(--ff-color-surface-elevated) !important;
+        border: 1px solid var(--ff-color-border-strong) !important;
+        color: var(--ff-color-text) !important;
+        box-shadow: var(--ff-shadow-card) !important;
+    }
+    [data-testid="stTooltipContent"] * {
+        color: inherit !important;
     }
 
     /* The account container scopes authentication submit-button states. */
