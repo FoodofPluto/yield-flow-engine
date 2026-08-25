@@ -292,6 +292,42 @@ UI_THEME_CSS = """
         background: linear-gradient(180deg, #9beeff, #6eddff); color: #07111f;
         font: 900 var(--ff-font-size-control)/1.2 var(--ff-font-body);
     }
+    .ff-billing-action button:hover { filter: brightness(1.06); }
+    .ff-billing-action button:focus-visible { outline: 3px solid rgba(142, 232, 255, .48); outline-offset: 2px; }
+
+    .st-key-pool_detail_open_pool .stLinkButton a,
+    .st-key-pool_detail_open_pool .stLinkButton a:visited,
+    .st-key-pool_detail_open_pool .stLinkButton a p,
+    .st-key-pool_detail_open_pool .stLinkButton a:visited p {
+        background: linear-gradient(180deg, #ffe9a8, #ffd366) !important;
+        border: 1px solid #ffd366 !important;
+        color: #332100 !important;
+        font-weight: 900 !important;
+    }
+    .st-key-pool_detail_open_pool .stLinkButton a:hover,
+    .st-key-pool_detail_open_pool .stLinkButton a:hover p {
+        background: linear-gradient(180deg, #fff1bd, #ffdc7e) !important;
+        border-color: #fff1bd !important;
+        color: #211500 !important;
+    }
+    .st-key-pool_detail_open_pool .stLinkButton a:focus-visible,
+    .st-key-pool_detail_open_pool .stLinkButton a:focus-visible p {
+        outline: 3px solid rgba(142, 232, 255, .78) !important;
+        outline-offset: 3px !important;
+        color: #211500 !important;
+    }
+    .st-key-pool_detail_open_pool .stLinkButton a:active,
+    .st-key-pool_detail_open_pool .stLinkButton a:active p {
+        background: #f1bf45 !important;
+        color: #170e00 !important;
+    }
+    .st-key-pool_detail_open_pool .stLinkButton a[aria-disabled="true"],
+    .st-key-pool_detail_open_pool .stLinkButton a[aria-disabled="true"] p {
+        background: var(--ff-color-surface-control) !important;
+        border-color: var(--ff-color-border) !important;
+        color: var(--ff-color-text-subtle) !important;
+        cursor: not-allowed;
+    }
 
     @media (max-width: 760px) {
         .ff-metric-strip { grid-template-columns: 1fr; }

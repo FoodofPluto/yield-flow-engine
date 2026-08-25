@@ -36,11 +36,14 @@ from engine.scoring import (
 )
 from market_research import (
     COMPARISON_LIMIT,
+    COMPARISON_SCENARIOS,
     DEFAULT_FILTERS,
+    ComparisonWeights,
     DiscoveryFilters,
     active_filters,
     apply_discovery_filters,
     comparison_rows,
+    comparison_analysis,
     data_status_from_attrs,
     filter_query,
     freshness,
@@ -48,11 +51,26 @@ from market_research import (
     pool_universe,
     remove_filter,
     risk_explanation,
+    strategy_match_explanation,
     track_research_event,
     yield_explanation,
     yield_spreads,
 )
 from market_data import provider_pool_frame
+from product_capabilities import (
+    Capability,
+    PLANNED_TIERS,
+    ProductCapabilities,
+    can_export_data,
+    can_use_advanced_sorting,
+    can_use_alerts,
+    can_use_full_signals,
+    can_use_pro_tools,
+    can_use_research_modeling,
+    can_use_watchlists,
+    capabilities_from_current_entitlement,
+    required_tier_name,
+)
 from saved_pools import (
     SavedPool,
     SavedPoolStoreError,
@@ -75,6 +93,7 @@ from ui_shell import (
     pool_detail_state,
     pool_detail_url,
     research_selection_state,
+    research_selection_state_many,
     render_brand,
     render_navigation,
     render_page_heading,
@@ -1045,6 +1064,24 @@ def open_research(pool_id: str) -> None:
         del st.query_params["pool"]
 
 
+def open_research_many(pool_ids: tuple[str, ...]) -> None:
+    selected = tuple(st.session_state.get("research_selection") or ())
+    st.session_state.update(research_selection_state_many(pool_ids, selected))
+    st.query_params["page"] = "Research"
+    if "pool" in st.query_params:
+        del st.query_params["pool"]
+
+
+def go_to_route(route: str, *, view: str | None = None) -> None:
+    st.session_state["current_route"] = route
+    if route == "Discover" and view:
+        st.session_state["discover_view"] = view
+    st.query_params["page"] = route
+    for key in ("pool", "return_route", "return_view"):
+        if key in st.query_params:
+            del st.query_params[key]
+
+
 def return_from_pool_detail() -> None:
     destination = pool_detail_back_state(st.session_state)
     route = destination["current_route"]
@@ -1134,6 +1171,9 @@ def render_opportunity_card(
     watched: bool,
     *,
     authenticated: bool,
+    watch_allowed: bool,
+    alert_allowed: bool,
+    research_allowed: bool,
     watchlist_client: UserSavedPoolsClient | None,
     freshness_label: str,
     return_route: str = "Discover",
@@ -1172,12 +1212,20 @@ def render_opportunity_card(
     c1, c2, c3, c4 = st.columns(4)
     with c1:
         st.markdown("<div class='watch-wrap'>", unsafe_allow_html=True)
-        label = "Remove" if watched else "Watch" if authenticated else "Sign in to save"
+        label = (
+            "Sign in to save"
+            if not authenticated
+            else f"Watchlists · {required_tier_name(Capability.WATCHLISTS)}"
+            if not watch_allowed
+            else "Remove"
+            if watched
+            else "Watch"
+        )
         if st.button(
-            label if watchlist_client is not None or not authenticated else "Watchlist unavailable",
+            label if watchlist_client is not None or not watch_allowed else "Watchlist unavailable",
             key=f"{key_prefix}_watch_{idx}",
             width="stretch",
-            disabled=not authenticated or watchlist_client is None,
+            disabled=not authenticated or not watch_allowed or watchlist_client is None,
         ):
             track_research_event("watchlist_action_initiated", {"pool": str(row["pool"]), "action": label})
             if watch_toggle(str(row["pool"]), watched=watched, client=watchlist_client):
@@ -1197,102 +1245,132 @@ def render_opportunity_card(
         st.markdown("</div>", unsafe_allow_html=True)
     with c3:
         if st.button(
-            "Create alert" if authenticated else "Sign in for alerts",
+            "Sign in for alerts"
+            if not authenticated
+            else f"Alerts · {required_tier_name(Capability.ALERTS)}"
+            if not alert_allowed
+            else "Create alert",
             key=f"{key_prefix}_alert_{idx}_{row['pool']}",
             width="stretch",
-            disabled=not authenticated or not alerts_available,
+            disabled=not authenticated or not alert_allowed or not alerts_available,
             help="Sample-mode pools cannot become persistent alerts." if not alerts_available else None,
         ):
             start_alert_creation(str(row["pool"]))
             st.rerun()
     with c4:
         if st.button(
-            "Research",
+            "Research" if research_allowed else f"Research · {required_tier_name(Capability.RESEARCH_MODELING)}",
             key=f"{key_prefix}_research_{idx}_{row['pool']}",
             width="stretch",
+            disabled=not research_allowed,
         ):
             open_research(str(row["pool"]))
             st.rerun()
 
 
-def render_home_page(filtered: pd.DataFrame, full_filtered: pd.DataFrame, watchlist_df: pd.DataFrame, watchlist_count: int, alert_stats: dict[str, Any], history_latest_df: pd.DataFrame, history_trend_df: pd.DataFrame, is_pro: bool) -> None:
-    visible = len(filtered)
-    median_apy = filtered["apy"].median() if visible else 0.0
-    total_tvl = filtered["tvlUsd"].sum() if visible else 0.0
-    signal_share = (filtered["signal"].ne("Steady").mean() * 100) if visible else 0.0
+def render_home_page(
+    market_df: pd.DataFrame,
+    opportunity_df: pd.DataFrame,
+    *,
+    watchlist_count: int,
+    capabilities: ProductCapabilities,
+    signed_in: bool,
+) -> None:
+    indexed_count = len(pool_universe(market_df))
+    opportunity_count = len(opportunity_df)
+    active_signal_count = int(opportunity_df["signal"].ne("Steady").sum()) if opportunity_count else 0
+
+    st.markdown(
+        """
+        <section class="hero-shell"><div class="hero-inner">
+          <div class="eyebrow">DeFi yield decision support</div>
+          <div class="hero-title">Find viable pools. Evaluate the evidence. Keep monitoring coherent.</div>
+          <div class="hero-subtitle">FuruFlow connects the current pool universe to transparent comparison, canonical Pool Detail, durable monitoring, and advanced workflows—without promising returns or predicting outcomes.</div>
+        </div></section>
+        """,
+        unsafe_allow_html=True,
+    )
+    section_header("Workflow", "Find → Evaluate → Save → Monitor → Optimize", "Start with public discovery. Capabilities unlock the next step without changing the identity of the pool you selected.")
+    action_columns = st.columns(4)
+    if action_columns[0].button("Browse All Pools", key="home_browse_all", type="primary", width="stretch"):
+        go_to_route("Discover", view="All Pools")
+        st.rerun()
+    if action_columns[1].button("View Opportunities", key="home_opportunities", width="stretch"):
+        go_to_route("Discover", view="Opportunities")
+        st.rerun()
+    research_enabled = can_use_research_modeling(capabilities)
+    research_tier = required_tier_name(Capability.RESEARCH_MODELING)
+    if action_columns[2].button(
+        "Compare Pools" if research_enabled else f"Comparison · {research_tier}",
+        key="home_research",
+        width="stretch",
+        disabled=not research_enabled,
+        help=None if research_enabled else f"The planned {research_tier} capability adds full comparison modeling.",
+    ):
+        go_to_route("Research")
+        st.rerun()
+    watch_enabled = signed_in and can_use_watchlists(capabilities)
+    watchlist_tier = required_tier_name(Capability.WATCHLISTS)
+    if action_columns[3].button(
+        "Open Watchlist" if watch_enabled else f"Watchlists · {watchlist_tier}",
+        key="home_watchlist",
+        width="stretch",
+        disabled=not watch_enabled,
+        help=None if watch_enabled else f"The planned {watchlist_tier} capability adds durable Watchlists.",
+    ):
+        go_to_route("Watchlists")
+        st.rerun()
+
+    stat_columns = st.columns(4)
+    with stat_columns[0]:
+        stat_card("Indexed pools", f"{indexed_count:,}", "Canonical pools in the current provider response")
+    with stat_columns[1]:
+        stat_card("Current opportunities", f"{opportunity_count:,}", "Pools matching the current opportunity filters")
+    with stat_columns[2]:
+        stat_card("Active signals", f"{active_signal_count:,}", "Visible pools with a non-steady signal state")
+    with stat_columns[3]:
+        if watch_enabled:
+            stat_card("Watched pools", f"{watchlist_count:,}", "Durable saved pools for this account")
+        else:
+            stat_card("Public access", "Free", "Browse, inspect, and open canonical pool links")
 
     st.markdown("<div class='panel'>", unsafe_allow_html=True)
-    section_header("Home", "Your fastest read on the market", "Start here to see the current opportunity set, understand what is moving, and decide where to drill in next.")
-    top_left, top_right = st.columns([1.25, 0.9], gap="large")
-    with top_left:
-        stat_cols = st.columns(4)
-        with stat_cols[0]:
-            stat_card("Visible opportunities", f"{visible:,}", "Pools left after your current filters")
-        with stat_cols[1]:
-            stat_card("Median APY", f"{median_apy:,.2f}%", "A steadier center of the current market slice")
-        with stat_cols[2]:
-            stat_card("Aggregate TVL", format_money(total_tvl), "Combined depth across visible pools")
-        with stat_cols[3]:
-            stat_card("Signal density", f"{signal_share:,.0f}%", "Pools with non-steady signal labels")
-
-        st.markdown("<div style='height:0.75rem;'></div>", unsafe_allow_html=True)
-        section_header("Current opportunities", "Start with the strongest visible pools", "Use this shortlist for fast triage, then open Pool Detail or the dedicated Signals surface for more context.")
-        top_today = full_filtered[["project", "chain", "symbol", "apy", "tvlUsd", "risk_band", "pool_url"]].head(8).copy()
-        if top_today.empty:
-            st.info("No opportunities match the current filters.")
-        else:
-            top_today.columns = ["Protocol", "Chain", "Asset", "APY", "TVL (USD)", "Risk", "Open"]
-            st.dataframe(top_today, width="stretch", hide_index=True, height=320, column_config={"APY": st.column_config.NumberColumn(format="%.2f%%"), "TVL (USD)": st.column_config.NumberColumn(format="$%.0f"), "Open": st.column_config.LinkColumn("Pool link", display_text="Open")})
-    with top_right:
-        st.markdown("<div class='signal-card'><div class='signal-title'>What to do next</div><div class='signal-copy'>Use Discover to find pools, Research to compare a selected set, Signals to investigate movement, Watchlist to monitor, and Alerts to define notification rules.</div></div>", unsafe_allow_html=True)
-        st.markdown("<div style='height:0.65rem;'></div>", unsafe_allow_html=True)
-        stat_card("Signals logged (24h)", f"{alert_stats['signals_24h']:,}", "Captured for recap and alert workflows")
-        stat_card("Best chain (24h)", str(alert_stats['best_chain']), "Chain with the most qualifying signals today")
-        stat_card("Watchlist", f"{watchlist_count:,}", "Pools saved to your persistent tracker")
-        if not is_pro:
-            st.markdown("<div style='height:0.65rem;'></div>", unsafe_allow_html=True)
-            st.markdown("<div class='signal-card'><div class='signal-title'>FuruFlow Pro</div><div class='signal-copy'>Unlock the full Signals view, deeper Discover access, advanced ranking, Yield Spreads, and strategy workflows.</div></div>", unsafe_allow_html=True)
-            if len(full_filtered) > len(filtered):
-                st.caption(f"Free mode currently shows the top {len(filtered):,} of {len(full_filtered):,} matching pools.")
-            render_billing_action(db_user, label="Upgrade to FuruFlow Pro — $20/month")
+    section_header("Current opportunities", "Open a pool first", "The first column opens canonical Pool Detail; use the reported metrics for triage, not as a promise of performance.")
+    if opportunity_df.empty:
+        render_status("empty", "No current opportunities", "Adjust Discover filters or browse All Pools; no placeholder rows were substituted.")
+    else:
+        home_source = opportunity_df.head(8).copy()
+        home_source["pool_detail_url"] = home_source["pool"].map(
+            lambda pool_id: pool_detail_url(
+                str(pool_id),
+                public_origin=os.getenv("FURUFLOW_SESSION_BROKER_PUBLIC_ORIGIN", "http://localhost:8501"),
+                return_route="Home",
+                return_view="Home",
+            )
+        )
+        home_view = home_source[
+            ["pool_detail_url", "symbol", "chain", "project", "apy", "tvlUsd", "risk_band", "signal"]
+        ].copy()
+        home_view.columns = ["Pool", "Asset", "Network", "Protocol", "APY", "TVL (USD)", "Risk", "Signal"]
+        st.dataframe(
+            home_view,
+            width="stretch",
+            hide_index=True,
+            height=320,
+            column_config={
+                "Pool": st.column_config.LinkColumn("Pool", display_text="Open Pool"),
+                "APY": st.column_config.NumberColumn(format="%.2f%%"),
+                "TVL (USD)": st.column_config.NumberColumn(format="$%.0f"),
+            },
+        )
     st.markdown("</div>", unsafe_allow_html=True)
-
-    bottom_left, bottom_mid, bottom_right = st.columns(3, gap="large")
-    with bottom_left:
-        st.markdown("<div class='panel'>", unsafe_allow_html=True)
-        section_header("Biggest yield changes", "What moved recently", "Big APY moves can signal opportunity, crowding, or emissions changes.")
-        movers = full_filtered.sort_values(["apy_delta_7", "tvl_delta_7_pct"], ascending=[False, False])[["project", "symbol", "apy_delta_7", "tvl_delta_7_pct", "signal"]].head(5).copy()
-        if movers.empty:
-            st.info("No yield changes available yet.")
-        else:
-            movers.columns = ["Protocol", "Asset", "7d APY Δ", "7d TVL Δ %", "Signal"]
-            st.dataframe(movers, width="stretch", hide_index=True, height=220, column_config={"7d APY Δ": st.column_config.NumberColumn(format="%.2f"), "7d TVL Δ %": st.column_config.NumberColumn(format="%.2f")})
-        st.markdown("</div>", unsafe_allow_html=True)
-    with bottom_mid:
-        st.markdown("<div class='panel'>", unsafe_allow_html=True)
-        section_header("Safer high APY", "Yield with stronger footing", "Pools above 10% APY with deeper TVL and lower modeled risk.")
-        safest = full_filtered[(full_filtered["apy"] >= 10) & (full_filtered["tvlUsd"] >= 1_000_000) & (full_filtered["risk_score"] <= 45)].sort_values(["risk_score", "apy", "tvlUsd"], ascending=[True, False, False])[["project", "symbol", "apy", "tvlUsd", "risk_score"]].head(5).copy()
-        if safest.empty:
-            st.info("No safer high-APY pools match the current filters.")
-        else:
-            safest.columns = ["Protocol", "Asset", "APY", "TVL (USD)", "Risk"]
-            st.dataframe(safest, width="stretch", hide_index=True, height=220, column_config={"APY": st.column_config.NumberColumn(format="%.2f%%"), "TVL (USD)": st.column_config.NumberColumn(format="$%.0f")})
-        st.markdown("</div>", unsafe_allow_html=True)
-    with bottom_right:
-        st.markdown("<div class='panel'>", unsafe_allow_html=True)
-        section_header("Engine intelligence", "Why FuruFlow gets better over time", "History and recap layers turn one-off scans into a memory system.")
-        if history_trend_df.empty:
-            st.info("Trend blocks appear once multiple signals have been logged.")
-        else:
-            st.dataframe(history_trend_df.head(5), width="stretch", hide_index=True, height=220, column_config={"APY": st.column_config.NumberColumn(format="%.2f%%"), "TVL (USD)": st.column_config.NumberColumn(format="$%.0f"), "APY Δ": st.column_config.NumberColumn(format="%.2f")})
-        st.markdown("</div>", unsafe_allow_html=True)
 
 
 def render_recaps_page(
     alert_stats: dict[str, Any],
     history_latest_df: pd.DataFrame,
     history_trend_df: pd.DataFrame,
-    is_pro: bool,
+    full_signal_access: bool,
     *,
     history_load_error: bool = False,
 ) -> None:
@@ -1343,7 +1421,7 @@ def render_recaps_page(
             st.info("Trend blocks appear once multiple signals have been logged.")
         else:
             st.dataframe(history_trend_df, width="stretch", hide_index=True, height=320, column_config={"APY": st.column_config.NumberColumn(format="%.2f%%"), "TVL (USD)": st.column_config.NumberColumn(format="$%.0f"), "APY Δ": st.column_config.NumberColumn(format="%.2f")})
-        if not is_pro:
+        if not full_signal_access:
             st.markdown("<div class='note'>Free mode can see the recap layer. Pro is where you get the full signal engine, stronger alerts, and faster decision workflows.</div>", unsafe_allow_html=True)
             render_billing_action(db_user, label="Upgrade to FuruFlow Pro — $20/month")
         st.markdown("</div>", unsafe_allow_html=True)
@@ -1363,7 +1441,7 @@ def _alert_form(
     client: Any,
     *,
     pool_labels: dict[str, str],
-    is_pro: bool,
+    full_signal_access: bool,
     account_timezone: str,
     existing: UserAlert | None = None,
 ) -> None:
@@ -1380,7 +1458,7 @@ def _alert_form(
         options.insert(0, existing.target_pool_id)
     selected_default = existing.target_pool_id if existing else prefill if prefill in options else options[0]
     tier_options = ["all", "free"]
-    if is_pro or (existing and existing.signal_tier == "pro"):
+    if full_signal_access or (existing and existing.signal_tier == "pro"):
         tier_options.append("pro")
     timezone_options = list(ALERT_TIMEZONES)
     if account_timezone and account_timezone not in timezone_options:
@@ -1503,7 +1581,7 @@ def _alert_form(
     st.rerun()
 
 
-def render_alerts_page(df: pd.DataFrame, *, is_pro: bool, account_timezone: str) -> None:
+def render_alerts_page(df: pd.DataFrame, *, full_signal_access: bool, account_timezone: str) -> None:
     pool_labels = pool_label_mapping(df[["pool", "project", "symbol", "chain"]].to_dict("records")) if not df.empty else {}
     try:
         client = current_user_notification_client()
@@ -1550,7 +1628,7 @@ def render_alerts_page(df: pd.DataFrame, *, is_pro: bool, account_timezone: str)
         _alert_form(
             client,
             pool_labels=pool_labels,
-            is_pro=is_pro,
+            full_signal_access=full_signal_access,
             account_timezone=account_timezone,
         )
 
@@ -1626,7 +1704,7 @@ def render_alerts_page(df: pd.DataFrame, *, is_pro: bool, account_timezone: str)
                 _alert_form(
                     client,
                     pool_labels=pool_labels,
-                    is_pro=is_pro,
+                    full_signal_access=full_signal_access,
                     account_timezone=account_timezone,
                     existing=alert,
                 )
@@ -1656,20 +1734,29 @@ with st.sidebar:
     with st.expander("Account", expanded=False):
         account_summary_slot = st.empty()
         with st.container(key="account_auth_controls"):
-            login_form()
+            if st.session_state.get("session_expired"):
+                st.caption("Your session ended. Use the recovery controls on this page to sign in again.")
+            else:
+                login_form()
 
 account_user = get_current_user()
 signed_in = bool(account_user and account_user.get("_identity_verified"))
+session_expired = bool(st.session_state.get("session_expired"))
 
 if signed_in:
     claim_session()
     if not validate_session():
-        render_status(
-            "warning",
-            "Session expired",
-            "This account was opened in another browser session, so this session was signed out to preserve the active-session boundary.",
-        )
-        st.stop()
+        session_expired = True
+        st.session_state["session_expired"] = True
+        st.session_state["session_recovery_show_login"] = False
+        account_user = None
+        signed_in = False
+    else:
+        st.session_state.pop("session_expired", None)
+        st.session_state.pop("session_recovery_show_login", None)
+        session_expired = False
+
+if signed_in:
     account_user = get_current_user()
     is_pro = can_access_pro(account_user)
     db_user = account_user or {}
@@ -1683,6 +1770,15 @@ else:
         "email_verified": False,
     }
 
+capabilities = capabilities_from_current_entitlement(is_pro=is_pro)
+watchlists_enabled = can_use_watchlists(capabilities)
+alerts_enabled = can_use_alerts(capabilities)
+research_modeling_enabled = can_use_research_modeling(capabilities)
+pro_tools_enabled = can_use_pro_tools(capabilities)
+full_signals_enabled = can_use_full_signals(capabilities)
+advanced_sorting_enabled = can_use_advanced_sorting(capabilities)
+export_enabled = can_export_data(capabilities)
+
 admin_user = is_admin(db_user)
 guest_mode = not signed_in
 st.session_state["access_granted"] = is_pro
@@ -1693,7 +1789,7 @@ with navigation_slot.container():
     selected_route = render_navigation(
         current_route=page,
         signed_in=signed_in,
-        is_pro=is_pro,
+        capabilities=capabilities,
         is_admin=admin_user,
     )
 if selected_route != page:
@@ -1703,7 +1799,11 @@ if selected_route != page:
         del st.query_params["pool"]
     st.rerun()
 
-account_model = account_control_model(account_user if signed_in else None, is_pro=is_pro, is_admin=admin_user)
+account_model = account_control_model(
+    account_user if signed_in else None,
+    capabilities=capabilities,
+    is_admin=admin_user,
+)
 with account_summary_slot.container():
     st.markdown(f"**{account_model['email']}**")
     st.caption(f"{account_model['plan']} plan · server-authoritative access")
@@ -1714,11 +1814,39 @@ with account_summary_slot.container():
     else:
         st.caption("Sign in for saved account features. Public research remains available.")
 
-allowed, denial_reason = route_access(page, signed_in=signed_in, is_admin=admin_user)
+if session_expired:
+    render_status(
+        "warning",
+        "Session expired",
+        "Your authenticated session ended. Public market data remains available; account-owned actions now require sign-in.",
+    )
+    recovery_actions = st.columns(2)
+    if recovery_actions[0].button("Sign In Again", key="session_sign_in_again", type="primary", width="stretch"):
+        st.session_state["session_recovery_show_login"] = True
+    if recovery_actions[1].button("Continue to Home", key="session_continue_home", width="stretch"):
+        st.session_state.pop("session_recovery_show_login", None)
+        go_to_route("Home")
+        st.rerun()
+    if st.session_state.get("session_recovery_show_login"):
+        with st.container(border=True, key="session_recovery_login"):
+            login_form()
+
+allowed, denial_reason = route_access(
+    page,
+    signed_in=signed_in,
+    capabilities=capabilities,
+    is_admin=admin_user,
+)
 if not allowed:
     render_page_heading(page)
     if denial_reason == "authentication_required":
         render_status("auth", "Authentication required", "Open Account in the navigation drawer to sign in securely.")
+    elif denial_reason == "capability_required":
+        render_status(
+            "restricted",
+            "Capability not available",
+            "This workflow is outside the current account capability set. Pricing shows the planned beta ladder; no unsupported checkout is offered.",
+        )
     else:
         render_status("unauthorized", "Unauthorized", "This route is restricted to verified administrators.")
     st.stop()
@@ -1733,7 +1861,7 @@ market_freshness = freshness(market_data_status)
 watchlist_client: UserSavedPoolsClient | None = None
 saved_pool_entries: tuple[SavedPool, ...] = ()
 watchlist_load_error: str | None = None
-if signed_in:
+if signed_in and watchlists_enabled:
     try:
         watchlist_client = current_user_saved_pools_client()
         saved_pool_entries = watchlist_client.list_saved_pools()
@@ -1798,7 +1926,7 @@ with st.sidebar:
         "market_min_apy": query_filter_model.min_apy,
         "market_sort": query_filter_model.sort_by,
     }
-    sort_options = FREE_SORT_OPTIONS + PRO_SORT_OPTIONS if is_pro else FREE_SORT_OPTIONS
+    sort_options = FREE_SORT_OPTIONS + PRO_SORT_OPTIONS if advanced_sorting_enabled else FREE_SORT_OPTIONS
     if filter_defaults["market_sort"] not in sort_options:
         filter_defaults["market_sort"] = DEFAULT_FILTERS.sort_by
     for filter_key, filter_value in filter_defaults.items():
@@ -1883,10 +2011,10 @@ filtered = apply_discovery_filters(df, current_filters)
 
 filtered = filtered.head(POOL_LIMIT)
 full_filtered = filtered.copy()
-if not is_pro:
+if not advanced_sorting_enabled:
     filtered = filtered.head(FREE_POOL_LIMIT)
 watchlist_df = df[df["pool"].isin(saved_pool_ids)].copy()
-arb_df = yield_spreads(full_filtered if is_pro else filtered)
+arb_df = yield_spreads(full_filtered if pro_tools_enabled else filtered)
 
 content_page = page
 active_view: str | None = None
@@ -1964,7 +2092,13 @@ elif market_filters_apply(page) and page != "Pool Detail":
     )
 
 if content_page == "Home":
-    render_home_page(filtered, full_filtered, watchlist_df, len(saved_pool_entries), alert_stats, history_latest_df, history_trend_df, is_pro)
+    render_home_page(
+        df,
+        full_filtered,
+        watchlist_count=len(saved_pool_entries),
+        capabilities=capabilities,
+        signed_in=signed_in,
+    )
 
 elif content_page == "Scanner":
     left, right = st.columns([1.6, 1], gap="large")
@@ -1987,6 +2121,9 @@ elif content_page == "Scanner":
                         start + i,
                         row["pool"] in saved_pool_ids,
                         authenticated=signed_in,
+                        watch_allowed=watchlists_enabled,
+                        alert_allowed=alerts_enabled,
+                        research_allowed=research_modeling_enabled,
                         watchlist_client=watchlist_client,
                         freshness_label=market_freshness["label"],
                         return_view="Opportunities",
@@ -2009,7 +2146,7 @@ elif content_page == "Scanner":
                     "Pool": st.column_config.LinkColumn("Pool", display_text="Open"),
                 },
             )
-        if is_pro:
+        if export_enabled:
             csv = make_download_df(filtered).to_csv(index=False).encode("utf-8")
             st.download_button("Download current table as CSV", csv, file_name="furuflow_scanner.csv", mime="text/csv")
         else:
@@ -2093,6 +2230,9 @@ elif content_page == "Pool Universe":
             9000,
             selected_universe_pool in saved_pool_ids,
             authenticated=signed_in,
+            watch_allowed=watchlists_enabled,
+            alert_allowed=alerts_enabled,
+            research_allowed=research_modeling_enabled,
             watchlist_client=watchlist_client,
             freshness_label=market_freshness["label"],
             return_route="Discover",
@@ -2114,6 +2254,14 @@ elif content_page == "Research Comparison":
     if research_universe.empty:
         render_status("empty", "Research data unavailable", "The provider returned no usable canonical pools for comparison.")
     else:
+        if not research_modeling_enabled:
+            render_status(
+                "restricted",
+                f"Research modeling is a {required_tier_name(Capability.RESEARCH_MODELING)} capability",
+                f"Free remains open for discovery and Pool Detail. The planned {required_tier_name(Capability.RESEARCH_MODELING)} tier adds selected-pool comparison, transparent weighting, and monitoring workflows; it is not yet purchasable.",
+            )
+            st.caption("Current trusted Pro entitlements include this capability during the Prompt 12 compatibility period.")
+            st.stop()
         compare_options = research_universe["pool"].astype(str).tolist()
         compare_query = str(st.query_params.get("compare") or "")
         if "research_selection" not in st.session_state:
@@ -2173,6 +2321,129 @@ elif content_page == "Research Comparison":
                 {pool_id: index for index, pool_id in enumerate(selected_ids)}
             )
             selected_source = selected_source.sort_values("_research_order")
+            section_header(
+                "Comparison model",
+                "Choose what matters in this selected set",
+                "Each dimension is min-max normalized only across these pools. Lower existing risk scores are better; missing dimensions are omitted and disclosed through coverage.",
+            )
+            balanced_weights = COMPARISON_SCENARIOS["Balanced"]
+            for weight_key, weight_default in (
+                ("research_weight_yield", balanced_weights.yield_weight),
+                ("research_weight_liquidity", balanced_weights.liquidity_weight),
+                ("research_weight_risk", balanced_weights.risk_weight),
+                ("research_weight_signal", balanced_weights.signal_weight),
+            ):
+                st.session_state.setdefault(weight_key, weight_default)
+            scenario_columns = st.columns(len(COMPARISON_SCENARIOS))
+            for scenario_column, (scenario_name, scenario_weights) in zip(
+                scenario_columns, COMPARISON_SCENARIOS.items(), strict=True
+            ):
+                if scenario_column.button(
+                    scenario_name,
+                    key=f"research_scenario_{scenario_name.lower().replace(' ', '_')}",
+                    type="primary" if st.session_state.get("research_scenario", "Balanced") == scenario_name else "secondary",
+                    width="stretch",
+                ):
+                    st.session_state.update(
+                        {
+                            "research_scenario": scenario_name,
+                            "research_weight_yield": scenario_weights.yield_weight,
+                            "research_weight_liquidity": scenario_weights.liquidity_weight,
+                            "research_weight_risk": scenario_weights.risk_weight,
+                            "research_weight_signal": scenario_weights.signal_weight,
+                        }
+                    )
+                    st.rerun()
+            weight_columns = st.columns(4)
+            yield_weight = weight_columns[0].slider(
+                "Yield weight",
+                0,
+                100,
+                step=5,
+                key="research_weight_yield",
+            )
+            liquidity_weight = weight_columns[1].slider(
+                "Liquidity weight",
+                0,
+                100,
+                step=5,
+                key="research_weight_liquidity",
+            )
+            risk_weight = weight_columns[2].slider(
+                "Risk weight",
+                0,
+                100,
+                step=5,
+                key="research_weight_risk",
+            )
+            signal_weight = weight_columns[3].slider(
+                "Signal / momentum weight",
+                0,
+                100,
+                step=5,
+                key="research_weight_signal",
+            )
+            comparison_weights = ComparisonWeights(yield_weight, liquidity_weight, risk_weight, signal_weight)
+            analysis = comparison_analysis(df, selected_ids, comparison_weights)
+            configured_total = sum(analysis["weights"].values())
+            st.caption(
+                f"Configured weight total: {configured_total}. Values are proportionally normalized; this is deterministic decision support, not a return prediction."
+            )
+            if len(analysis["rows"]) >= 2:
+                winner = analysis["winner"]
+                if winner:
+                    render_status(
+                        "info",
+                        f"{winner['Pool']} ranks first under these weights",
+                        f"{winner['Reason']} Score {winner['Score']:.2f}/100 with {winner['Coverage %']:.1f}% weighted-data coverage.",
+                    )
+                leader_by_pool = {row["pool"]: row["Pool"] for row in analysis["rows"]}
+                leader_notes = []
+                for label, key in (
+                    ("Highest yield", "highest_yield"),
+                    ("Strongest liquidity", "strongest_liquidity"),
+                    ("Lowest modeled risk", "lowest_risk"),
+                    ("Strongest signal", "strongest_signal"),
+                ):
+                    leader_id = analysis["leaders"].get(key)
+                    if leader_id:
+                        leader_notes.append(f"**{label}:** {leader_by_pool[leader_id]}")
+                st.markdown("  \n".join(leader_notes))
+                spread = analysis["apy_spread"]
+                if spread is not None:
+                    st.caption(f"Selected-set APY spread: {spread:.2f} percentage points. {analysis['diversification']}")
+                ranking_view = pd.DataFrame(analysis["rows"])[
+                    [
+                        "Overall rank",
+                        "Pool",
+                        "Score",
+                        "Coverage %",
+                        "APY",
+                        "APY vs median",
+                        "TVL (USD)",
+                        "TVL vs median %",
+                        "Risk",
+                        "Signal",
+                        "Reason",
+                    ]
+                ]
+                st.dataframe(
+                    ranking_view,
+                    width="stretch",
+                    hide_index=True,
+                    height=min(310, 120 + 42 * len(ranking_view)),
+                    column_config={
+                        "Score": st.column_config.NumberColumn(format="%.2f"),
+                        "Coverage %": st.column_config.NumberColumn(format="%.1f%%"),
+                        "APY": st.column_config.NumberColumn(format="%.2f%%"),
+                        "APY vs median": st.column_config.NumberColumn(format="%+.2f pp"),
+                        "TVL (USD)": st.column_config.NumberColumn(format="$%.0f"),
+                        "TVL vs median %": st.column_config.NumberColumn(format="%+.1f%%"),
+                        "Risk": st.column_config.NumberColumn(format="%.0f"),
+                    },
+                )
+            else:
+                st.caption("Select at least two pools to produce relative ranks and cross-pool explanations.")
             research_links = compact_table(
                 selected_source,
                 return_route="Research",
@@ -2196,6 +2467,7 @@ elif content_page == "Research Comparison":
                 matrix_source["Protocol"] + " · " + matrix_source["Pool / assets"] + " · " + matrix_source["Chain"]
             )
             matrix = matrix_source.set_index("Opportunity").drop(columns=["pool", "Pool / assets"]).T
+            matrix = matrix.astype("string").fillna("Unavailable")
             st.dataframe(matrix, width="stretch", height=min(420, 120 + 38 * len(matrix.index)))
             st.caption("On narrow screens, comparison tables scroll inside bounded regions; the evidence summaries below stack vertically.")
             current_rows = {str(row["pool"]): row for _, row in selected_source.iterrows()}
@@ -2291,6 +2563,9 @@ elif content_page == "Signals":
                     700 + idx,
                     row["pool"] in saved_pool_ids,
                     authenticated=signed_in,
+                    watch_allowed=watchlists_enabled,
+                    alert_allowed=alerts_enabled,
+                    research_allowed=research_modeling_enabled,
                     watchlist_client=watchlist_client,
                     freshness_label=market_freshness["label"],
                     return_route="Signals",
@@ -2301,7 +2576,7 @@ elif content_page == "Signals":
                 st.caption(f"Signal strength: {row['signal_strength']:.1f} • 7d APY Δ: {row['apy_delta_7']:.2f} • 7d TVL Δ: {row['tvl_delta_7_pct']:.2f}%")
         st.markdown("</div>", unsafe_allow_html=True)
 
-    if not is_pro:
+    if not full_signals_enabled:
         preview = full_filtered[["project", "chain", "symbol", "signal", "signal_strength", "apy_delta_7", "tvl_delta_7_pct"]].copy().head(5)
         preview.columns = ["Protocol", "Chain", "Asset", "Signal", "Strength", "7d APY Δ", "7d TVL Δ %"]
         require_pro("Signals", preview_df=preview, preview_note="Free users can scan pools, but the full signal engine is reserved for Pro.")
@@ -2339,6 +2614,9 @@ elif content_page == "Signals":
                 9100,
                 selected_signal_pool in saved_pool_ids,
                 authenticated=signed_in,
+                watch_allowed=watchlists_enabled,
+                alert_allowed=alerts_enabled,
+                research_allowed=research_modeling_enabled,
                 watchlist_client=watchlist_client,
                 freshness_label=market_freshness["label"],
                 return_route="Signals",
@@ -2375,7 +2653,7 @@ elif content_page == "Signals":
     )
 
 elif content_page == "Arbitrage":
-    if not is_pro:
+    if not pro_tools_enabled:
         require_pro("Yield Spreads")
     track_research_event("yield_spreads_viewed", {"count": len(arb_df), "view": "Yield Spreads"})
     left, right = st.columns([1.15, 1], gap="large")
@@ -2432,6 +2710,27 @@ elif content_page == "Arbitrage":
             return_view="Yield Spreads",
         )
     if not arb_df.empty:
+        spread_pair_indexes = tuple(range(min(12, len(arb_df))))
+        selected_spread_pair = st.selectbox(
+            "Yield spread pair",
+            spread_pair_indexes,
+            format_func=lambda index: (
+                f"{arb_df.iloc[index]['Asset']} · {arb_df.iloc[index]['Higher protocol']} ({arb_df.iloc[index]['Higher chain']}) "
+                f"vs {arb_df.iloc[index]['Lower protocol']} ({arb_df.iloc[index]['Lower chain']})"
+            ),
+            key="yield_spread_pair",
+        )
+        pair = arb_df.iloc[selected_spread_pair]
+        st.caption(
+            f"APY spread {float(pair['APY difference']):.2f} pp · "
+            f"higher-side TVL {format_money(pair['Higher TVL']) if pair['Higher TVL'] is not None else 'Unavailable'} · "
+            f"lower-side TVL {format_money(pair['Lower TVL']) if pair['Lower TVL'] is not None else 'Unavailable'} · "
+            f"risk {pair['Higher risk'] if pair['Higher risk'] is not None else 'Unavailable'} vs "
+            f"{pair['Lower risk'] if pair['Lower risk'] is not None else 'Unavailable'}"
+        )
+        if st.button("Compare pair in Research", key="yield_spread_compare_pair", type="primary", width="stretch"):
+            open_research_many((str(pair["Higher pool ID"]), str(pair["Lower pool ID"])))
+            st.rerun()
         spread_ids = list(
             dict.fromkeys(
                 arb_df.head(12)["Higher pool ID"].astype(str).tolist()
@@ -2453,7 +2752,7 @@ elif content_page == "Arbitrage":
                 key="yield_spread_action_pool",
             )
             spread_is_saved = selected_spread_pool in saved_pool_ids
-            spread_actions = st.columns(3)
+            spread_actions = st.columns(4)
             if spread_actions[0].button(
                 "Remove from Watchlist" if spread_is_saved else "Save to Watchlist",
                 key="yield_spread_watch",
@@ -2462,18 +2761,28 @@ elif content_page == "Arbitrage":
             ):
                 if watch_toggle(selected_spread_pool, watched=spread_is_saved, client=watchlist_client):
                     st.rerun()
-            if spread_actions[1].button("Open Pool Detail", key="yield_spread_detail", type="primary", width="stretch"):
+            if spread_actions[1].button("Open Pool", key="yield_spread_detail", width="stretch"):
                 open_pool_detail(selected_spread_pool, return_route="Pro Tools", return_view="Yield Spreads")
                 st.rerun()
-            if spread_actions[2].button("Research", key="yield_spread_research", width="stretch"):
+            if spread_actions[2].button("Research Pool", key="yield_spread_research", width="stretch"):
                 open_research(selected_spread_pool)
+                st.rerun()
+            if spread_actions[3].button(
+                "Create Alert",
+                key="yield_spread_alert",
+                width="stretch",
+                disabled=market_source_status == "sample",
+            ):
+                start_alert_creation(selected_spread_pool)
                 st.rerun()
 
 elif content_page == "Pool Detail":
     selected_pool_id = str(st.session_state.get("selected_pool_id") or st.query_params.get("pool") or "")
     detail_return_route = str(st.session_state.get("pool_return_route") or "Discover")
     detail_return_view = str(st.session_state.get("pool_return_view") or "Opportunities")
-    if detail_return_route == "Watchlists":
+    if detail_return_route == "Home":
+        detail_back_label = "← Back to Home"
+    elif detail_return_route == "Watchlists":
         detail_back_label = "← Back to Watchlist"
     elif detail_return_route == "Research":
         detail_back_label = "← Back to Research"
@@ -2667,14 +2976,16 @@ elif content_page == "Pool Detail":
                         "Remove from Watchlist"
                         if watched
                         else "Add to Watchlist"
-                        if signed_in and watchlist_client is not None
+                        if signed_in and watchlists_enabled and watchlist_client is not None
                         else "Watchlist unavailable"
+                        if signed_in and watchlists_enabled
+                        else f"Watchlists · {required_tier_name(Capability.WATCHLISTS)}"
                         if signed_in
                         else "Sign in to save"
                     ),
                     key=f"drill_watch_{current_pool_id}",
                     width="stretch",
-                    disabled=not signed_in or watchlist_client is None,
+                    disabled=not signed_in or not watchlists_enabled or watchlist_client is None,
                 ):
                     track_research_event("watchlist_action_initiated", {"pool": current_pool_id, "action": "toggle"})
                     if watch_toggle(str(row["pool"]), watched=watched, client=watchlist_client):
@@ -2682,30 +2993,36 @@ elif content_page == "Pool Detail":
                 st.markdown("</div>", unsafe_allow_html=True)
             with c2:
                 if st.button(
-                    "Create alert" if signed_in else "Sign in for alerts",
+                    "Sign in for alerts"
+                    if not signed_in
+                    else f"Alerts · {required_tier_name(Capability.ALERTS)}"
+                    if not alerts_enabled
+                    else "Create alert",
                     key=f"pool_alert_{current_pool_id}",
                     width="stretch",
-                    disabled=not signed_in or market_source_status == "sample",
+                    disabled=not signed_in or not alerts_enabled or market_source_status == "sample",
                     help="Sample-mode pools cannot become persistent alerts." if market_source_status == "sample" else None,
                 ):
                     start_alert_creation(current_pool_id)
                     st.rerun()
             with c3:
                 if st.button(
-                    "Research",
+                    "Research"
+                    if research_modeling_enabled
+                    else f"Research · {required_tier_name(Capability.RESEARCH_MODELING)}",
                     key=f"pool_research_{current_pool_id}",
                     width="stretch",
+                    disabled=not research_modeling_enabled,
                 ):
                     open_research(current_pool_id)
                     st.rerun()
             with c4:
-                st.markdown("<div class='pool-wrap'>", unsafe_allow_html=True)
-                st.link_button("Open Pool", row["pool_url"], width="stretch")
-                st.markdown("</div>", unsafe_allow_html=True)
+                with st.container(key="pool_detail_open_pool"):
+                    st.link_button("Open Pool", row["pool_url"], width="stretch")
         st.markdown("</div>", unsafe_allow_html=True)
 
 elif content_page == "Strategy Builder":
-    if not is_pro:
+    if not pro_tools_enabled:
         preview = strategy_builder_filter(df, True, 8.0, 10_000_000.0, 40, "Any")[["project", "chain", "symbol", "apy", "risk_score", "signal"]].copy().head(8)
         preview.columns = ["Protocol", "Chain", "Asset", "APY", "Risk", "Signal"]
         require_pro("Strategy Builder", preview_df=preview, preview_note="Build reusable high-conviction slices in Pro.")
@@ -2750,9 +3067,29 @@ elif content_page == "Strategy Builder":
                 ),
                 key="strategy_result_pool",
             )
+            selected_strategy_row = strategy_rows[selected_strategy_pool]
+            st.caption(
+                strategy_match_explanation(
+                    selected_strategy_row,
+                    stable_only=builder_stable,
+                    min_apy=builder_min_apy,
+                    min_tvl=float(builder_min_tvl),
+                    max_risk=builder_max_risk,
+                    signal_preference=signal_pref,
+                )
+            )
             selected_is_saved = selected_strategy_pool in saved_pool_ids
-            action_left, action_middle, action_right = st.columns(3)
-            with action_left:
+            action_open, action_research, action_watch, action_alert = st.columns(4)
+            with action_open:
+                if st.button("Open Pool", key="strategy_result_detail", type="primary", width="stretch"):
+                    track_research_event("pool_detail_opened", {"pool": selected_strategy_pool, "view": "Strategy Builder"})
+                    open_pool_detail(selected_strategy_pool, return_route="Pro Tools", return_view="Strategy Builder")
+                    st.rerun()
+            with action_research:
+                if st.button("Compare / Research", key="strategy_result_research", width="stretch"):
+                    open_research(selected_strategy_pool)
+                    st.rerun()
+            with action_watch:
                 watch_label = "Remove from Watchlist" if selected_is_saved else "Save to Watchlist"
                 if st.button(
                     watch_label,
@@ -2762,14 +3099,14 @@ elif content_page == "Strategy Builder":
                 ):
                     if watch_toggle(selected_strategy_pool, watched=selected_is_saved, client=watchlist_client):
                         st.rerun()
-            with action_middle:
-                if st.button("Open Pool Detail", key="strategy_result_detail", type="primary", width="stretch"):
-                    track_research_event("pool_detail_opened", {"pool": selected_strategy_pool, "view": "Strategy Builder"})
-                    open_pool_detail(selected_strategy_pool, return_route="Pro Tools", return_view="Strategy Builder")
-                    st.rerun()
-            with action_right:
-                if st.button("Research", key="strategy_result_research", width="stretch"):
-                    open_research(selected_strategy_pool)
+            with action_alert:
+                if st.button(
+                    "Create Alert",
+                    key="strategy_result_alert",
+                    width="stretch",
+                    disabled=market_source_status == "sample",
+                ):
+                    start_alert_creation(selected_strategy_pool)
                     st.rerun()
         st.markdown("</div>", unsafe_allow_html=True)
 
@@ -2778,7 +3115,7 @@ elif content_page == "Activity & Digests":
         alert_stats,
         history_latest_df,
         history_trend_df,
-        is_pro,
+        full_signals_enabled,
         history_load_error=signal_history_load_error,
     )
 
@@ -2805,6 +3142,9 @@ elif content_page == "Watchlists":
                         idx,
                         True,
                         authenticated=True,
+                        watch_allowed=watchlists_enabled,
+                        alert_allowed=alerts_enabled,
+                        research_allowed=research_modeling_enabled,
                         watchlist_client=watchlist_client,
                         freshness_label=market_freshness["label"],
                         return_route="Watchlists",
@@ -2848,22 +3188,35 @@ elif content_page == "Watchlists":
         st.markdown("</div>", unsafe_allow_html=True)
 
 elif content_page == "Pricing":
-    free_col, pro_col = st.columns(2, gap="large")
-    with free_col:
-        st.markdown("<div class='panel'>", unsafe_allow_html=True)
-        section_header("Free", "Explore the market", "Public research remains useful without requiring an account.")
-        st.markdown("- Home market briefing\n- Discover opportunities and comparison\n- Research views\n- Public methodology and data status")
-        st.markdown("</div>", unsafe_allow_html=True)
-    with pro_col:
-        st.markdown("<div class='panel'>", unsafe_allow_html=True)
-        section_header("Pro · $20/month", "Add the intelligence layer", "Existing Pro entitlements unlock signals, deeper ranking, export, and Pro Tools.")
-        st.markdown("- Full Signals view\n- Advanced ranking and deeper result depth\n- Strategy Builder and Yield Spreads\n- CSV export")
-        if is_pro:
-            st.success(f"Pro is active through {billing_access_source(db_user).lower()}.")
-        else:
-            render_billing_action(db_user, label="Upgrade to FuruFlow Pro")
-        st.caption("Paid access appears only after Stripe fulfillment is verified by FuruFlow.")
-        st.markdown("</div>", unsafe_allow_html=True)
+    render_status(
+        "info",
+        "Future beta pricing preview",
+        "Core, Plus, and the $24.99 Pro plan are planned capability tiers. Their Stripe products and purchase paths do not exist yet.",
+    )
+    pricing_columns = st.columns(len(PLANNED_TIERS), gap="medium")
+    for pricing_column, tier in zip(pricing_columns, PLANNED_TIERS, strict=True):
+        with pricing_column:
+            st.markdown("<div class='panel'>", unsafe_allow_html=True)
+            section_header(tier.name, tier.monthly_price, tier.purpose)
+            st.markdown("\n".join(f"- {feature}" for feature in tier.features))
+            if tier.name == "Free":
+                st.success("Available now")
+            else:
+                st.info("Planned · not yet purchasable")
+            st.markdown("</div>", unsafe_allow_html=True)
+
+    st.markdown("<div class='panel'>", unsafe_allow_html=True)
+    section_header(
+        "Current billing compatibility",
+        "Existing Pro remains unchanged during Prompt 12",
+        "The current trusted Free/Pro entitlement and existing $20 Pro checkout remain in place until the planned four-tier billing migration.",
+    )
+    if is_pro:
+        st.success(f"Current Pro is active through {billing_access_source(db_user).lower()} and maps to all Prompt 12 capabilities.")
+    else:
+        render_billing_action(db_user, label="Current Pro checkout — $20/month")
+    st.caption("No Core, Plus, or $24.99 Pro checkout is enabled. Paid access still appears only after current Stripe fulfillment is verified by FuruFlow.")
+    st.markdown("</div>", unsafe_allow_html=True)
 
 elif content_page == "Methodology & Data Status":
     st.markdown("<div class='panel'>", unsafe_allow_html=True)
@@ -2944,8 +3297,15 @@ elif content_page == "Methodology & Data Status":
 
         st.markdown("### Research")
         st.markdown(
-            "Research analyzes a deliberately selected set of up to four current pools. It reuses reported metrics, existing risk explanations, signal context, freshness, and canonical Pool Detail rather than running another market-wide Discover filter workflow. "
-            "Its observations and calculated context support a user decision; they do not choose a pool for the user."
+            "Research analyzes a deliberately selected set of two to four current pools. It min-max normalizes reported APY, reported TVL, the existing risk score (lower is better), and existing signal strength only within that selected set. "
+            "User weights are proportionally normalized. Equal known values receive a neutral score, missing dimensions are excluded from that pool's denominator, and weighted-data coverage is disclosed. Yield Seeking, Balanced, and Conservative are transparent presets—not personalized advice. "
+            "Rankings are reproducible decision support, not predictions, safety ratings, or recommendations. A different selection changes the normalization context."
+        )
+
+        st.markdown("### Product capabilities")
+        st.markdown(
+            "The planned ladder is Free for discovery, Core for durable Watchlists, Plus for Alerts and Research modeling, and Pro for Strategy Builder, Yield Spreads, and workflow acceleration. "
+            "Prompt 12 does not add those Stripe products: today's trusted Free entitlement maps to Free capabilities and today's trusted Pro entitlement maps to all capabilities until billing migration."
         )
 
         st.markdown("### Pro Tools")
@@ -2953,6 +3313,7 @@ elif content_page == "Methodology & Data Status":
             "Strategy Builder applies user-chosen constraints to the existing enriched pool data and returns matching candidates. Yield Spreads compares reported APY for the same displayed asset symbol across networks when the existing minimum difference is met. "
             "Unlike Discover, these are intentional advanced analyses; a spread is not an executable or risk-free arbitrage calculation."
         )
+        st.caption("Activity & Digests is not in primary beta navigation because the current history store records market signals, not a durable per-user Watchlist/Alert activity timeline.")
 
         st.markdown("### Limitations")
         st.markdown(
@@ -2968,7 +3329,11 @@ elif content_page == "Methodology & Data Status":
 
 elif content_page == "Alerts":
     alert_target_df = df if market_source_status in {"live", "partial"} else df.iloc[0:0]
-    render_alerts_page(alert_target_df, is_pro=is_pro, account_timezone=str(db_user.get("timezone") or "UTC"))
+    render_alerts_page(
+        alert_target_df,
+        full_signal_access=full_signals_enabled,
+        account_timezone=str(db_user.get("timezone") or "UTC"),
+    )
 
 elif content_page == "Account & Billing":
     st.markdown("<div class='panel'>", unsafe_allow_html=True)

@@ -131,7 +131,7 @@ def _authenticated_alert_app(
     monkeypatch.setattr(auth_service, "get_current_user", lambda: user)
     monkeypatch.setattr(auth_service, "claim_session", lambda: None)
     monkeypatch.setattr(auth_service, "validate_session", lambda: True)
-    monkeypatch.setattr(auth_service, "can_access_pro", lambda _user: False)
+    monkeypatch.setattr(auth_service, "can_access_pro", lambda _user: True)
     monkeypatch.setattr(user_alerts, "current_user_notification_client", lambda: client)
     monkeypatch.setattr(saved_pools, "current_user_saved_pools_client", lambda: FakeSavedPoolsClient(saved_pool_ids))
     monkeypatch.setattr(requests, "get", lambda *_args, **_kwargs: FakeMarketResponse())
@@ -218,6 +218,19 @@ def test_pool_detail_create_alert_preserves_canonical_context_without_pool_query
 
     assert not app.exception
     next(button for button in app.button if button.label == "Create alert").click().run()
+    assert app.query_params["page"] == ["Alerts"]
+    assert "pool" not in app.query_params
+    assert any(selectbox.label == "Pool" and selectbox.value == "canonical-pool-1" for selectbox in app.selectbox)
+
+
+def test_strategy_result_carries_canonical_pool_directly_into_alert_creation(monkeypatch) -> None:
+    app = _authenticated_alert_app(monkeypatch, FakeNotificationClient(), page="Pro Tools")
+    next(slider for slider in app.slider if slider.label == "Strategy minimum APY").set_value(0.0).run()
+    next(slider for slider in app.slider if slider.label == "Strategy minimum TVL").set_value(0).run()
+    next(slider for slider in app.slider if slider.label == "Strategy maximum risk").set_value(100).run()
+
+    _keyed_button(app, "strategy_result_alert").click().run()
+    assert not app.exception
     assert app.query_params["page"] == ["Alerts"]
     assert "pool" not in app.query_params
     assert any(selectbox.label == "Pool" and selectbox.value == "canonical-pool-1" for selectbox in app.selectbox)

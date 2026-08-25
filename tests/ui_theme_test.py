@@ -134,12 +134,27 @@ def test_discover_controls_are_not_duplicated_on_pro_tools() -> None:
     assert not market_filters_apply("Pro Tools")
 
 
-def test_strategy_results_expose_promised_actions_and_activity_copy_is_production_facing() -> None:
+def test_pool_detail_open_pool_has_scoped_readable_interaction_states() -> None:
+    action_css = UI_THEME_CSS[UI_THEME_CSS.index(".st-key-pool_detail_open_pool") :]
+
+    assert ".stLinkButton a:visited" in action_css
+    assert ".stLinkButton a p" in action_css
+    assert "color: #332100 !important" in action_css
+    for state in (":hover", ":focus-visible", ":active", '[aria-disabled="true"]'):
+        assert state in action_css
+
+
+def test_strategy_results_expose_complete_workflow_and_activity_leaves_primary_navigation() -> None:
     app_source = (ROOT / "app.py").read_text(encoding="utf-8")
     strategy_source = app_source[app_source.index('elif content_page == "Strategy Builder"') : app_source.index('elif content_page == "Activity & Digests"')]
+    shell_source = (ROOT / "ui_shell.py").read_text(encoding="utf-8")
+    primary_navigation = shell_source[shell_source.index("AUTHENTICATED_NAV") : shell_source.index("ADMIN_NAV")]
 
     assert '"Save to Watchlist"' in strategy_source
-    assert '"Open Pool Detail"' in strategy_source
+    assert '"Open Pool"' in strategy_source
+    assert '"Compare / Research"' in strategy_source
+    assert '"Create Alert"' in strategy_source
     assert 'return_route="Pro Tools"' in strategy_source
+    assert "Activity & Digests" not in primary_navigation
     assert "post_real_signals.py" not in app_source
     assert "No signal history yet." in app_source

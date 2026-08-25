@@ -9,6 +9,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, replace
 from datetime import datetime, timezone
+from statistics import median
 from typing import Any, Callable, Iterable, Mapping
 
 import pandas as pd
@@ -27,6 +28,30 @@ SORT_OPTIONS = (
     "Highest 24h volume",
     "Largest signal move",
 )
+
+
+@dataclass(frozen=True)
+class ComparisonWeights:
+    yield_weight: int = 35
+    liquidity_weight: int = 25
+    risk_weight: int = 25
+    signal_weight: int = 15
+
+    def as_dict(self) -> dict[str, int]:
+        return {
+            "yield": max(0, int(self.yield_weight)),
+            "liquidity": max(0, int(self.liquidity_weight)),
+            "risk": max(0, int(self.risk_weight)),
+            "signal": max(0, int(self.signal_weight)),
+        }
+
+
+# Presets are presentation conveniences, not forecasts or investment profiles.
+COMPARISON_SCENARIOS = {
+    "Yield Seeking": ComparisonWeights(55, 20, 15, 10),
+    "Balanced": ComparisonWeights(35, 25, 25, 15),
+    "Conservative": ComparisonWeights(15, 35, 40, 10),
+}
 
 
 @dataclass(frozen=True)
@@ -341,6 +366,170 @@ def comparison_rows(frame: pd.DataFrame, selected: Iterable[str]) -> list[dict[s
     return rows
 
 
+def comparison_analysis(
+    frame: pd.DataFrame,
+    selected: Iterable[str],
+    weights: ComparisonWeights = COMPARISON_SCENARIOS["Balanced"],
+) -> dict[str, Any]:
+    """Rank selected pools with transparent within-set normalization.
+
+    APY, TVL, existing risk score, and existing signal strength are min-max
+    normalized only across selected pools. Lower existing risk is better.
+    Equal known values receive a neutral 0.5. Missing dimensions are excluded
+    from that pool's weighted denominator and disclosed through coverage.
+    """
+
+    selected_ids = list(dict.fromkeys(str(pool_id) for pool_id in selected if pool_id))[:COMPARISON_LIMIT]
+    by_pool = {str(row["pool"]): row for _, row in frame.iterrows()}
+    candidates = [by_pool[pool_id] for pool_id in selected_ids if pool_id in by_pool]
+    dimension_weights = weights.as_dict()
+    raw: dict[str, dict[str, float | None]] = {}
+    for row in candidates:
+        pool_id = str(row["pool"])
+        risk_value = row.get("risk_score")
+        signal_value = row.get("signal_strength")
+        raw[pool_id] = {
+            "yield": _known(row, "apy", "apy_available"),
+            "liquidity": _known(row, "tvlUsd", "tvl_available"),
+            "risk": None if risk_value is None or bool(pd.isna(risk_value)) else -float(risk_value),
+            "signal": None if signal_value is None or bool(pd.isna(signal_value)) else float(signal_value),
+        }
+
+    normalized: dict[str, dict[str, float | None]] = {pool_id: {} for pool_id in raw}
+    for dimension in dimension_weights:
+        known = [values[dimension] for values in raw.values() if values[dimension] is not None]
+        low = min(known) if known else None
+        high = max(known) if known else None
+        for pool_id, values in raw.items():
+            value = values[dimension]
+            if value is None or low is None or high is None:
+                normalized[pool_id][dimension] = None
+            elif high == low:
+                normalized[pool_id][dimension] = 0.5
+            else:
+                normalized[pool_id][dimension] = (value - low) / (high - low)
+
+    apy_values = [values["yield"] for values in raw.values() if values["yield"] is not None]
+    tvl_values = [values["liquidity"] for values in raw.values() if values["liquidity"] is not None]
+    median_apy = median(apy_values) if apy_values else None
+    median_tvl = median(tvl_values) if tvl_values else None
+    metric_ranks = {
+        "yield": _metric_ranks(raw, "yield"),
+        "liquidity": _metric_ranks(raw, "liquidity"),
+        "risk": _metric_ranks(raw, "risk"),
+        "signal": _metric_ranks(raw, "signal"),
+    }
+    rows: list[dict[str, Any]] = []
+    total_configured_weight = sum(dimension_weights.values())
+    labels = {"yield": "yield", "liquidity": "liquidity", "risk": "lower modeled risk", "signal": "signal momentum"}
+    for row in candidates:
+        pool_id = str(row["pool"])
+        available = {
+            dimension: score
+            for dimension, score in normalized[pool_id].items()
+            if score is not None and dimension_weights[dimension] > 0
+        }
+        available_weight = sum(dimension_weights[dimension] for dimension in available)
+        score = (
+            sum(available[dimension] * dimension_weights[dimension] for dimension in available) / available_weight * 100
+            if available_weight
+            else None
+        )
+        strongest = max(available, key=lambda dimension: (available[dimension], dimension_weights[dimension], dimension)) if available else None
+        weakest = min(available, key=lambda dimension: (available[dimension], -dimension_weights[dimension], dimension)) if available else None
+        reason = "No comparable weighted dimensions are available."
+        if strongest:
+            reason = f"Its strongest selected-set contribution is {labels[strongest]}."
+            if weakest and weakest != strongest:
+                reason += f" Its clearest tradeoff is {labels[weakest]}."
+        apy = raw[pool_id]["yield"]
+        tvl = raw[pool_id]["liquidity"]
+        rows.append(
+            {
+                "pool": pool_id,
+                "Pool": f"{row.get('project', 'Unknown')} · {row.get('symbol', 'Unknown')} · {row.get('chain', 'Unknown')}",
+                "Protocol": str(row.get("project") or "Unknown"),
+                "Network": str(row.get("chain") or "Unknown"),
+                "APY": apy,
+                "APY rank": metric_ranks["yield"].get(pool_id),
+                "APY vs median": None if apy is None or median_apy is None else apy - median_apy,
+                "TVL (USD)": tvl,
+                "TVL rank": metric_ranks["liquidity"].get(pool_id),
+                "TVL vs median %": None if tvl is None or not median_tvl else (tvl - median_tvl) / median_tvl * 100,
+                "Risk": None if raw[pool_id]["risk"] is None else -raw[pool_id]["risk"],
+                "Risk rank": metric_ranks["risk"].get(pool_id),
+                "Signal": str(row.get("signal") or "Unavailable"),
+                "Signal rank": metric_ranks["signal"].get(pool_id),
+                "Score": None if score is None else round(score, 2),
+                "Coverage %": round(available_weight / total_configured_weight * 100, 1) if total_configured_weight else 0.0,
+                "Reason": reason,
+                "Normalized": {
+                    dimension: None if value is None else round(value * 100, 1)
+                    for dimension, value in normalized[pool_id].items()
+                },
+            }
+        )
+
+    ranked = sorted(rows, key=lambda item: (item["Score"] is None, -(item["Score"] or 0), item["pool"]))
+    for index, row in enumerate(ranked, start=1):
+        row["Overall rank"] = index if row["Score"] is not None else None
+    leaders = {
+        "highest_yield": _leader(rows, "APY", higher=True),
+        "strongest_liquidity": _leader(rows, "TVL (USD)", higher=True),
+        "lowest_risk": _leader(rows, "Risk", higher=False),
+        "strongest_signal": next((row for row in ranked if row["Signal rank"] == 1), None),
+    }
+    winner = next((row for row in ranked if row["Score"] is not None), None)
+    protocols = sorted({row["Protocol"] for row in rows})
+    networks = sorted({row["Network"] for row in rows})
+    return {
+        "rows": ranked,
+        "winner": winner,
+        "leaders": {key: value["pool"] if value else None for key, value in leaders.items()},
+        "apy_spread": max(apy_values) - min(apy_values) if len(apy_values) >= 2 else None,
+        "median_apy": median_apy,
+        "median_tvl": median_tvl,
+        "protocols": protocols,
+        "networks": networks,
+        "diversification": (
+            f"The selected set spans {len(protocols)} protocol{'s' if len(protocols) != 1 else ''} and "
+            f"{len(networks)} network{'s' if len(networks) != 1 else ''}."
+        ),
+        "weights": dimension_weights,
+    }
+
+
+def _metric_ranks(raw: Mapping[str, Mapping[str, float | None]], dimension: str) -> dict[str, int]:
+    known = [(pool_id, values[dimension]) for pool_id, values in raw.items() if values[dimension] is not None]
+    ordered = sorted(known, key=lambda item: (-float(item[1]), item[0]))
+    return {pool_id: index for index, (pool_id, _) in enumerate(ordered, start=1)}
+
+
+def _leader(rows: Iterable[Mapping[str, Any]], key: str, *, higher: bool) -> Mapping[str, Any] | None:
+    known = [row for row in rows if row.get(key) is not None]
+    if not known:
+        return None
+    return sorted(known, key=lambda row: ((-1 if higher else 1) * float(row[key]), str(row["pool"])))[0]
+
+
+def strategy_match_explanation(
+    row: Mapping[str, Any],
+    *,
+    stable_only: bool,
+    min_apy: float,
+    min_tvl: float,
+    max_risk: int,
+    signal_preference: str,
+) -> str:
+    constraints = [f"APY {float(row['apy']):.2f}% ≥ {min_apy:.2f}%", f"TVL ${float(row['tvlUsd']):,.0f} ≥ ${min_tvl:,.0f}"]
+    constraints.append(f"risk {int(row['risk_score'])} ≤ {max_risk}")
+    if stable_only:
+        constraints.append("stablecoin-labelled")
+    if signal_preference != "Any":
+        constraints.append(f"signal is {signal_preference}")
+    return "Matched because " + "; ".join(constraints) + ". Review reward dependence, liquidity, and protocol context as tradeoffs."
+
+
 def _known(row: Mapping[str, Any], value_key: str, available_key: str) -> float | None:
     if available_key in row and not bool(row.get(available_key)):
         return None
@@ -453,11 +642,17 @@ def yield_spreads(frame: pd.DataFrame, *, minimum_difference: float = 3.0) -> pd
                 "Higher chain": top["chain"],
                 "Higher protocol": top["project"],
                 "Higher APY": float(top["apy"]),
+                "Higher TVL": _known(top, "tvlUsd", "tvl_available"),
+                "Higher risk": None if pd.isna(top.get("risk_score")) else float(top["risk_score"]),
+                "Higher signal": str(top.get("signal") or "Unavailable"),
                 "Higher link": top["pool_url"],
                 "Lower pool ID": str(low["pool"]),
                 "Lower chain": low["chain"],
                 "Lower protocol": low["project"],
                 "Lower APY": float(low["apy"]),
+                "Lower TVL": _known(low, "tvlUsd", "tvl_available"),
+                "Lower risk": None if pd.isna(low.get("risk_score")) else float(low["risk_score"]),
+                "Lower signal": str(low.get("signal") or "Unavailable"),
                 "Lower link": low["pool_url"],
                 "APY difference": difference,
                 "Execution costs": "Not modeled",

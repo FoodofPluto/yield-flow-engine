@@ -7,6 +7,8 @@ from urllib.parse import urlencode
 
 import streamlit as st
 
+from product_capabilities import Capability, ProductCapabilities
+
 
 @dataclass(frozen=True)
 class NavItem:
@@ -14,7 +16,7 @@ class NavItem:
     label: str
     section: str
     requires_auth: bool = False
-    pro_context: bool = False
+    required_capability: Capability | None = None
     admin_only: bool = False
 
 
@@ -28,16 +30,18 @@ PUBLIC_NAV = (
 )
 
 AUTHENTICATED_NAV = (
-    NavItem("Watchlists", "Watchlist", "Monitor", requires_auth=True),
-    NavItem("Alerts", "Alerts", "Monitor", requires_auth=True),
-    NavItem("Activity & Digests", "Activity & digests", "Monitor", requires_auth=True),
-    NavItem("Pro Tools", "Pro tools", "Analyze", requires_auth=True, pro_context=True),
+    NavItem("Watchlists", "Watchlist", "Monitor", requires_auth=True, required_capability=Capability.WATCHLISTS),
+    NavItem("Alerts", "Alerts", "Monitor", requires_auth=True, required_capability=Capability.ALERTS),
+    NavItem("Pro Tools", "Pro tools", "Analyze", requires_auth=True, required_capability=Capability.PRO_TOOLS),
     NavItem("Account & Billing", "Account & billing", "Learn & account", requires_auth=True),
 )
 
 ADMIN_NAV = NavItem("Admin", "Admin", "Restricted", requires_auth=True, admin_only=True)
 
-ALL_ROUTES = frozenset(item.route for item in (*PUBLIC_NAV, *AUTHENTICATED_NAV, ADMIN_NAV)) | {"Pool Detail"}
+ALL_ROUTES = frozenset(item.route for item in (*PUBLIC_NAV, *AUTHENTICATED_NAV, ADMIN_NAV)) | {
+    "Pool Detail",
+    "Activity & Digests",
+}
 
 LEGACY_ROUTE_ALIASES = {
     "Scanner": ("Discover", "Opportunities"),
@@ -52,11 +56,11 @@ LEGACY_ROUTE_ALIASES = {
 }
 
 PAGE_CONTEXT = {
-    "Home": ("Market briefing", "A concise view of yield conditions, tracked opportunities, and recent activity."),
+    "Home": ("Find → Evaluate → Save → Monitor → Optimize", "Move from the current pool universe to evidence, a durable shortlist, monitoring, and advanced workflows."),
     "Discover": ("Discover", "Explore curated opportunities or search the broader current pool universe."),
     "Research": ("Research", "Compare a deliberately selected set of pools, their tradeoffs, and current evidence."),
     "Signals": ("Signals", "Investigate material yield and liquidity movement detected by FuruFlow."),
-    "Pricing": ("Pricing", "Understand what is available in Free and Pro before choosing an account plan."),
+    "Pricing": ("Pricing", "Preview the planned Free, Core, Plus, and Pro capability ladder; new paid tiers are not yet purchasable."),
     "Methodology & Data Status": (
         "Methodology & data status",
         "See how FuruFlow frames yield, risk, freshness, and degraded source conditions.",
@@ -75,9 +79,9 @@ RESEARCH_VIEWS = ("Comparison",)
 PRO_TOOL_VIEWS = ("Strategy Builder", "Yield Spreads")
 OPPORTUNITIES_TABLE_COLUMNS = (
     ("pool_detail_url", "Pool"),
-    ("project", "Protocol"),
-    ("chain", "Chain"),
     ("symbol", "Asset"),
+    ("chain", "Network"),
+    ("project", "Protocol"),
     ("strategy_type", "Strategy"),
     ("apy", "APY"),
     ("apyBase", "Base"),
@@ -109,6 +113,7 @@ STRATEGY_RESULTS_TABLE_COLUMNS = (
 )
 
 POOL_DETAIL_RETURN_VIEWS = {
+    "Home": frozenset({"Home"}),
     "Discover": frozenset(DISCOVER_VIEWS),
     "Research": frozenset(RESEARCH_VIEWS),
     "Signals": frozenset({"Signals"}),
@@ -157,13 +162,13 @@ def pool_detail_query_context(params: Mapping[str, Any]) -> dict[str, str]:
     }
 
 
-def visible_navigation(*, signed_in: bool, is_pro: bool, is_admin: bool) -> tuple[NavItem, ...]:
+def visible_navigation(
+    *, signed_in: bool, capabilities: ProductCapabilities, is_admin: bool
+) -> tuple[NavItem, ...]:
     items = list(PUBLIC_NAV)
     if signed_in:
         for item in AUTHENTICATED_NAV:
-            if item.pro_context and not is_pro:
-                items.append(NavItem(item.route, f"{item.label} · Pro", item.section, True, True, False))
-            else:
+            if item.required_capability is None or capabilities.allows(item.required_capability):
                 items.append(item)
     if signed_in and is_admin:
         items.append(ADMIN_NAV)
@@ -177,7 +182,6 @@ def visible_navigation(*, signed_in: bool, is_pro: bool, is_admin: bool) -> tupl
                 "Research",
                 "Watchlists",
                 "Alerts",
-                "Activity & Digests",
                 "Signals",
                 "Pro Tools",
                 "Methodology & Data Status",
@@ -199,17 +203,32 @@ def canonical_route(route: str | None) -> tuple[str, str | None]:
     return "Home", None
 
 
-def route_access(route: str, *, signed_in: bool, is_admin: bool) -> tuple[bool, str | None]:
+def route_access(
+    route: str,
+    *,
+    signed_in: bool,
+    capabilities: ProductCapabilities,
+    is_admin: bool,
+) -> tuple[bool, str | None]:
     if route == "Admin" and not is_admin:
         return False, "unauthorized"
-    if route in {item.route for item in AUTHENTICATED_NAV} and not signed_in:
+    protected = {item.route for item in AUTHENTICATED_NAV} | {"Activity & Digests"}
+    if route in protected and not signed_in:
         return False, "authentication_required"
+    item = next((item for item in AUTHENTICATED_NAV if item.route == route), None)
+    if item and item.required_capability and not capabilities.allows(item.required_capability):
+        return False, "capability_required"
     if route == "Pool Detail":
         return True, None
     return route in ALL_ROUTES, None if route in ALL_ROUTES else "not_found"
 
 
-def account_control_model(user: Mapping[str, Any] | None, *, is_pro: bool, is_admin: bool) -> dict[str, str]:
+def account_control_model(
+    user: Mapping[str, Any] | None,
+    *,
+    capabilities: ProductCapabilities,
+    is_admin: bool,
+) -> dict[str, str]:
     if not user:
         return {
             "label": "Sign in",
@@ -218,7 +237,7 @@ def account_control_model(user: Mapping[str, Any] | None, *, is_pro: bool, is_ad
             "status": "signed_out",
         }
     email = str(user.get("email") or "Signed-in account")
-    plan = "Admin" if is_admin else "Pro" if is_pro else "Free"
+    plan = "Admin" if is_admin else capabilities.tier.value.title()
     return {
         "label": f"{email} · {plan}",
         "email": email,
@@ -262,6 +281,13 @@ def research_selection_state(pool_id: str, selected: tuple[str, ...] = ()) -> di
         "current_route": "Research",
         "research_selection": values[-4:],
     }
+
+
+def research_selection_state_many(pool_ids: tuple[str, ...], selected: tuple[str, ...] = ()) -> dict[str, Any]:
+    """Carry one or more canonical pools into the bounded Research selection."""
+
+    values = list(dict.fromkeys(str(item) for item in (*selected, *pool_ids) if item))
+    return {"current_route": "Research", "research_selection": values[-4:]}
 
 
 def update_route_state(
@@ -375,10 +401,12 @@ def render_brand() -> None:
     )
 
 
-def render_navigation(*, current_route: str, signed_in: bool, is_pro: bool, is_admin: bool) -> str:
+def render_navigation(
+    *, current_route: str, signed_in: bool, capabilities: ProductCapabilities, is_admin: bool
+) -> str:
     selected = current_route
     previous_section = ""
-    for item in visible_navigation(signed_in=signed_in, is_pro=is_pro, is_admin=is_admin):
+    for item in visible_navigation(signed_in=signed_in, capabilities=capabilities, is_admin=is_admin):
         if item.section != previous_section:
             st.markdown(f'<div class="ff-nav-section">{item.section}</div>', unsafe_allow_html=True)
             previous_section = item.section

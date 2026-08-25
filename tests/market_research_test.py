@@ -8,11 +8,14 @@ import pytest
 
 from market_research import (
     COMPARISON_LIMIT,
+    COMPARISON_SCENARIOS,
     DEFAULT_FILTERS,
+    ComparisonWeights,
     DataStatus,
     active_filters,
     apply_discovery_filters,
     comparison_rows,
+    comparison_analysis,
     data_status_from_attrs,
     filter_query,
     freshness,
@@ -20,6 +23,7 @@ from market_research import (
     pool_universe,
     remove_filter,
     risk_explanation,
+    strategy_match_explanation,
     track_research_event,
     update_comparison,
     yield_explanation,
@@ -199,11 +203,72 @@ def test_comparison_limit_removal_and_missing_values() -> None:
     assert compared[1]["TVL (USD)"] is None
 
 
+def test_selected_set_model_is_deterministic_explainable_and_preserves_identity() -> None:
+    frame = pools()
+    frame["signal_strength"] = [2.0, 10.0, float("nan")]
+    balanced = comparison_analysis(frame, ("a", "b", "c"), COMPARISON_SCENARIOS["Balanced"])
+    repeated = comparison_analysis(frame, ("a", "b", "c"), COMPARISON_SCENARIOS["Balanced"])
+
+    assert balanced == repeated
+    assert [row["pool"] for row in balanced["rows"]] == ["b", "a", "c"]
+    assert balanced["winner"]["pool"] == "b"
+    assert balanced["apy_spread"] == 4.0
+    assert balanced["protocols"] == ["Aave", "Morpho", "Unknown"]
+    assert balanced["networks"] == ["Arbitrum", "Base"]
+    assert "strongest selected-set contribution" in balanced["winner"]["Reason"]
+    assert next(row for row in balanced["rows"] if row["pool"] == "c")["Coverage %"] < 100
+
+
+def test_weighting_presets_change_rank_predictably_without_changing_inputs() -> None:
+    frame = pools().iloc[:2].copy()
+    frame["signal_strength"] = [2.0, 10.0]
+    yield_seeking = comparison_analysis(frame, ("a", "b"), COMPARISON_SCENARIOS["Yield Seeking"])
+    conservative = comparison_analysis(frame, ("a", "b"), COMPARISON_SCENARIOS["Conservative"])
+
+    assert yield_seeking["winner"]["pool"] == "a"
+    assert conservative["winner"]["pool"] == "b"
+    assert COMPARISON_SCENARIOS == {
+        "Yield Seeking": ComparisonWeights(55, 20, 15, 10),
+        "Balanced": ComparisonWeights(35, 25, 25, 15),
+        "Conservative": ComparisonWeights(15, 35, 40, 10),
+    }
+
+
+def test_comparison_model_degrades_safely_when_every_weight_or_value_is_missing() -> None:
+    frame = pools().iloc[[2]].copy()
+    analysis = comparison_analysis(frame, ("c",), ComparisonWeights(0, 0, 0, 0))
+
+    assert analysis["winner"] is None
+    assert analysis["rows"][0]["Score"] is None
+    assert analysis["rows"][0]["Coverage %"] == 0.0
+    assert analysis["rows"][0]["Reason"] == "No comparable weighted dimensions are available."
+
+
+def test_strategy_explanation_reports_existing_constraints_without_new_score() -> None:
+    explanation = strategy_match_explanation(
+        pools().iloc[0],
+        stable_only=True,
+        min_apy=5.0,
+        min_tvl=10_000_000,
+        max_risk=40,
+        signal_preference="Any",
+    )
+
+    assert "APY 8.00% ≥ 5.00%" in explanation
+    assert "TVL $20,000,000 ≥ $10,000,000" in explanation
+    assert "risk 30 ≤ 40" in explanation
+    assert "stablecoin-labelled" in explanation
+
+
 def test_yield_spreads_are_explicit_and_do_not_fill_missing_values() -> None:
     spreads = yield_spreads(pools())
     assert len(spreads) == 1
     assert spreads.iloc[0]["Asset"] == "USDC"
     assert spreads.iloc[0]["APY difference"] == 4.0
+    assert spreads.iloc[0]["Higher pool ID"] == "a"
+    assert spreads.iloc[0]["Lower pool ID"] == "b"
+    assert spreads.iloc[0]["Higher TVL"] == 20_000_000.0
+    assert spreads.iloc[0]["Lower risk"] == 25.0
     assert spreads.iloc[0]["Execution costs"] == "Not modeled"
 
 

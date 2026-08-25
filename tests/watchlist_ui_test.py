@@ -65,7 +65,7 @@ def _authenticated_app(
     page: str,
     market_pool_id: str = "canonical-pool-1",
     market_rows: list[dict[str, object]] | None = None,
-    is_pro: bool = False,
+    is_pro: bool = True,
 ) -> AppTest:
     import auth_service
     import saved_pools
@@ -95,6 +95,58 @@ def _authenticated_app(
 
 def _button(app: AppTest, label: str):
     return next(button for button in app.button if button.label == label)
+
+
+def test_current_free_capabilities_keep_discovery_useful_without_invalid_actions(monkeypatch) -> None:
+    app = _authenticated_app(monkeypatch, FakeSavedPoolsClient(), page="Discover", is_pro=False)
+
+    labels = [button.label for button in app.button]
+    assert "Watchlist" not in labels
+    assert "Alerts" not in labels
+    assert "Pro tools" not in labels
+    assert _button(app, "View details").disabled is False
+    assert _button(app, "Watchlists · Core").disabled is True
+    assert _button(app, "Alerts · Plus").disabled is True
+    assert _button(app, "Research · Plus").disabled is True
+
+
+def test_home_routes_primary_actions_and_opens_canonical_pool_first(monkeypatch) -> None:
+    app = _authenticated_app(monkeypatch, FakeSavedPoolsClient(), page="Home", is_pro=True)
+    home_tables = [element.value for element in app.dataframe if "Network" in element.value.columns]
+
+    assert home_tables
+    assert home_tables[-1].columns.tolist()[:4] == ["Pool", "Asset", "Network", "Protocol"]
+    parsed = urlparse(home_tables[-1].iloc[0]["Pool"])
+    assert parse_qs(parsed.query)["return_route"] == ["Home"]
+    _button(app, "Browse All Pools").click().run()
+    assert app.query_params["page"] == ["Discover"]
+    assert next(radio for radio in app.radio if radio.label == "Discover view").value == "All Pools"
+
+
+def test_expired_pool_detail_session_recovers_without_hiding_public_data(monkeypatch) -> None:
+    import auth_service
+
+    app = _authenticated_app(monkeypatch, FakeSavedPoolsClient(), page="Pool Detail", is_pro=True)
+    app.query_params["page"] = "Pool Detail"
+    app.query_params["pool"] = "canonical-pool-1"
+    app.run()
+    assert any({"Metric", "Value"} <= set(table.value.columns) for table in app.dataframe)
+
+    monkeypatch.setattr(auth_service, "validate_session", lambda: False)
+    app.run()
+
+    assert not app.exception
+    assert any("Session expired" in markdown.value for markdown in app.markdown)
+    assert _button(app, "Sign In Again").disabled is False
+    assert _button(app, "Continue to Home").disabled is False
+    assert any({"Metric", "Value"} <= set(table.value.columns) for table in app.dataframe)
+    assert _button(app, "Sign in to save").disabled is True
+    assert _button(app, "Sign in for alerts").disabled is True
+    assert set(app.query_params) == {"page", "pool"}
+
+    _button(app, "Continue to Home").click().run()
+    assert app.query_params["page"] == ["Home"]
+    assert "pool" not in app.query_params
 
 
 def test_discover_save_is_durable_idempotent_and_restored_in_a_later_session(monkeypatch) -> None:
@@ -173,9 +225,9 @@ def test_strategy_results_actions_use_canonical_watchlist_and_pool_detail_primit
     _button(app, "Save to Watchlist").click().run()
     assert client.save_calls == ["canonical-pool-1"]
     assert tuple(client.rows) == ("canonical-pool-1",)
-    assert any(button.label == "Research" for button in app.button)
+    assert any(button.label == "Compare / Research" for button in app.button)
 
-    _button(app, "Open Pool Detail").click().run()
+    _button(app, "Open Pool").click().run()
     assert app.query_params["page"] == ["Pool Detail"]
     assert app.query_params["pool"] == ["canonical-pool-1"]
     assert any(button.label == "← Back to Strategy Results" for button in app.button)
@@ -196,6 +248,48 @@ def test_pro_tools_renders_only_pro_workflows_and_preserves_both_tools(monkeypat
     assert not app.exception
     assert any("Yield spreads" in markdown.value for markdown in app.markdown)
     assert not any("Discovery guidance" in markdown.value for markdown in app.markdown)
+
+
+def test_yield_spread_pair_carries_both_canonical_pools_into_research(monkeypatch) -> None:
+    rows = [
+        {
+            "pool": "higher-pool",
+            "chain": "Ethereum",
+            "project": "aave-v3",
+            "symbol": "USDC",
+            "apy": 10.0,
+            "apyBase": 10.0,
+            "apyReward": 0.0,
+            "tvlUsd": 20_000_000,
+            "stablecoin": True,
+        },
+        {
+            "pool": "lower-pool",
+            "chain": "Base",
+            "project": "morpho",
+            "symbol": "USDC",
+            "apy": 4.0,
+            "apyBase": 4.0,
+            "apyReward": 0.0,
+            "tvlUsd": 40_000_000,
+            "stablecoin": True,
+        },
+    ]
+    app = _authenticated_app(
+        monkeypatch,
+        FakeSavedPoolsClient(),
+        page="Pro Tools",
+        is_pro=True,
+        market_rows=rows,
+    )
+    next(radio for radio in app.radio if radio.label == "Pro tools view").set_value("Yield Spreads").run()
+
+    assert any(selectbox.label == "Yield spread pair" for selectbox in app.selectbox)
+    assert any(button.label == "Create Alert" for button in app.button)
+    _button(app, "Compare pair in Research").click().run()
+    assert app.query_params["page"] == ["Research"]
+    selection = next(multiselect for multiselect in app.multiselect if multiselect.label == "Selected pools")
+    assert set(selection.value) == {"higher-pool", "lower-pool"}
 
 
 def test_strategy_result_carries_canonical_pool_into_research(monkeypatch) -> None:
@@ -340,6 +434,14 @@ def test_research_is_selected_pool_analysis_not_discover_repeated(monkeypatch) -
     selected = next(multiselect for multiselect in app.multiselect if multiselect.label == "Selected pools")
     selected.set_value(["pool-a", "pool-b"]).run()
     assert not app.exception
+    _button(app, "Yield Seeking").click().run()
+    weights = {slider.label: slider.value for slider in app.slider if "weight" in slider.label.lower()}
+    assert weights == {
+        "Yield weight": 55,
+        "Liquidity weight": 20,
+        "Risk weight": 15,
+        "Signal / momentum weight": 10,
+    }
     assert any("Observed current metrics" in markdown.value for markdown in app.markdown)
     assert any("Calculated context" in markdown.value for markdown in app.markdown)
     research_tables = [element.value for element in app.dataframe if "Strategy" in element.value.columns]

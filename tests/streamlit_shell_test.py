@@ -12,7 +12,8 @@ def test_signed_out_shell_navigation_and_pool_detail_round_trip() -> None:
     assert not app.exception
 
     labels = [button.label for button in app.button]
-    assert labels[:6] == ["Home", "Discover", "Research", "Signals", "Methodology & data", "Pricing"]
+    expected_navigation = ["Home", "Discover", "Research", "Signals", "Methodology & data", "Pricing"]
+    assert [label for label in labels if label in expected_navigation] == expected_navigation
     assert "Admin" not in labels
     assert "Watchlist" not in labels
 
@@ -46,3 +47,16 @@ def test_direct_alerts_route_requires_authentication() -> None:
     app.run()
     assert not app.exception
     assert any("Authentication required" in markdown.value for markdown in app.markdown)
+
+
+def test_pricing_truthfully_previews_four_tiers_without_new_purchase_paths() -> None:
+    app = AppTest.from_file("app.py", default_timeout=60)
+    app.query_params["page"] = "Pricing"
+    app.run()
+
+    assert not app.exception
+    rendered = "\n".join(markdown.value for markdown in app.markdown)
+    for value in ("Free", "$0", "Core", "$9.99/month", "Plus", "$14.99/month", "Pro", "$24.99/month"):
+        assert value in rendered
+    assert "not yet purchasable" in rendered
+    assert "existing $20 Pro checkout" in rendered

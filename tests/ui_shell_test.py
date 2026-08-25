@@ -4,6 +4,8 @@ from urllib.parse import parse_qs, urlparse
 
 import pytest
 
+from product_capabilities import capabilities_from_current_entitlement
+
 from ui_shell import (
     AUTHENTICATED_NAV,
     PUBLIC_NAV,
@@ -15,6 +17,7 @@ from ui_shell import (
     pool_detail_state,
     pool_detail_url,
     research_selection_state,
+    research_selection_state_many,
     route_access,
     update_route_state,
     visible_navigation,
@@ -22,8 +25,16 @@ from ui_shell import (
 )
 
 
+FREE_CAPABILITIES = capabilities_from_current_entitlement(is_pro=False)
+PRO_CAPABILITIES = capabilities_from_current_entitlement(is_pro=True)
+
+
 def _routes(*, signed_in: bool, is_pro: bool = False, is_admin: bool = False) -> list[str]:
-    return [item.route for item in visible_navigation(signed_in=signed_in, is_pro=is_pro, is_admin=is_admin)]
+    capabilities = PRO_CAPABILITIES if is_pro else FREE_CAPABILITIES
+    return [
+        item.route
+        for item in visible_navigation(signed_in=signed_in, capabilities=capabilities, is_admin=is_admin)
+    ]
 
 
 def test_signed_out_navigation_contains_only_public_routes() -> None:
@@ -33,14 +44,13 @@ def test_signed_out_navigation_contains_only_public_routes() -> None:
 
 
 def test_authenticated_navigation_adds_workspace_without_admin() -> None:
-    routes = _routes(signed_in=True)
+    routes = _routes(signed_in=True, is_pro=True)
     assert routes == [
         "Home",
         "Discover",
         "Research",
         "Watchlists",
         "Alerts",
-        "Activity & Digests",
         "Signals",
         "Pro Tools",
         "Methodology & Data Status",
@@ -57,17 +67,36 @@ def test_verified_admin_is_the_only_navigation_model_that_exposes_admin() -> Non
 
 
 def test_admin_and_authenticated_routes_deny_direct_unauthorized_access() -> None:
-    assert route_access("Admin", signed_in=True, is_admin=False) == (False, "unauthorized")
-    assert route_access("Admin", signed_in=False, is_admin=False) == (False, "unauthorized")
-    assert route_access("Watchlists", signed_in=False, is_admin=False) == (False, "authentication_required")
-    assert route_access("Admin", signed_in=True, is_admin=True) == (True, None)
+    assert route_access("Admin", signed_in=True, capabilities=PRO_CAPABILITIES, is_admin=False) == (
+        False,
+        "unauthorized",
+    )
+    assert route_access("Admin", signed_in=False, capabilities=FREE_CAPABILITIES, is_admin=False) == (
+        False,
+        "unauthorized",
+    )
+    assert route_access("Watchlists", signed_in=False, capabilities=FREE_CAPABILITIES, is_admin=False) == (
+        False,
+        "authentication_required",
+    )
+    assert route_access("Admin", signed_in=True, capabilities=PRO_CAPABILITIES, is_admin=True) == (True, None)
 
 
-def test_pro_navigation_marks_locked_context_without_hiding_it_from_free_accounts() -> None:
-    free_items = visible_navigation(signed_in=True, is_pro=False, is_admin=False)
-    pro_items = visible_navigation(signed_in=True, is_pro=True, is_admin=False)
-    assert next(item.label for item in free_items if item.route == "Pro Tools").endswith("· Pro")
-    assert next(item.label for item in pro_items if item.route == "Pro Tools") == "Pro tools"
+def test_navigation_uses_capabilities_and_removes_activity_from_primary_beta_ia() -> None:
+    free_routes = _routes(signed_in=True, is_pro=False)
+    pro_routes = _routes(signed_in=True, is_pro=True)
+
+    assert "Watchlists" not in free_routes
+    assert "Alerts" not in free_routes
+    assert "Pro Tools" not in free_routes
+    assert "Watchlists" in pro_routes
+    assert "Alerts" in pro_routes
+    assert "Pro Tools" in pro_routes
+    assert "Activity & Digests" not in free_routes
+    assert "Activity & Digests" not in pro_routes
+    assert route_access(
+        "Watchlists", signed_in=True, capabilities=FREE_CAPABILITIES, is_admin=False
+    ) == (False, "capability_required")
 
 
 def test_primary_navigation_routes_are_canonical_and_unknown_routes_fail_safe() -> None:
@@ -148,6 +177,11 @@ def test_pool_context_can_enter_bounded_research_without_url_session_state() -> 
     state = research_selection_state("pool-e", ("pool-a", "pool-b", "pool-c", "pool-d"))
     assert state["research_selection"] == ["pool-b", "pool-c", "pool-d", "pool-e"]
     assert all(key not in state for key in ("access_token", "refresh_token", "session"))
+    pair = research_selection_state_many(("pool-c", "pool-d"), ("pool-a", "pool-b"))
+    assert pair == {
+        "current_route": "Research",
+        "research_selection": ["pool-a", "pool-b", "pool-c", "pool-d"],
+    }
 
 
 def test_renamed_and_reorganized_pages_map_to_the_new_sitemap() -> None:
@@ -167,16 +201,16 @@ def test_renamed_and_reorganized_pages_map_to_the_new_sitemap() -> None:
 
 
 def test_account_control_model_is_compact_and_uses_server_derived_roles() -> None:
-    assert account_control_model(None, is_pro=False, is_admin=False) == {
+    assert account_control_model(None, capabilities=FREE_CAPABILITIES, is_admin=False) == {
         "label": "Sign in",
         "email": "Public browsing",
         "plan": "Free",
         "status": "signed_out",
     }
     user = {"email": "member@example.com"}
-    assert account_control_model(user, is_pro=False, is_admin=False)["plan"] == "Free"
-    assert account_control_model(user, is_pro=True, is_admin=False)["plan"] == "Pro"
-    assert account_control_model(user, is_pro=True, is_admin=True)["plan"] == "Admin"
+    assert account_control_model(user, capabilities=FREE_CAPABILITIES, is_admin=False)["plan"] == "Free"
+    assert account_control_model(user, capabilities=PRO_CAPABILITIES, is_admin=False)["plan"] == "Pro"
+    assert account_control_model(user, capabilities=PRO_CAPABILITIES, is_admin=True)["plan"] == "Admin"
 
 
 def test_discover_filter_controls_do_not_render_as_a_second_pro_tools_workflow() -> None:
