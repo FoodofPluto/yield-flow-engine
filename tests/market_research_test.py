@@ -197,7 +197,7 @@ def test_data_status_summary_counts_current_coverage_without_zero_filling() -> N
     assert coverage["APY"] == (2, 3, pytest.approx(66.6666666667))
     assert coverage["TVL"] == (2, 3, pytest.approx(66.6666666667))
     assert coverage["Modeled risk"] == (3, 3, 100.0)
-    assert coverage["Observed signals"] == (1, 3, pytest.approx(33.3333333333))
+    assert coverage["Observed signal evidence"] == (1, 3, pytest.approx(33.3333333333))
     assert coverage["External pool links"] == (2, 3, pytest.approx(66.6666666667))
 
 

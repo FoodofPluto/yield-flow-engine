@@ -51,6 +51,12 @@ MAX_FILTER_SELECTIONS = 50
 MAX_FILTER_TVL = 500_000_000.0
 MAX_FILTER_APY = 250.0
 
+# Canonical signal metric labels intentionally distinguish evidence coverage,
+# evaluated universe size, and non-steady classifications.
+OBSERVED_SIGNAL_EVIDENCE_LABEL = "Observed signal evidence"
+POOLS_EVALUATED_LABEL = "Pools evaluated"
+NON_STEADY_CLASSIFICATIONS_LABEL = "Non-steady classifications"
+
 
 @dataclass(frozen=True)
 class ComparisonWeights:
@@ -265,7 +271,7 @@ def market_status_summary(frame: pd.DataFrame) -> MarketStatusSummary:
             CoverageMetric("APY", count_flag("apy_available", "apy"), total),
             CoverageMetric("TVL", count_flag("tvl_available", "tvlUsd"), total),
             CoverageMetric("Modeled risk", count_flag("risk_available", "risk_score"), total),
-            CoverageMetric("Observed signals", count_flag("signal_available"), total),
+            CoverageMetric(OBSERVED_SIGNAL_EVIDENCE_LABEL, count_flag("signal_available"), total),
             CoverageMetric("External pool links", count_text("pool_url"), total),
         ),
     )

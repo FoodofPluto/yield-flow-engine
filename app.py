@@ -40,6 +40,9 @@ from market_research import (
     COMPARISON_SCENARIOS,
     DEFAULT_FILTERS,
     FILTER_QUERY_KEYS,
+    NON_STEADY_CLASSIFICATIONS_LABEL,
+    OBSERVED_SIGNAL_EVIDENCE_LABEL,
+    POOLS_EVALUATED_LABEL,
     ComparisonWeights,
     DiscoveryFilters,
     active_filters,
@@ -1335,7 +1338,7 @@ def render_home_page(
 ) -> None:
     indexed_count = len(pool_universe(market_df))
     opportunity_count = len(opportunity_df)
-    active_signal_count = int(opportunity_df["signal"].ne("Steady").sum()) if opportunity_count else 0
+    non_steady_classification_count = int(opportunity_df["signal"].ne("Steady").sum()) if opportunity_count else 0
 
     st.markdown(
         """
@@ -1384,7 +1387,11 @@ def render_home_page(
     with stat_columns[1]:
         stat_card("Current opportunities", f"{opportunity_count:,}", "Pools matching the current opportunity filters")
     with stat_columns[2]:
-        stat_card("Active signals", f"{active_signal_count:,}", "Visible pools with a non-steady signal state")
+        stat_card(
+            NON_STEADY_CLASSIFICATIONS_LABEL,
+            f"{non_steady_classification_count:,}",
+            "Visible opportunity pools whose current rules-based classification is not Steady",
+        )
     with stat_columns[3]:
         if watch_enabled:
             stat_card("Watched pools", f"{watchlist_count:,}", "Durable saved pools for this account")
@@ -2593,18 +2600,22 @@ elif content_page == "Signals":
         <section class="hero-shell"><div class="hero-inner">
             <div class="eyebrow">FuruFlow Intelligence</div>
             <div class="hero-title">Signals Engine</div>
-            <div class="hero-subtitle">Detected APY and liquidity movement across the current sampled pool set, with context for further investigation.</div>
+            <div class="hero-subtitle">Rules-based APY and liquidity classification across the current sampled pool set, with context for further investigation.</div>
         </div></section>
         """,
         unsafe_allow_html=True,
     )
     st.markdown("<div class='panel'>", unsafe_allow_html=True)
-    section_header("Signals", "Detected movement with context", "Signal labels summarize recent APY and TVL movement, volatility context, timing, and the affected pool. They are evidence to investigate, not a recommendation.")
+    section_header("Signals", "Movement classifications with context", "Signal labels summarize recent APY and TVL movement, volatility context, timing, and the affected pool. They are evidence to investigate, not a recommendation.")
     st.markdown("<div class='note'>Read APY movement alongside TVL, incentives, protocol and token exposure, and freshness. A larger movement is not automatically a better or safer opportunity.</div>", unsafe_allow_html=True)
     metric_source = full_filtered if not full_filtered.empty else filtered
     metric_cols = st.columns(3)
     with metric_cols[0]:
-        stat_card("Active signals", f"{len(metric_source):,}", "Pools currently visible in the signal universe")
+        stat_card(
+            POOLS_EVALUATED_LABEL,
+            f"{len(metric_source):,}",
+            "Pools in the current visible signal-analysis universe, including Steady classifications",
+        )
     with metric_cols[1]:
         high_strength = int((metric_source["signal_strength"] >= 12).sum()) if not metric_source.empty else 0
         stat_card("High-strength events", f"{high_strength:,}", "Larger combined movement and volatility readings")
@@ -3384,6 +3395,11 @@ elif content_page == "Methodology & Data Status":
         st.markdown(
             "For a bounded sample of current pools, FuruFlow compares recent chart observations and preserves its existing labels: APY spike, Whale inflow, Emerging pool, Farm rotation, or Steady. "
             "Signal strength uses the existing APY movement, TVL movement, and APY-volatility calculation. Durable signal history and Activity/Digests are separate from the current market snapshot."
+        )
+        st.markdown(
+            f"**{OBSERVED_SIGNAL_EVIDENCE_LABEL}** is field coverage: pools with a successfully retrieved signal-history snapshot out of all pools in the normalized provider response. "
+            f"**{POOLS_EVALUATED_LABEL}** is the current visible signal-analysis universe and includes Steady classifications. "
+            f"**{NON_STEADY_CLASSIFICATIONS_LABEL}** counts only visible Home opportunity pools whose current rules-based label is not Steady."
         )
         st.markdown(
             "A signal describes detected movement in available observations. It does not identify causation, predict persistence, establish safety, or recommend a transaction."
