@@ -123,9 +123,20 @@ def test_alert_state_is_textual_and_does_not_render_a_raw_chat_identifier() -> N
 
 
 def test_signal_and_strategy_tables_put_pool_navigation_first() -> None:
-    assert OPPORTUNITIES_TABLE_COLUMNS[0] == ("pool_detail_url", "Pool")
-    assert SIGNAL_ENGINE_TABLE_COLUMNS[0] == ("pool_detail_url", "Pool")
-    assert STRATEGY_RESULTS_TABLE_COLUMNS[0] == ("pool_detail_url", "Pool")
+    assert OPPORTUNITIES_TABLE_COLUMNS[0] == ("pool", "Pool")
+    assert SIGNAL_ENGINE_TABLE_COLUMNS[0] == ("pool", "Pool")
+    assert STRATEGY_RESULTS_TABLE_COLUMNS[0] == ("pool", "Pool")
+
+
+def test_session_recovery_controls_have_scoped_readable_states() -> None:
+    recovery_css = UI_THEME_CSS[UI_THEME_CSS.index(".st-key-session_recovery_actions") :]
+
+    assert 'button[data-testid="stBaseButton-primary"]' in recovery_css
+    assert "color: #07111f !important" in recovery_css
+    assert "background: linear-gradient(180deg, #9beeff, #6eddff) !important" in recovery_css
+    for state in (":hover", ":focus-visible", ":active", ":disabled"):
+        assert state in recovery_css
+    assert "session_recovery_actions" in (ROOT / "app.py").read_text(encoding="utf-8")
 
 
 def test_discover_controls_are_not_duplicated_on_pro_tools() -> None:

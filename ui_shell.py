@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import html
 from dataclasses import dataclass
 from html import escape
 from typing import Any, Mapping, MutableMapping
@@ -78,7 +79,7 @@ DISCOVER_VIEWS = ("Opportunities", "All Pools")
 RESEARCH_VIEWS = ("Comparison",)
 PRO_TOOL_VIEWS = ("Strategy Builder", "Yield Spreads")
 OPPORTUNITIES_TABLE_COLUMNS = (
-    ("pool_detail_url", "Pool"),
+    ("pool", "Pool"),
     ("symbol", "Asset"),
     ("chain", "Network"),
     ("project", "Protocol"),
@@ -91,7 +92,7 @@ OPPORTUNITIES_TABLE_COLUMNS = (
     ("signal", "Signal"),
 )
 SIGNAL_ENGINE_TABLE_COLUMNS = (
-    ("pool_detail_url", "Pool"),
+    ("pool", "Pool"),
     ("project", "Protocol"),
     ("chain", "Chain"),
     ("symbol", "Asset"),
@@ -102,7 +103,7 @@ SIGNAL_ENGINE_TABLE_COLUMNS = (
     ("apy_volatility", "APY volatility"),
 )
 STRATEGY_RESULTS_TABLE_COLUMNS = (
-    ("pool_detail_url", "Pool"),
+    ("pool", "Pool"),
     ("project", "Protocol"),
     ("chain", "Chain"),
     ("symbol", "Asset"),
@@ -129,6 +130,7 @@ def pool_detail_url(
     public_origin: str,
     return_route: str,
     return_view: str,
+    discover_state: Mapping[str, str] | None = None,
 ) -> str:
     """Build a canonical in-app Pool Detail URL with allowlisted return context."""
 
@@ -138,15 +140,44 @@ def pool_detail_url(
     origin = public_origin.strip().rstrip("/")
     if not origin:
         raise ValueError("Pool Detail public origin is required.")
-    query = urlencode(
-        {
-            "page": "Pool Detail",
-            "pool": str(pool_id),
-            "return_route": return_route,
-            "return_view": return_view,
-        }
-    )
+    query_values = {
+        "page": "Pool Detail",
+        "pool": str(pool_id),
+        "return_route": return_route,
+        "return_view": return_view,
+    }
+    if return_route == "Discover" and discover_state:
+        from market_research import FILTER_QUERY_KEYS
+
+        query_values.update(
+            (key, str(value)) for key, value in discover_state.items() if key in FILTER_QUERY_KEYS and value not in {None, ""}
+        )
+    query = urlencode(query_values)
     return f"{origin}/?{query}"
+
+
+def pool_detail_anchor(
+    pool_id: str,
+    *,
+    public_origin: str,
+    return_route: str,
+    return_view: str,
+    label: str = "Open Pool",
+    discover_state: Mapping[str, str] | None = None,
+) -> str:
+    """Render canonical internal navigation explicitly in the current tab."""
+
+    url = pool_detail_url(
+        pool_id,
+        public_origin=public_origin,
+        return_route=return_route,
+        return_view=return_view,
+        discover_state=discover_state,
+    )
+    return (
+        f'<a class="ff-pool-detail-link" href="{html.escape(url, quote=True)}" '
+        f'target="_self" data-ff-route="pool-detail">{html.escape(label)}</a>'
+    )
 
 
 def pool_detail_query_context(params: Mapping[str, Any]) -> dict[str, str]:

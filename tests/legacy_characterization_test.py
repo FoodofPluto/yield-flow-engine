@@ -18,18 +18,22 @@ def test_linkdebug_is_a_reduced_app_copy_with_known_canonical_shell_features_mis
 
     assert app_functions - linkdebug_functions == {
         "_alert_form",
+        "_internal_table_value",
         "build_signal_card_assets",
+        "clear_discover_query_state",
         "fetch_enriched_pools",
         "go_to_route",
         "open_research",
         "open_research_many",
         "open_pool_detail",
         "render_alerts_page",
+        "render_internal_pool_table",
         "return_from_pool_detail",
         "start_alert_creation",
     }
     assert linkdebug_functions - app_functions == {
         "load_watchlist",
+        "make_download_df",
         "page_selectbox",
         "render_protocol_dashboard",
         "save_watchlist",

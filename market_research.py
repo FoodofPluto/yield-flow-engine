@@ -9,6 +9,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, replace
 from datetime import datetime, timezone
+import math
 from statistics import median
 from typing import Any, Callable, Iterable, Mapping
 
@@ -28,6 +29,27 @@ SORT_OPTIONS = (
     "Highest 24h volume",
     "Largest signal move",
 )
+
+FILTER_QUERY_KEYS = frozenset(
+    {"q", "chains", "protocols", "strategies", "signals", "stable", "min_tvl", "max_risk", "min_apy", "sort"}
+)
+SENSITIVE_QUERY_KEYS = frozenset(
+    {
+        "access_token",
+        "refresh_token",
+        "jwt",
+        "session_ticket",
+        "browser_session_secret",
+        "telegram_chat_id",
+        "stripe_secret",
+        "webhook_secret",
+        "database_url",
+    }
+)
+MAX_FILTER_SEARCH_LENGTH = 200
+MAX_FILTER_SELECTIONS = 50
+MAX_FILTER_TVL = 500_000_000.0
+MAX_FILTER_APY = 250.0
 
 
 @dataclass(frozen=True)
@@ -79,6 +101,26 @@ class DataStatus:
     degraded: bool = False
     detail: str = ""
     cache_seconds: int = MARKET_CACHE_SECONDS
+
+
+@dataclass(frozen=True)
+class CoverageMetric:
+    label: str
+    available: int
+    total: int
+
+    @property
+    def percent(self) -> float | None:
+        return (self.available / self.total * 100.0) if self.total else None
+
+
+@dataclass(frozen=True)
+class MarketStatusSummary:
+    pools: int
+    networks: int
+    protocols: int
+    assets: int
+    coverage: tuple[CoverageMetric, ...]
 
 
 def _utc(value: datetime | str | pd.Timestamp | None) -> datetime | None:
@@ -146,19 +188,30 @@ def freshness(status: DataStatus, *, now: datetime | None = None) -> dict[str, s
     return {"label": label, "kind": kind, "age": age}
 
 
-def parse_filter_query(params: Mapping[str, Any]) -> DiscoveryFilters:
+def parse_filter_query(
+    params: Mapping[str, Any],
+    *,
+    allowed_values: Mapping[str, Iterable[str]] | None = None,
+) -> DiscoveryFilters:
+    """Decode only the allowlisted, bounded Discover presentation state."""
+
     def text(name: str) -> str:
         value = params.get(name, "")
         if isinstance(value, list):
             value = value[0] if value else ""
-        return str(value or "").strip()
+        return str(value or "").strip()[:MAX_FILTER_SEARCH_LENGTH]
 
     def many(name: str) -> tuple[str, ...]:
-        return tuple(sorted({part.strip() for part in text(name).split(",") if part.strip()}))
+        values = {part.strip() for part in text(name).split(",") if part.strip()}
+        if allowed_values is not None and name in allowed_values:
+            allowed = {str(value) for value in allowed_values[name]}
+            values &= allowed
+        return tuple(sorted(values))[:MAX_FILTER_SELECTIONS]
 
     def number(name: str, default: float) -> float:
         try:
-            return float(text(name)) if text(name) else default
+            value = float(text(name)) if text(name) else default
+            return value if math.isfinite(value) else default
         except ValueError:
             return default
 
@@ -172,10 +225,49 @@ def parse_filter_query(params: Mapping[str, Any]) -> DiscoveryFilters:
         strategies=many("strategies"),
         signals=many("signals"),
         stablecoin_only=text("stable").lower() in {"1", "true", "yes"},
-        min_tvl=max(0.0, number("min_tvl", DEFAULT_FILTERS.min_tvl)),
+        min_tvl=max(0.0, min(MAX_FILTER_TVL, number("min_tvl", DEFAULT_FILTERS.min_tvl))),
         max_risk=max(1, min(100, int(number("max_risk", DEFAULT_FILTERS.max_risk)))),
-        min_apy=max(0.0, number("min_apy", DEFAULT_FILTERS.min_apy)),
+        min_apy=max(0.0, min(MAX_FILTER_APY, number("min_apy", DEFAULT_FILTERS.min_apy))),
         sort_by=sort_by,
+    )
+
+
+def sensitive_query_keys(params: Mapping[str, Any]) -> tuple[str, ...]:
+    """Identify known credential/session fields so Discover never persists them."""
+
+    return tuple(key for key in params if str(key).casefold() in SENSITIVE_QUERY_KEYS)
+
+
+def market_status_summary(frame: pd.DataFrame) -> MarketStatusSummary:
+    """Derive current coverage counts without fabricating unavailable values."""
+
+    total = len(frame)
+
+    def count_flag(flag: str, value: str | None = None) -> int:
+        if flag in frame:
+            return int(frame[flag].fillna(False).astype(bool).sum())
+        if value and value in frame:
+            return int(frame[value].notna().sum())
+        return 0
+
+    def count_text(column: str) -> int:
+        if column not in frame:
+            return 0
+        values = frame[column].fillna("").astype(str).str.strip()
+        return int(values.ne("").sum())
+
+    return MarketStatusSummary(
+        pools=total,
+        networks=int(frame["chain"].dropna().nunique()) if "chain" in frame else 0,
+        protocols=int(frame["project"].dropna().nunique()) if "project" in frame else 0,
+        assets=int(frame["symbol"].dropna().nunique()) if "symbol" in frame else 0,
+        coverage=(
+            CoverageMetric("APY", count_flag("apy_available", "apy"), total),
+            CoverageMetric("TVL", count_flag("tvl_available", "tvlUsd"), total),
+            CoverageMetric("Modeled risk", count_flag("risk_available", "risk_score"), total),
+            CoverageMetric("Observed signals", count_flag("signal_available"), total),
+            CoverageMetric("External pool links", count_text("pool_url"), total),
+        ),
     )
 
 

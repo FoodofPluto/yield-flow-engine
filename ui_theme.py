@@ -258,6 +258,64 @@ UI_THEME_CSS = """
         opacity: .68 !important;
     }
 
+    /* Displaced-session recovery is separate from the account form. Scope its
+       primary and secondary controls so default contrast survives markup changes. */
+    .st-key-session_recovery_actions button[data-testid^="stBaseButton-"] {
+        background: var(--ff-color-surface-control) !important;
+        border: 1px solid var(--ff-color-border-strong) !important;
+        color: var(--ff-color-text) !important;
+        font-weight: 850 !important;
+    }
+    .st-key-session_recovery_actions button[data-testid^="stBaseButton-"] * {
+        background: transparent !important;
+        color: inherit !important;
+    }
+    .st-key-session_recovery_actions button[data-testid="stBaseButton-primary"] {
+        background: linear-gradient(180deg, #9beeff, #6eddff) !important;
+        border-color: #8ee8ff !important;
+        color: #07111f !important;
+    }
+    .st-key-session_recovery_actions button[data-testid^="stBaseButton-"]:hover {
+        filter: brightness(1.08);
+        border-color: var(--ff-color-interactive-hover) !important;
+    }
+    .st-key-session_recovery_actions button[data-testid^="stBaseButton-"]:focus-visible {
+        outline: 3px solid var(--ff-color-focus) !important;
+        outline-offset: 3px !important;
+    }
+    .st-key-session_recovery_actions button[data-testid^="stBaseButton-"]:active {
+        filter: brightness(.92);
+    }
+    .st-key-session_recovery_actions button[data-testid^="stBaseButton-"]:disabled {
+        background: var(--ff-color-surface-secondary) !important;
+        border-style: dashed !important;
+        color: var(--ff-color-text-muted) !important;
+        opacity: .68 !important;
+    }
+
+    .ff-responsive-table {
+        width: 100%; max-width: 100%; overflow: auto; overscroll-behavior: contain;
+        border: 1px solid var(--ff-color-border); border-radius: var(--ff-radius-sm);
+        background: rgba(6, 16, 29, .5);
+    }
+    .ff-pool-table { width: 100%; min-width: 44rem; border-collapse: collapse; color: var(--ff-color-text); }
+    .ff-pool-table th, .ff-pool-table td {
+        padding: .58rem .68rem; border-bottom: 1px solid var(--ff-color-border);
+        text-align: left; vertical-align: middle; white-space: nowrap;
+    }
+    .ff-pool-table th {
+        position: sticky; top: 0; z-index: 1; background: var(--ff-color-surface-secondary);
+        color: var(--ff-color-text-muted); font-size: var(--ff-font-size-meta); text-transform: uppercase;
+    }
+    .ff-pool-detail-link, .ff-pool-detail-link:visited {
+        display: inline-flex; min-height: 2rem; align-items: center; padding: .3rem .62rem;
+        border: 1px solid rgba(142, 232, 255, .4); border-radius: 999px;
+        background: rgba(142, 232, 255, .11); color: var(--ff-color-interactive-hover) !important;
+        font-weight: 850; text-decoration: none;
+    }
+    .ff-pool-detail-link:hover { background: var(--ff-color-selected); border-color: rgba(142, 232, 255, .7); }
+    .ff-pool-detail-link:active { filter: brightness(.88); }
+
     .ff-card-wrap {
         min-width: 0;
         padding: var(--ff-space-4);

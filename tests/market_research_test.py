@@ -19,10 +19,12 @@ from market_research import (
     data_status_from_attrs,
     filter_query,
     freshness,
+    market_status_summary,
     parse_filter_query,
     pool_universe,
     remove_filter,
     risk_explanation,
+    sensitive_query_keys,
     strategy_match_explanation,
     track_research_event,
     update_comparison,
@@ -126,6 +128,77 @@ def test_filter_defaults_round_trip_and_active_removal_reset() -> None:
     assert remove_filter(selected, "chains:Base").chains == ()
     assert remove_filter(selected, "search").search == ""
     assert remove_filter(selected, "min_apy").min_apy == DEFAULT_FILTERS.min_apy
+
+
+def test_filter_query_persists_complete_state_and_reconstructs_deterministic_results() -> None:
+    selected = replace(
+        DEFAULT_FILTERS,
+        search="USDC",
+        chains=("Arbitrum", "Base"),
+        protocols=("Aave", "Morpho"),
+        strategies=("Lending",),
+        signals=("APY spike", "Steady"),
+        stablecoin_only=True,
+        min_tvl=10_000_000,
+        max_risk=40,
+        min_apy=3.5,
+        sort_by="Largest TVL",
+    )
+    encoded = filter_query(selected)
+    decoded = parse_filter_query(
+        encoded,
+        allowed_values={
+            "chains": ("Arbitrum", "Base"),
+            "protocols": ("Aave", "Morpho"),
+            "strategies": ("Lending",),
+            "signals": ("APY spike", "Steady"),
+        },
+    )
+
+    assert decoded == selected
+    assert apply_discovery_filters(pools(), decoded)["pool"].tolist() == ["b", "a"]
+    assert apply_discovery_filters(pools(), parse_filter_query(encoded))["pool"].tolist() == ["b", "a"]
+
+
+def test_filter_query_rejects_malformed_unknown_out_of_range_and_sensitive_fields() -> None:
+    decoded = parse_filter_query(
+        {
+            "chains": "Unknown,Base",
+            "protocols": "Unknown",
+            "min_tvl": "inf",
+            "min_apy": "999999",
+            "max_risk": "-40",
+            "sort": "DROP TABLE",
+            "access_token": "secret",
+            "refresh_token": "secret",
+            "session_ticket": "secret",
+        },
+        allowed_values={"chains": ("Base",), "protocols": ("Aave", "Morpho")},
+    )
+
+    assert decoded.chains == ("Base",)
+    assert decoded.protocols == ()
+    assert decoded.min_tvl == DEFAULT_FILTERS.min_tvl
+    assert decoded.min_apy == 250.0
+    assert decoded.max_risk == 1
+    assert decoded.sort_by == DEFAULT_FILTERS.sort_by
+    assert "secret" not in repr(decoded)
+    assert sensitive_query_keys({"ACCESS_TOKEN": "secret", "page": "Discover", "min_apy": "8"}) == ("ACCESS_TOKEN",)
+
+
+def test_data_status_summary_counts_current_coverage_without_zero_filling() -> None:
+    frame = pools()
+    frame["signal_available"] = [True, False, False]
+    frame.loc[1, "pool_url"] = ""
+    summary = market_status_summary(frame)
+
+    assert (summary.pools, summary.networks, summary.protocols, summary.assets) == (3, 2, 3, 2)
+    coverage = {metric.label: (metric.available, metric.total, metric.percent) for metric in summary.coverage}
+    assert coverage["APY"] == (2, 3, pytest.approx(66.6666666667))
+    assert coverage["TVL"] == (2, 3, pytest.approx(66.6666666667))
+    assert coverage["Modeled risk"] == (3, 3, 100.0)
+    assert coverage["Observed signals"] == (1, 3, pytest.approx(33.3333333333))
+    assert coverage["External pool links"] == (2, 3, pytest.approx(66.6666666667))
 
 
 def test_discovery_search_filters_sort_and_zero_results_are_deterministic() -> None:

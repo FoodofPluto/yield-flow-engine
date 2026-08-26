@@ -13,6 +13,7 @@ from ui_shell import (
     alert_creation_state,
     canonical_route,
     pool_detail_back_state,
+    pool_detail_anchor,
     pool_detail_query_context,
     pool_detail_state,
     pool_detail_url,
@@ -148,6 +149,23 @@ def test_table_pool_link_uses_canonical_contextual_pool_detail_url() -> None:
         "pool_return_route": "Signals",
         "pool_return_view": "Signals",
     }
+
+
+def test_internal_pool_anchor_is_same_tab_and_preserves_allowlisted_discover_state() -> None:
+    anchor = pool_detail_anchor(
+        "canonical-pool-123",
+        public_origin="https://furuflow-staging.onrender.com",
+        return_route="Discover",
+        return_view="Opportunities",
+        discover_state={"min_apy": "8", "sort": "Largest TVL", "access_token": "secret"},
+    )
+
+    assert 'target="_self"' in anchor
+    assert "_blank" not in anchor
+    assert "canonical-pool-123" in anchor
+    assert "min_apy=8" in anchor
+    assert "sort=Largest+TVL" in anchor
+    assert "access_token" not in anchor
 
 
 def test_pool_detail_url_rejects_unrecognized_return_context() -> None:

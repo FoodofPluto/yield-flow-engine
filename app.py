@@ -34,10 +34,12 @@ from engine.scoring import (
     score_signal_movement,
     score_tvl_stability,
 )
+from csv_export import CSV_UPGRADE_MESSAGE, prepare_csv_export
 from market_research import (
     COMPARISON_LIMIT,
     COMPARISON_SCENARIOS,
     DEFAULT_FILTERS,
+    FILTER_QUERY_KEYS,
     ComparisonWeights,
     DiscoveryFilters,
     active_filters,
@@ -47,10 +49,12 @@ from market_research import (
     data_status_from_attrs,
     filter_query,
     freshness,
+    market_status_summary,
     parse_filter_query,
     pool_universe,
     remove_filter,
     risk_explanation,
+    sensitive_query_keys,
     strategy_match_explanation,
     track_research_event,
     yield_explanation,
@@ -61,7 +65,7 @@ from product_capabilities import (
     Capability,
     PLANNED_TIERS,
     ProductCapabilities,
-    can_export_data,
+    can_export_csv,
     can_use_advanced_sorting,
     can_use_alerts,
     can_use_full_signals,
@@ -89,9 +93,9 @@ from ui_shell import (
     inject_shell_css,
     market_filters_apply,
     pool_detail_back_state,
+    pool_detail_anchor,
     pool_detail_query_context,
     pool_detail_state,
-    pool_detail_url,
     research_selection_state,
     research_selection_state_many,
     render_brand,
@@ -888,18 +892,11 @@ def render_link_table(
         if sort_cols:
             ascending = [False] * len(sort_cols)
             view = view.sort_values(sort_cols, ascending=ascending)
-        view["pool_detail_url"] = view["pool"].map(
-            lambda pool_id: pool_detail_url(
-                str(pool_id),
-                public_origin=os.getenv("FURUFLOW_SESSION_BROKER_PUBLIC_ORIGIN", "http://localhost:8501"),
-                return_route=return_route,
-                return_view=return_view,
-            )
-        )
-        cols = ["pool_detail_url", "project", "chain", "symbol", "apy", "tvlUsd", "risk_score", "signal"]
+        cols = ["pool", "project", "chain", "symbol", "apy", "tvlUsd", "risk_score", "signal"]
         cols = [c for c in cols if c in view.columns]
         link_view = view[cols].head(limit).copy()
-        link_view = link_view.rename(columns={
+        labels = {
+            "pool": "Pool",
             "project": "Protocol",
             "chain": "Chain",
             "symbol": "Asset",
@@ -907,19 +904,14 @@ def render_link_table(
             "tvlUsd": "TVL (USD)",
             "risk_score": "Risk",
             "signal": "Signal",
-            "pool_detail_url": "Pool",
-        })
-        st.dataframe(
+        }
+        render_internal_pool_table(
             link_view,
-            width="stretch",
-            hide_index=True,
-            height=min(120 + 42 * len(link_view), 420),
-            column_config={
-                "APY": st.column_config.NumberColumn(format="%.2f%%"),
-                "TVL (USD)": st.column_config.NumberColumn(format="$%.0f"),
-                "Risk": st.column_config.NumberColumn(format="%.0f"),
-                "Pool": st.column_config.LinkColumn("Pool", display_text="Open"),
-            },
+            tuple((column, labels[column]) for column in cols),
+            return_route=return_route,
+            return_view=return_view,
+            formats={"apy": "percent", "tvlUsd": "money", "risk_score": "number"},
+            max_height=min(120 + 42 * len(link_view), 420),
         )
     st.markdown("</div>", unsafe_allow_html=True)
 
@@ -963,22 +955,71 @@ def compact_table(
     ):
         if available_col in source:
             source.loc[~source[available_col].astype(bool), value_col] = pd.NA
-    source["pool_detail_url"] = source["pool"].map(
-        lambda pool_id: pool_detail_url(
-            str(pool_id),
-            public_origin=os.getenv("FURUFLOW_SESSION_BROKER_PUBLIC_ORIGIN", "http://localhost:8501"),
-            return_route=return_route,
-            return_view=return_view,
-        )
-    )
     table = source[[column for column, _ in OPPORTUNITIES_TABLE_COLUMNS]].copy()
     table.columns = [label for _, label in OPPORTUNITIES_TABLE_COLUMNS]
     return table
 
 
-def make_download_df(df: pd.DataFrame) -> pd.DataFrame:
-    cols = ["project", "chain", "symbol", "strategy_type", "apy", "apyBase", "apyReward", "tvlUsd", "volumeUsd1d", "risk_score", "risk_band", "signal", "audit_score", "protocol_age_score", "tvl_stability_score", "pool_volatility_score", "pool_url"]
-    return df[[c for c in cols if c in df.columns]].copy()
+def _internal_table_value(value: Any, value_format: str) -> str:
+    try:
+        missing = bool(pd.isna(value))
+    except (TypeError, ValueError):
+        missing = value is None
+    if missing:
+        return "Unavailable"
+    if value_format == "percent":
+        return f"{float(value):.2f}%"
+    if value_format == "money":
+        return f"${float(value):,.0f}"
+    if value_format == "number":
+        return f"{float(value):,.1f}"
+    return str(value)
+
+
+def render_internal_pool_table(
+    source_df: pd.DataFrame,
+    columns: tuple[tuple[str, str], ...],
+    *,
+    return_route: str,
+    return_view: str,
+    link_columns: dict[str, str] | None = None,
+    formats: dict[str, str] | None = None,
+    discover_state: dict[str, str] | None = None,
+    max_height: int = 560,
+) -> None:
+    """Render bounded, same-tab internal links without Streamlit LinkColumn."""
+
+    link_columns = link_columns or {"pool": "Open"}
+    formats = formats or {}
+    origin = os.getenv("FURUFLOW_SESSION_BROKER_PUBLIC_ORIGIN", "http://localhost:8501")
+    headers = "".join(f"<th>{html.escape(label)}</th>" for _, label in columns)
+    body: list[str] = []
+    for _, row in source_df.iterrows():
+        cells: list[str] = []
+        for column, _ in columns:
+            if column in link_columns:
+                value = row.get(column)
+                cell = (
+                    "Unavailable"
+                    if value is None or (not isinstance(value, str) and pd.isna(value))
+                    else pool_detail_anchor(
+                        str(value),
+                        public_origin=origin,
+                        return_route=return_route,
+                        return_view=return_view,
+                        label=link_columns[column],
+                        discover_state=discover_state,
+                    )
+                )
+            else:
+                cell = html.escape(_internal_table_value(row.get(column), formats.get(column, "text")))
+            cells.append(f"<td>{cell}</td>")
+        body.append("<tr>" + "".join(cells) + "</tr>")
+    st.markdown(
+        f'<div class="ff-responsive-table" style="max-height:{max_height}px"><table class="ff-pool-table">'
+        f"<thead><tr>{headers}</tr></thead><tbody>{''.join(body)}</tbody></table></div>",
+        unsafe_allow_html=True,
+    )
 
 
 def plotly_theme(fig: go.Figure, height: int = 380) -> go.Figure:
@@ -1045,12 +1086,21 @@ def watch_toggle(
 
 def open_pool_detail(pool_id: str, *, return_route: str = "Discover", return_view: str = "Opportunities") -> None:
     st.session_state.update(pool_detail_state(pool_id, return_route=return_route, return_view=return_view))
+    if return_route != "Discover":
+        clear_discover_query_state()
     st.query_params["page"] = "Pool Detail"
     st.query_params["pool"] = str(pool_id)
 
 
+def clear_discover_query_state() -> None:
+    for key in FILTER_QUERY_KEYS:
+        if key in st.query_params:
+            del st.query_params[key]
+
+
 def start_alert_creation(pool_id: str) -> None:
     st.session_state.update(alert_creation_state(pool_id))
+    clear_discover_query_state()
     st.query_params["page"] = "Alerts"
     if "pool" in st.query_params:
         del st.query_params["pool"]
@@ -1059,6 +1109,7 @@ def start_alert_creation(pool_id: str) -> None:
 def open_research(pool_id: str) -> None:
     selected = tuple(st.session_state.get("research_selection") or ())
     st.session_state.update(research_selection_state(pool_id, selected))
+    clear_discover_query_state()
     st.query_params["page"] = "Research"
     if "pool" in st.query_params:
         del st.query_params["pool"]
@@ -1067,6 +1118,7 @@ def open_research(pool_id: str) -> None:
 def open_research_many(pool_ids: tuple[str, ...]) -> None:
     selected = tuple(st.session_state.get("research_selection") or ())
     st.session_state.update(research_selection_state_many(pool_ids, selected))
+    clear_discover_query_state()
     st.query_params["page"] = "Research"
     if "pool" in st.query_params:
         del st.query_params["pool"]
@@ -1080,6 +1132,8 @@ def go_to_route(route: str, *, view: str | None = None) -> None:
     for key in ("pool", "return_route", "return_view"):
         if key in st.query_params:
             del st.query_params[key]
+    if route != "Discover":
+        clear_discover_query_state()
 
 
 def return_from_pool_detail() -> None:
@@ -1091,8 +1145,11 @@ def return_from_pool_detail() -> None:
     elif route == "Pro Tools":
         st.session_state["pro_tools_view"] = destination["current_view"]
     st.query_params["page"] = route
-    if "pool" in st.query_params:
-        del st.query_params["pool"]
+    for key in ("pool", "return_route", "return_view"):
+        if key in st.query_params:
+            del st.query_params[key]
+    if route != "Discover":
+        clear_discover_query_state()
 
 
 def strategy_builder_filter(df: pd.DataFrame, stable_only: bool, min_apy: float, min_tvl: float, max_risk: int, signal_pref: str) -> pd.DataFrame:
@@ -1340,28 +1397,23 @@ def render_home_page(
         render_status("empty", "No current opportunities", "Adjust Discover filters or browse All Pools; no placeholder rows were substituted.")
     else:
         home_source = opportunity_df.head(8).copy()
-        home_source["pool_detail_url"] = home_source["pool"].map(
-            lambda pool_id: pool_detail_url(
-                str(pool_id),
-                public_origin=os.getenv("FURUFLOW_SESSION_BROKER_PUBLIC_ORIGIN", "http://localhost:8501"),
-                return_route="Home",
-                return_view="Home",
-            )
-        )
-        home_view = home_source[
-            ["pool_detail_url", "symbol", "chain", "project", "apy", "tvlUsd", "risk_band", "signal"]
-        ].copy()
-        home_view.columns = ["Pool", "Asset", "Network", "Protocol", "APY", "TVL (USD)", "Risk", "Signal"]
-        st.dataframe(
-            home_view,
-            width="stretch",
-            hide_index=True,
-            height=320,
-            column_config={
-                "Pool": st.column_config.LinkColumn("Pool", display_text="Open Pool"),
-                "APY": st.column_config.NumberColumn(format="%.2f%%"),
-                "TVL (USD)": st.column_config.NumberColumn(format="$%.0f"),
-            },
+        render_internal_pool_table(
+            home_source,
+            (
+                ("pool", "Pool"),
+                ("symbol", "Asset"),
+                ("chain", "Network"),
+                ("project", "Protocol"),
+                ("apy", "APY"),
+                ("tvlUsd", "TVL (USD)"),
+                ("risk_band", "Risk"),
+                ("signal", "Signal"),
+            ),
+            return_route="Home",
+            return_view="Home",
+            link_columns={"pool": "Open Pool"},
+            formats={"apy": "percent", "tvlUsd": "money"},
+            max_height=320,
         )
     st.markdown("</div>", unsafe_allow_html=True)
 
@@ -1727,6 +1779,9 @@ if st.query_params.get("pool"):
     st.session_state["selected_pool_id"] = str(st.query_params["pool"])
 if page == "Pool Detail":
     st.session_state.update(pool_detail_query_context(st.query_params))
+if page in {"Discover", "Pool Detail"}:
+    for sensitive_key in sensitive_query_keys(st.query_params):
+        del st.query_params[sensitive_key]
 
 with st.sidebar:
     render_brand()
@@ -1777,7 +1832,7 @@ research_modeling_enabled = can_use_research_modeling(capabilities)
 pro_tools_enabled = can_use_pro_tools(capabilities)
 full_signals_enabled = can_use_full_signals(capabilities)
 advanced_sorting_enabled = can_use_advanced_sorting(capabilities)
-export_enabled = can_export_data(capabilities)
+export_enabled = can_export_csv(capabilities)
 
 admin_user = is_admin(db_user)
 guest_mode = not signed_in
@@ -1793,10 +1848,7 @@ with navigation_slot.container():
         is_admin=admin_user,
     )
 if selected_route != page:
-    st.session_state["current_route"] = selected_route
-    st.query_params["page"] = selected_route
-    if "pool" in st.query_params:
-        del st.query_params["pool"]
+    go_to_route(selected_route)
     st.rerun()
 
 account_model = account_control_model(
@@ -1820,13 +1872,14 @@ if session_expired:
         "Session expired",
         "Your authenticated session ended. Public market data remains available; account-owned actions now require sign-in.",
     )
-    recovery_actions = st.columns(2)
-    if recovery_actions[0].button("Sign In Again", key="session_sign_in_again", type="primary", width="stretch"):
-        st.session_state["session_recovery_show_login"] = True
-    if recovery_actions[1].button("Continue to Home", key="session_continue_home", width="stretch"):
-        st.session_state.pop("session_recovery_show_login", None)
-        go_to_route("Home")
-        st.rerun()
+    with st.container(key="session_recovery_actions"):
+        recovery_actions = st.columns(2)
+        if recovery_actions[0].button("Sign In Again", key="session_sign_in_again", type="primary", width="stretch"):
+            st.session_state["session_recovery_show_login"] = True
+        if recovery_actions[1].button("Continue to Home", key="session_continue_home", width="stretch"):
+            st.session_state.pop("session_recovery_show_login", None)
+            go_to_route("Home")
+            st.rerun()
     if st.session_state.get("session_recovery_show_login"):
         with st.container(border=True, key="session_recovery_login"):
             login_form()
@@ -1876,6 +1929,7 @@ signal_source = tuple(df.head(SIGNAL_SAMPLE)["pool"].tolist()) if market_source_
 signal_df = fetch_signal_snapshots(signal_source)
 if not signal_df.empty:
     df = df.merge(signal_df, on="pool", how="left")
+df["signal_available"] = df["pool"].isin(signal_df["pool"]) if not signal_df.empty else False
 for col, default in [("signal", "Steady"), ("apy_delta_7", 0.0), ("tvl_delta_7_pct", 0.0), ("apy_volatility", 0.0)]:
     if col not in df.columns:
         df[col] = default
@@ -1913,7 +1967,19 @@ with st.sidebar:
     projects = sorted(df["project"].dropna().unique().tolist())
     strategies = sorted(df["strategy_type"].dropna().unique().tolist())
     signals = sorted(df["signal"].dropna().unique().tolist())
-    query_filter_model = parse_filter_query(st.query_params) if page in {"Discover", "Pool Detail"} else DEFAULT_FILTERS
+    query_filter_model = (
+        parse_filter_query(
+            st.query_params,
+            allowed_values={
+                "chains": chains,
+                "protocols": projects,
+                "strategies": strategies,
+                "signals": signals,
+            },
+        )
+        if page in {"Discover", "Pool Detail"}
+        else DEFAULT_FILTERS
+    )
     filter_defaults = {
         "market_search": query_filter_model.search,
         "market_chains": [value for value in query_filter_model.chains if value in chains],
@@ -2000,7 +2066,7 @@ current_filters = DiscoveryFilters(
 
 if page in {"Discover", "Pool Detail"}:
     encoded_filters = filter_query(current_filters)
-    for query_key in ("q", "chains", "protocols", "strategies", "signals", "stable", "min_tvl", "max_risk", "min_apy", "sort"):
+    for query_key in FILTER_QUERY_KEYS:
         if query_key in encoded_filters:
             if str(st.query_params.get(query_key) or "") != encoded_filters[query_key]:
                 st.query_params[query_key] = encoded_filters[query_key]
@@ -2132,25 +2198,30 @@ elif content_page == "Scanner":
         st.markdown("<div style='height:0.5rem;'></div>", unsafe_allow_html=True)
         table_df = compact_table(filtered)
         if not table_df.empty:
-            st.dataframe(
+            render_internal_pool_table(
                 table_df,
-                width="stretch",
-                hide_index=True,
-                height=540,
-                column_config={
-                    "APY": st.column_config.NumberColumn(format="%.2f%%", width="small"),
-                    "Base": st.column_config.NumberColumn(format="%.2f%%", width="small"),
-                    "Rewards": st.column_config.NumberColumn(format="%.2f%%", width="small"),
-                    "TVL (USD)": st.column_config.NumberColumn(format="$%.0f", width="medium"),
-                    "Risk": st.column_config.NumberColumn(width="small"),
-                    "Pool": st.column_config.LinkColumn("Pool", display_text="Open"),
-                },
+                tuple((label, label) for _, label in OPPORTUNITIES_TABLE_COLUMNS),
+                return_route="Discover",
+                return_view="Opportunities",
+                link_columns={"Pool": "Open"},
+                formats={"APY": "percent", "Base": "percent", "Rewards": "percent", "TVL (USD)": "money", "Risk": "number"},
+                discover_state=encoded_filters,
+                max_height=540,
             )
-        if export_enabled:
-            csv = make_download_df(filtered).to_csv(index=False).encode("utf-8")
-            st.download_button("Download current table as CSV", csv, file_name="furuflow_scanner.csv", mime="text/csv")
+        csv_export = prepare_csv_export(filtered, capabilities)
+        if export_enabled and csv_export.allowed:
+            st.download_button(
+                "Download current table as CSV",
+                csv_export.content,
+                file_name="furuflow_scanner.csv",
+                mime="text/csv",
+            )
         else:
-            st.markdown("<div class='signal-card'><div class='signal-title'>CSV export is Pro</div><div class='signal-copy'>Discover stays open to everyone; export and deeper decision workflows are part of Pro.</div></div>", unsafe_allow_html=True)
+            st.markdown(
+                "<div class='signal-card'><div class='signal-title'>CSV export · Pro — $24.99</div>"
+                f"<div class='signal-copy'>{html.escape(CSV_UPGRADE_MESSAGE)} The future tier is planned and is not yet purchasable.</div></div>",
+                unsafe_allow_html=True,
+            )
             render_billing_action(db_user, label="Unlock CSV export")
         st.markdown("</div>", unsafe_allow_html=True)
     with right:
@@ -2199,19 +2270,14 @@ elif content_page == "Pool Universe":
             return_route="Discover",
             return_view="All Pools",
         )
-        st.dataframe(
+        render_internal_pool_table(
             universe_table,
-            width="stretch",
-            hide_index=True,
-            height=min(620, 120 + 38 * len(universe_table)),
-            column_config={
-                "APY": st.column_config.NumberColumn(format="%.2f%%", width="small"),
-                "Base": st.column_config.NumberColumn(format="%.2f%%", width="small"),
-                "Rewards": st.column_config.NumberColumn(format="%.2f%%", width="small"),
-                "TVL (USD)": st.column_config.NumberColumn(format="$%.0f", width="medium"),
-                "Risk": st.column_config.NumberColumn(width="small"),
-                "Pool": st.column_config.LinkColumn("Pool", display_text="Open"),
-            },
+            tuple((label, label) for _, label in OPPORTUNITIES_TABLE_COLUMNS),
+            return_route="Discover",
+            return_view="All Pools",
+            link_columns={"Pool": "Open"},
+            formats={"APY": "percent", "Base": "percent", "Rewards": "percent", "TVL (USD)": "money", "Risk": "number"},
+            max_height=min(620, 120 + 38 * len(universe_table)),
         )
         universe_rows = {str(row["pool"]): row for _, row in universe_visible.iterrows()}
         selected_universe_pool = st.selectbox(
@@ -2449,18 +2515,14 @@ elif content_page == "Research Comparison":
                 return_route="Research",
                 return_view="Comparison",
             )
-            st.dataframe(
+            render_internal_pool_table(
                 research_links,
-                width="stretch",
-                hide_index=True,
-                height=min(310, 120 + 42 * len(research_links)),
-                column_config={
-                    "APY": st.column_config.NumberColumn(format="%.2f%%"),
-                    "Base": st.column_config.NumberColumn(format="%.2f%%"),
-                    "Rewards": st.column_config.NumberColumn(format="%.2f%%"),
-                    "TVL (USD)": st.column_config.NumberColumn(format="$%.0f"),
-                    "Pool": st.column_config.LinkColumn("Pool", display_text="Open"),
-                },
+                tuple((label, label) for _, label in OPPORTUNITIES_TABLE_COLUMNS),
+                return_route="Research",
+                return_view="Comparison",
+                link_columns={"Pool": "Open"},
+                formats={"APY": "percent", "Base": "percent", "Rewards": "percent", "TVL (USD)": "money", "Risk": "number"},
+                max_height=min(310, 120 + 42 * len(research_links)),
             )
             matrix_source = pd.DataFrame(compared_rows)
             matrix_source["Opportunity"] = (
@@ -2586,17 +2648,15 @@ elif content_page == "Signals":
         st.markdown("<div class='panel'>", unsafe_allow_html=True)
         section_header("Signal engine", "Rules-based yield movement", "Existing deterministic labels surface APY spikes, farm rotations, emerging pools, and whale inflows from recent pool chart movement.")
         signal_table_source = filtered.copy()
-        signal_table_source["pool_detail_url"] = signal_table_source["pool"].map(
-            lambda pool_id: pool_detail_url(
-                str(pool_id),
-                public_origin=os.getenv("FURUFLOW_SESSION_BROKER_PUBLIC_ORIGIN", "http://localhost:8501"),
-                return_route="Signals",
-                return_view="Signals",
-            )
-        )
         sig_view = signal_table_source[[column for column, _ in SIGNAL_ENGINE_TABLE_COLUMNS]].copy().head(20)
-        sig_view.columns = [label for _, label in SIGNAL_ENGINE_TABLE_COLUMNS]
-        st.dataframe(sig_view, width="stretch", hide_index=True, height=560, column_config={"Strength": st.column_config.NumberColumn(format="%.1f"), "7d APY Δ": st.column_config.NumberColumn(format="%.2f"), "7d TVL Δ %": st.column_config.NumberColumn(format="%.2f"), "APY volatility": st.column_config.NumberColumn(format="%.2f"), "Pool": st.column_config.LinkColumn("Pool", display_text="Open")})
+        render_internal_pool_table(
+            sig_view,
+            SIGNAL_ENGINE_TABLE_COLUMNS,
+            return_route="Signals",
+            return_view="Signals",
+            formats={"signal_strength": "number", "apy_delta_7": "number", "tvl_delta_7_pct": "number", "apy_volatility": "number"},
+            max_height=560,
+        )
         if not signal_table_source.empty:
             signal_rows = {str(row["pool"]): row for _, row in signal_table_source.head(60).iterrows()}
             selected_signal_pool = st.selectbox(
@@ -2663,25 +2723,28 @@ elif content_page == "Arbitrage":
         if arb_df.empty:
             st.info("No meaningful cross-chain APY gaps are visible for the current filters.")
         else:
-            spread_view = arb_df.copy()
-            spread_view["Higher link"] = spread_view["Higher pool ID"].map(
-                lambda pool_id: pool_detail_url(
-                    str(pool_id),
-                    public_origin=os.getenv("FURUFLOW_SESSION_BROKER_PUBLIC_ORIGIN", "http://localhost:8501"),
-                    return_route="Pro Tools",
-                    return_view="Yield Spreads",
-                )
+            spread_columns = (
+                ("Higher pool ID", "Higher-yield pool"),
+                ("Lower pool ID", "Lower-yield pool"),
+                ("Asset", "Asset"),
+                ("Higher chain", "Higher chain"),
+                ("Higher protocol", "Higher protocol"),
+                ("Higher APY", "Higher APY"),
+                ("Lower chain", "Lower chain"),
+                ("Lower protocol", "Lower protocol"),
+                ("Lower APY", "Lower APY"),
+                ("APY difference", "APY difference"),
+                ("Execution costs", "Execution costs"),
             )
-            spread_view["Lower link"] = spread_view["Lower pool ID"].map(
-                lambda pool_id: pool_detail_url(
-                    str(pool_id),
-                    public_origin=os.getenv("FURUFLOW_SESSION_BROKER_PUBLIC_ORIGIN", "http://localhost:8501"),
-                    return_route="Pro Tools",
-                    return_view="Yield Spreads",
-                )
+            render_internal_pool_table(
+                arb_df,
+                spread_columns,
+                return_route="Pro Tools",
+                return_view="Yield Spreads",
+                link_columns={"Higher pool ID": "Open", "Lower pool ID": "Open"},
+                formats={"Higher APY": "percent", "Lower APY": "percent", "APY difference": "number"},
+                max_height=560,
             )
-            spread_view = spread_view.drop(columns=["Higher pool ID", "Lower pool ID"])
-            st.dataframe(spread_view, width="stretch", hide_index=True, height=560, column_config={"Higher APY": st.column_config.NumberColumn(format="%.2f%%"), "Lower APY": st.column_config.NumberColumn(format="%.2f%%"), "APY difference": st.column_config.NumberColumn(format="%.2f"), "Higher link": st.column_config.LinkColumn("Higher-yield pool", display_text="Open"), "Lower link": st.column_config.LinkColumn("Lower-yield pool", display_text="Open")})
             st.caption(f"Both sides use {market_source_label} · {market_freshness['label']} ({market_freshness['age'].lower()}).")
         st.markdown("</div>", unsafe_allow_html=True)
     with right:
@@ -3046,17 +3109,15 @@ elif content_page == "Strategy Builder":
             st.info("No pools match the current strategy builder settings.")
         else:
             strategy_table_source = strategy_df.copy()
-            strategy_table_source["pool_detail_url"] = strategy_table_source["pool"].map(
-                lambda pool_id: pool_detail_url(
-                    str(pool_id),
-                    public_origin=os.getenv("FURUFLOW_SESSION_BROKER_PUBLIC_ORIGIN", "http://localhost:8501"),
-                    return_route="Pro Tools",
-                    return_view="Strategy Builder",
-                )
-            )
             view = strategy_table_source[[column for column, _ in STRATEGY_RESULTS_TABLE_COLUMNS]].copy()
-            view.columns = [label for _, label in STRATEGY_RESULTS_TABLE_COLUMNS]
-            st.dataframe(view, width="stretch", hide_index=True, height=520, column_config={"APY": st.column_config.NumberColumn(format="%.2f%%"), "TVL (USD)": st.column_config.NumberColumn(format="$%.0f"), "Pool": st.column_config.LinkColumn("Pool", display_text="Open")})
+            render_internal_pool_table(
+                view,
+                STRATEGY_RESULTS_TABLE_COLUMNS,
+                return_route="Pro Tools",
+                return_view="Strategy Builder",
+                formats={"apy": "percent", "tvlUsd": "money", "risk_score": "number"},
+                max_height=520,
+            )
             strategy_rows = {str(row["pool"]): row for _, row in strategy_df.iterrows()}
             selected_strategy_pool = st.selectbox(
                 "Strategy result pool",
@@ -3208,11 +3269,11 @@ elif content_page == "Pricing":
     st.markdown("<div class='panel'>", unsafe_allow_html=True)
     section_header(
         "Current billing compatibility",
-        "Existing Pro remains unchanged during Prompt 12",
+        "Existing Pro remains unchanged during beta compatibility",
         "The current trusted Free/Pro entitlement and existing $20 Pro checkout remain in place until the planned four-tier billing migration.",
     )
     if is_pro:
-        st.success(f"Current Pro is active through {billing_access_source(db_user).lower()} and maps to all Prompt 12 capabilities.")
+        st.success(f"Current Pro is active through {billing_access_source(db_user).lower()} and centrally maps to the top-tier beta capability profile.")
     else:
         render_billing_action(db_user, label="Current Pro checkout — $20/month")
     st.caption("No Core, Plus, or $24.99 Pro checkout is enabled. Paid access still appears only after current Stripe fulfillment is verified by FuruFlow.")
@@ -3221,16 +3282,65 @@ elif content_page == "Pricing":
 elif content_page == "Methodology & Data Status":
     st.markdown("<div class='panel'>", unsafe_allow_html=True)
     section_header(
-        "Methodology & data",
-        "How FuruFlow builds research context",
-        "This page documents the current implementation: what is reported by providers, what FuruFlow derives, how workflows share pool identity, and where the analysis stops.",
+        "Live data status",
+        "Can the current market snapshot support research right now?",
+        "Status and coverage below are derived from the current normalized provider response. They are not uptime history, provider SLAs, or invented monitoring data.",
     )
+    status_summary = market_status_summary(df)
+    availability_labels = {
+        "available": "Available",
+        "partial": "Partial",
+        "sample": "Sample only",
+        "unavailable": "Unavailable",
+    }
     if market_data_status.availability == "unavailable":
         render_status("error", "Provider unavailable", f"{market_source_label} returned no usable rows; no sample opportunities were substituted.")
     elif market_data_status.availability == "sample":
         render_status("degraded", "Development sample mode", f"{market_source_label}; values must not be interpreted as live.")
+    elif market_data_status.availability == "partial":
+        render_status(
+            "degraded",
+            "Partial provider response",
+            market_data_status.detail or f"{market_source_label} returned usable rows with reported degradation.",
+        )
     else:
         render_status(market_freshness["kind"], f"{market_source_label} · {market_freshness['label']}", market_freshness["age"] + ".")
+
+    status_metrics = st.columns(4)
+    status_metrics[0].metric("Current availability", availability_labels[market_data_status.availability])
+    status_metrics[1].metric("Freshness", market_freshness["label"])
+    status_metrics[2].metric("Pools represented", f"{status_summary.pools:,}" if status_summary.pools else "Unavailable")
+    status_metrics[3].metric("Networks represented", f"{status_summary.networks:,}" if status_summary.pools else "Unavailable")
+    coverage_context = st.columns(3)
+    coverage_context[0].metric("Protocols represented", f"{status_summary.protocols:,}" if status_summary.pools else "Unavailable")
+    coverage_context[1].metric("Assets represented", f"{status_summary.assets:,}" if status_summary.pools else "Unavailable")
+    retrieved_at = market_data_status.retrieved_at
+    coverage_context[2].metric(
+        "Latest retrieval",
+        retrieved_at.astimezone(timezone.utc).strftime("%b %d · %H:%M UTC") if retrieved_at else "Not reported",
+    )
+    st.caption(
+        f"Provider: {market_source_label}. {market_freshness['age']}. "
+        "The retrieval timestamp describes FuruFlow's current fetch, because the provider does not report a per-pool observation time."
+    )
+
+    st.markdown("### Current field coverage")
+    st.caption("Each denominator is the total number of pools represented in the current normalized response; missing values are not counted as zero.")
+    if status_summary.pools:
+        for metric in status_summary.coverage:
+            percent = metric.percent or 0.0
+            st.progress(
+                min(1.0, max(0.0, percent / 100.0)),
+                text=f"{metric.label}: {metric.available:,} / {metric.total:,} pools ({percent:.1f}%)",
+            )
+    else:
+        st.info("Coverage is unavailable because the current provider response contains no represented pools.")
+
+    section_header(
+        "Methodology",
+        "How FuruFlow builds research context",
+        "The sections below explain what providers report, what FuruFlow derives, what missing values mean, and where decision support stops.",
+    )
 
     left, right = st.columns(2, gap="large")
     with left:
@@ -3304,8 +3414,8 @@ elif content_page == "Methodology & Data Status":
 
         st.markdown("### Product capabilities")
         st.markdown(
-            "The planned ladder is Free for discovery, Core for durable Watchlists, Plus for Alerts and Research modeling, and Pro for Strategy Builder, Yield Spreads, and workflow acceleration. "
-            "Prompt 12 does not add those Stripe products: today's trusted Free entitlement maps to Free capabilities and today's trusted Pro entitlement maps to all capabilities until billing migration."
+            "The planned ladder is Free for discovery, Core for durable Watchlists, Plus for Alerts and Research modeling, and Pro — $24.99 for Strategy Builder, Yield Spreads, CSV export, and workflow acceleration. "
+            "Prompt 13 does not add those Stripe products: today's trusted Free entitlement maps to Free capabilities and today's trusted Pro entitlement centrally maps to all beta capabilities until billing migration."
         )
 
         st.markdown("### Pro Tools")

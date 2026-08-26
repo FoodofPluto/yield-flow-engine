@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone
+import html
+import re
 from urllib.parse import parse_qs, urlparse
 
 import requests
@@ -8,6 +10,18 @@ import streamlit as st
 from streamlit.testing.v1 import AppTest
 
 from saved_pools import SavedPool
+
+
+def _internal_tables(app: AppTest, heading: str) -> list[str]:
+    marker = f"<th>{heading}</th>"
+    return [element.value for element in app.markdown if "ff-pool-table" in element.value and marker in element.value]
+
+
+def _first_internal_url(table_html: str, pool_id: str | None = None) -> str:
+    pattern = rf'href="([^"]*{re.escape(pool_id)}[^"]*)"' if pool_id else r'href="([^"]+)"'
+    match = re.search(pattern, table_html)
+    assert match
+    return html.unescape(match.group(1))
 
 
 class FakeSavedPoolsClient:
@@ -66,6 +80,7 @@ def _authenticated_app(
     market_pool_id: str = "canonical-pool-1",
     market_rows: list[dict[str, object]] | None = None,
     is_pro: bool = True,
+    query_params: dict[str, str] | None = None,
 ) -> AppTest:
     import auth_service
     import saved_pools
@@ -90,6 +105,8 @@ def _authenticated_app(
     st.cache_data.clear()
     app = AppTest.from_file("app.py", default_timeout=60)
     app.query_params["page"] = page
+    for key, value in (query_params or {}).items():
+        app.query_params[key] = value
     return app.run()
 
 
@@ -112,12 +129,13 @@ def test_current_free_capabilities_keep_discovery_useful_without_invalid_actions
 
 def test_home_routes_primary_actions_and_opens_canonical_pool_first(monkeypatch) -> None:
     app = _authenticated_app(monkeypatch, FakeSavedPoolsClient(), page="Home", is_pro=True)
-    home_tables = [element.value for element in app.dataframe if "Network" in element.value.columns]
+    home_tables = _internal_tables(app, "Network")
 
     assert home_tables
-    assert home_tables[-1].columns.tolist()[:4] == ["Pool", "Asset", "Network", "Protocol"]
-    parsed = urlparse(home_tables[-1].iloc[0]["Pool"])
+    assert home_tables[-1].index("<th>Pool</th>") < home_tables[-1].index("<th>Asset</th>")
+    parsed = urlparse(_first_internal_url(home_tables[-1]))
     assert parse_qs(parsed.query)["return_route"] == ["Home"]
+    assert 'target="_self"' in home_tables[-1]
     _button(app, "Browse All Pools").click().run()
     assert app.query_params["page"] == ["Discover"]
     assert next(radio for radio in app.radio if radio.label == "Discover view").value == "All Pools"
@@ -183,6 +201,7 @@ def test_watchlist_opens_existing_pool_detail_and_back_returns_to_watchlist(monk
 
     _button(app, "← Back to Watchlist").click().run()
     assert app.query_params["page"] == ["Watchlists"]
+    assert not {"pool", "return_route", "return_view"} & set(app.query_params)
     assert "canonical-pool-1" in client.rows
 
 
@@ -218,9 +237,9 @@ def test_strategy_results_actions_use_canonical_watchlist_and_pool_detail_primit
     next(slider for slider in app.slider if slider.label == "Strategy minimum APY").set_value(0.0).run()
     next(slider for slider in app.slider if slider.label == "Strategy minimum TVL").set_value(0).run()
     next(slider for slider in app.slider if slider.label == "Strategy maximum risk").set_value(100).run()
-    strategy_tables = [element.value for element in app.dataframe if "Risk" in element.value.columns]
+    strategy_tables = _internal_tables(app, "Risk")
     assert strategy_tables
-    assert strategy_tables[-1].columns[0] == "Pool"
+    assert strategy_tables[-1].index("<th>Pool</th>") < strategy_tables[-1].index("<th>Protocol</th>")
 
     _button(app, "Save to Watchlist").click().run()
     assert client.save_calls == ["canonical-pool-1"]
@@ -306,12 +325,12 @@ def test_strategy_result_carries_canonical_pool_into_research(monkeypatch) -> No
 
 def test_opportunities_table_puts_canonical_contextual_pool_link_first(monkeypatch) -> None:
     app = _authenticated_app(monkeypatch, FakeSavedPoolsClient(), page="Discover", is_pro=True)
-    opportunity_tables = [element.value for element in app.dataframe if "Strategy" in element.value.columns]
+    opportunity_tables = _internal_tables(app, "Strategy")
 
     assert opportunity_tables
     opportunities = opportunity_tables[-1]
-    assert opportunities.columns[0] == "Pool"
-    parsed = urlparse(opportunities.iloc[0, 0])
+    assert opportunities.index("<th>Pool</th>") < opportunities.index("<th>Asset</th>")
+    parsed = urlparse(_first_internal_url(opportunities))
     assert f"{parsed.scheme}://{parsed.netloc}" == "http://localhost:8501"
     assert parse_qs(parsed.query) == {
         "page": ["Pool Detail"],
@@ -321,13 +340,57 @@ def test_opportunities_table_puts_canonical_contextual_pool_link_first(monkeypat
     }
 
 
+def test_discover_advanced_filters_and_sort_reconstruct_in_a_fresh_browser_session(monkeypatch) -> None:
+    client = FakeSavedPoolsClient()
+    app = _authenticated_app(monkeypatch, client, page="Discover", is_pro=True)
+
+    next(multiselect for multiselect in app.multiselect if multiselect.label == "Chains").set_value(["Ethereum"]).run()
+    next(multiselect for multiselect in app.multiselect if multiselect.label == "Protocols").set_value(["aave-v3"]).run()
+    strategy_value = next(item for item in app.multiselect if item.label == "Strategy type").options[0]
+    signal_value = next(item for item in app.multiselect if item.label == "Signal").options[0]
+    next(multiselect for multiselect in app.multiselect if multiselect.label == "Strategy type").set_value([strategy_value]).run()
+    next(multiselect for multiselect in app.multiselect if multiselect.label == "Signal").set_value([signal_value]).run()
+    next(slider for slider in app.slider if slider.label == "Minimum TVL").set_value(0).run()
+    next(slider for slider in app.slider if slider.label == "Maximum risk score").set_value(90).run()
+    next(slider for slider in app.slider if slider.label == "Minimum APY").set_value(2.0).run()
+    next(selectbox for selectbox in app.selectbox if selectbox.label == "Sort by").set_value("Largest TVL").run()
+
+    persisted = {
+        key: str(app.query_params[key][0])
+        for key in ("chains", "protocols", "strategies", "signals", "min_tvl", "max_risk", "min_apy", "sort")
+        if key in app.query_params
+    }
+    refreshed = _authenticated_app(
+        monkeypatch,
+        client,
+        page="Discover",
+        is_pro=True,
+        query_params=persisted,
+    )
+
+    assert next(item for item in refreshed.multiselect if item.label == "Chains").value == ["Ethereum"]
+    assert next(item for item in refreshed.multiselect if item.label == "Protocols").value == ["aave-v3"]
+    assert next(item for item in refreshed.multiselect if item.label == "Strategy type").value == [strategy_value]
+    assert next(item for item in refreshed.multiselect if item.label == "Signal").value == [signal_value]
+    assert next(item for item in refreshed.slider if item.label == "Minimum TVL").value == 0
+    assert next(item for item in refreshed.slider if item.label == "Maximum risk score").value == 90
+    assert next(item for item in refreshed.slider if item.label == "Minimum APY").value == 2.0
+    assert next(item for item in refreshed.selectbox if item.label == "Sort by").value == "Largest TVL"
+
+    _button(refreshed, "Home").click().run()
+    assert refreshed.query_params["page"] == ["Home"]
+    assert not {"chains", "protocols", "strategies", "signals", "min_tvl", "max_risk", "min_apy", "sort"} & set(
+        refreshed.query_params
+    )
+
+
 def test_signal_engine_renders_pool_link_as_first_visible_table_column(monkeypatch) -> None:
     app = _authenticated_app(monkeypatch, FakeSavedPoolsClient(), page="Signals", is_pro=True)
 
-    signal_tables = [element.value for element in app.dataframe if "Strength" in element.value.columns]
+    signal_tables = _internal_tables(app, "Strength")
     assert signal_tables
-    assert signal_tables[-1].columns[0] == "Pool"
-    parsed = urlparse(signal_tables[-1].iloc[0]["Pool"])
+    assert signal_tables[-1].index("<th>Pool</th>") < signal_tables[-1].index("<th>Protocol</th>")
+    parsed = urlparse(_first_internal_url(signal_tables[-1]))
     assert parse_qs(parsed.query)["return_route"] == ["Signals"]
     assert any(button.label == "Research" for button in app.button)
     rendered = "\n".join(markdown.value for markdown in app.markdown)
@@ -368,16 +431,16 @@ def test_discover_all_pools_reaches_non_curated_pool_with_canonical_actions(monk
         market_rows=rows,
     )
 
-    curated_tables = [element.value for element in app.dataframe if "Strategy" in element.value.columns]
-    assert curated_tables[-1]["Protocol"].tolist() == ["aave-v3"]
+    curated_tables = _internal_tables(app, "Strategy")
+    assert "aave-v3" in curated_tables[-1]
+    assert "zeta-protocol" not in curated_tables[-1]
 
     next(radio for radio in app.radio if radio.label == "Discover view").set_value("All Pools").run()
     assert not app.exception
     assert not any(expander.label == "Discover Filters" for expander in app.expander)
-    universe_tables = [element.value for element in app.dataframe if "Strategy" in element.value.columns]
-    assert universe_tables[-1]["Protocol"].tolist() == ["aave-v3", "zeta-protocol"]
-    broader_url = universe_tables[-1].loc[universe_tables[-1]["Protocol"] == "zeta-protocol", "Pool"].iloc[0]
-    parsed = urlparse(broader_url)
+    universe_tables = _internal_tables(app, "Strategy")
+    assert universe_tables[-1].index("aave-v3") < universe_tables[-1].index("zeta-protocol")
+    parsed = urlparse(_first_internal_url(universe_tables[-1], "broader-pool"))
     assert parse_qs(parsed.query) == {
         "page": ["Pool Detail"],
         "pool": ["broader-pool"],
@@ -444,8 +507,8 @@ def test_research_is_selected_pool_analysis_not_discover_repeated(monkeypatch) -
     }
     assert any("Observed current metrics" in markdown.value for markdown in app.markdown)
     assert any("Calculated context" in markdown.value for markdown in app.markdown)
-    research_tables = [element.value for element in app.dataframe if "Strategy" in element.value.columns]
-    parsed = urlparse(research_tables[-1].iloc[0]["Pool"])
+    research_tables = _internal_tables(app, "Strategy")
+    parsed = urlparse(_first_internal_url(research_tables[-1]))
     assert parse_qs(parsed.query)["return_route"] == ["Research"]
     assert any(button.label == "Create alert" for button in app.button)
 

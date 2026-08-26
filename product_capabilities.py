@@ -27,7 +27,7 @@ class Capability(str, Enum):
     PRO_TOOLS = "pro_tools"
     FULL_SIGNALS = "full_signals"
     ADVANCED_SORTING = "advanced_sorting"
-    DATA_EXPORT = "data_export"
+    CSV_EXPORT = "csv_export"
 
 
 @dataclass(frozen=True)
@@ -55,7 +55,7 @@ PRO_CAPABILITIES = PLUS_CAPABILITIES | {
     Capability.PRO_TOOLS,
     Capability.FULL_SIGNALS,
     Capability.ADVANCED_SORTING,
-    Capability.DATA_EXPORT,
+    Capability.CSV_EXPORT,
 }
 
 CAPABILITIES_BY_TIER = {
@@ -74,7 +74,7 @@ MINIMUM_TIER_BY_CAPABILITY = {
     Capability.PRO_TOOLS: ProductTier.PRO,
     Capability.FULL_SIGNALS: ProductTier.PRO,
     Capability.ADVANCED_SORTING: ProductTier.PRO,
-    Capability.DATA_EXPORT: ProductTier.PRO,
+    Capability.CSV_EXPORT: ProductTier.PRO,
 }
 
 PLANNED_TIERS = (
@@ -104,7 +104,7 @@ PLANNED_TIERS = (
         "Pro",
         "$24.99/month",
         "Optimize the workflow",
-        ("Everything in Plus", "Strategy Builder", "Yield Spreads", "Advanced workflow actions"),
+        ("Everything in Plus", "Strategy Builder", "Yield Spreads", "CSV export", "Advanced workflow actions"),
     ),
 )
 
@@ -118,7 +118,7 @@ def capabilities_from_current_entitlement(*, is_pro: bool) -> ProductCapabilitie
     """Map today's trusted Free/Pro result without claiming future billing tiers.
 
     Current Free -> future Free capabilities.
-    Current Pro  -> all Prompt 12 capabilities.
+    Current Pro  -> the future top-tier beta capability profile.
     """
 
     return capabilities_for_tier(ProductTier.PRO if is_pro else ProductTier.FREE)
@@ -148,8 +148,10 @@ def can_use_advanced_sorting(capabilities: ProductCapabilities) -> bool:
     return capabilities.allows(Capability.ADVANCED_SORTING)
 
 
-def can_export_data(capabilities: ProductCapabilities) -> bool:
-    return capabilities.allows(Capability.DATA_EXPORT)
+def can_export_csv(capabilities: ProductCapabilities) -> bool:
+    """Authorize the planned $24.99 Pro CSV capability semantically."""
+
+    return capabilities.allows(Capability.CSV_EXPORT)
 
 
 def required_tier_name(capability: Capability) -> str:
