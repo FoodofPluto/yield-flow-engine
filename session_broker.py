@@ -18,14 +18,26 @@ from billing_service import BillingConfigurationError, BillingOperationError, Bi
 
 
 COOKIE_NAME = "__Host-furuflow_session"
+_ACTIVATION_TICKET_PATTERN = re.compile(r"(ticket(?:=|%3D))[A-Za-z0-9_-]+", re.IGNORECASE)
+
+
+def _redact_activation_ticket(value: Any) -> Any:
+    if not isinstance(value, str):
+        return value
+    return _ACTIVATION_TICKET_PATTERN.sub(r"\1[REDACTED]", value)
 
 
 class _RedactActivationTicket(logging.Filter):
     def filter(self, record: logging.LogRecord) -> bool:
-        if record.args:
-            record.args = tuple(
-                re.sub(r"ticket=[A-Za-z0-9_-]+", "ticket=[REDACTED]", str(value)) for value in record.args
-            )
+        record.msg = _redact_activation_ticket(record.msg)
+        if isinstance(record.args, dict):
+            record.args = {key: _redact_activation_ticket(value) for key, value in record.args.items()}
+        elif record.args:
+            record.args = tuple(_redact_activation_ticket(value) for value in record.args)
+        if record.exc_info:
+            record.exc_text = _redact_activation_ticket(logging.Formatter().formatException(record.exc_info))
+        if record.stack_info:
+            record.stack_info = _redact_activation_ticket(record.stack_info)
         return True
 
 
@@ -220,7 +232,9 @@ def create_app(store: BrokerStore | None = None, billing_service: BillingService
     app = Flask(__name__)
     broker_store = store or BrokerStore()
     bridge_key = _required("FURUFLOW_SESSION_BRIDGE_KEY")
-    logging.getLogger("werkzeug").addFilter(_RedactActivationTicket())
+    activation_ticket_filter = _RedactActivationTicket()
+    logging.getLogger("werkzeug").addFilter(activation_ticket_filter)
+    app.logger.addFilter(activation_ticket_filter)
 
     def trusted() -> bool:
         return secrets.compare_digest(request.headers.get("X-FuruFlow-Bridge-Key", ""), bridge_key)
@@ -263,10 +277,20 @@ def create_app(store: BrokerStore | None = None, billing_service: BillingService
     def activate():
         opaque = broker_store.consume_ticket(request.args.get("ticket", ""))
         if not opaque:
-            return "Session activation expired.", 400, {"Cache-Control": "no-store", "Referrer-Policy": "no-referrer"}
-        response = make_response("<script>window.top.location.replace('/');</script>")
+            response = make_response("Session activation expired.", 400)
+            response.headers["Cache-Control"] = "no-store"
+            response.headers["Referrer-Policy"] = "no-referrer"
+            return response
+        response = make_response(
+            '<!doctype html><meta name="referrer" content="no-referrer">'
+            '<script>history.replaceState(null,"","/auth/session/activated");</script>'
+        )
         response.headers["Cache-Control"] = "no-store"
         response.headers["Referrer-Policy"] = "no-referrer"
+        response.headers["Content-Security-Policy"] = (
+            "default-src 'none'; script-src 'unsafe-inline'; base-uri 'none'; form-action 'none'"
+        )
+        response.headers["X-Content-Type-Options"] = "nosniff"
         response.set_cookie(COOKIE_NAME, opaque, secure=True, httponly=True, samesite="Lax", path="/", max_age=604800)
         return response
 

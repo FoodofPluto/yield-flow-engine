@@ -75,6 +75,11 @@ def test_nginx_template_keeps_broker_internal_and_websockets_enabled() -> None:
     assert "proxy_pass http://127.0.0.1:8501;" in rendered
     assert "proxy_set_header Upgrade $http_upgrade;" in rendered
     assert "access_log off;" in rendered
+    activation_location = rendered[
+        rendered.index("location = /auth/session/activate") : rendered.index("location / {")
+    ]
+    assert "access_log off;" in activation_location
+    assert "error_log /dev/null crit;" in activation_location
 
 
 def test_nginx_config_rejects_invalid_port() -> None:

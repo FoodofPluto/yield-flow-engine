@@ -69,6 +69,7 @@ server {
     # Never write the single-use activation ticket query to the access log.
     location = /auth/session/activate {
         access_log off;
+        error_log /dev/null crit;
         proxy_pass http://127.0.0.1:8510;
         proxy_http_version 1.1;
         proxy_set_header Host $host;

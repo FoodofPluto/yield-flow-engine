@@ -1,15 +1,17 @@
 from __future__ import annotations
 
 import json
+import logging
 import os
 from copy import deepcopy
+from datetime import datetime, timedelta, timezone
 from unittest.mock import patch
 
 import httpx
 import pytest
 from cryptography.fernet import Fernet
 
-from session_broker import BrokerStore, create_app
+from session_broker import BrokerStore, _RedactActivationTicket, _hash, create_app
 
 
 USER_ID = "11111111-1111-4111-8111-111111111111"
@@ -45,6 +47,86 @@ def test_broker_persists_only_ciphertext_and_hashes() -> None:
     assert ticket not in encoded
     assert len(writes[0]["opaque_hash"]) == 64
     assert len(writes[1]["ticket_hash"]) == 64
+    created_at = datetime.now(timezone.utc)
+    ticket_expiry = datetime.fromisoformat(writes[1]["expires_at"])
+    assert timedelta(seconds=100) <= ticket_expiry - created_at <= timedelta(seconds=120)
+
+
+class InMemoryTicketStore(BrokerStore):
+    def __init__(self, *, ticket: str, expires_at: datetime, consumed_at: str | None = None, allow_patch: bool = True):
+        self.ticket = ticket
+        self.allow_patch = allow_patch
+        self.patch_count = 0
+        self.row = {
+            "ticket_hash": _hash(ticket),
+            "opaque_ciphertext": "synthetic-ciphertext",
+            "expires_at": expires_at.astimezone(timezone.utc).isoformat(),
+            "consumed_at": consumed_at,
+        }
+
+    def _request(self, method: str, path: str, **kwargs):
+        assert path == "browser_session_tickets"
+        if method == "GET":
+            expected = kwargs["params"]["ticket_hash"]
+            return [dict(self.row)] if expected == f"eq.{self.row['ticket_hash']}" else []
+        if method == "PATCH":
+            self.patch_count += 1
+            if not self.allow_patch or self.row["consumed_at"] is not None:
+                return []
+            self.row["consumed_at"] = kwargs["body"]["consumed_at"]
+            return [dict(self.row)]
+        raise AssertionError(f"Unexpected request: {method} {path}")
+
+    def _decrypt(self, value: str) -> str:
+        assert value == "synthetic-ciphertext"
+        return "synthetic-opaque-session"
+
+
+def test_activation_ticket_is_single_use_and_replay_is_rejected() -> None:
+    ticket = "synthetic-single-use-ticket"
+    store = InMemoryTicketStore(ticket=ticket, expires_at=datetime.now(timezone.utc) + timedelta(minutes=2))
+
+    assert store.consume_ticket(ticket) == "synthetic-opaque-session"
+    assert store.consume_ticket(ticket) is None
+    assert store.patch_count == 1
+
+
+def test_activation_ticket_expiry_and_concurrent_invalidation_fail_closed() -> None:
+    ticket = "synthetic-expired-ticket"
+    expired = InMemoryTicketStore(ticket=ticket, expires_at=datetime.now(timezone.utc) - timedelta(seconds=1))
+    invalidated = InMemoryTicketStore(
+        ticket=ticket,
+        expires_at=datetime.now(timezone.utc) + timedelta(minutes=2),
+        allow_patch=False,
+    )
+
+    assert expired.consume_ticket(ticket) is None
+    assert expired.patch_count == 0
+    assert invalidated.consume_ticket(ticket) is None
+    assert invalidated.patch_count == 1
+
+
+def test_activation_ticket_redaction_covers_message_args_and_exception_text() -> None:
+    synthetic_ticket = "synthetic-redaction-ticket"
+    ticket_url = f"https://app.invalid/auth/session/activate?ticket={synthetic_ticket}"
+    try:
+        raise RuntimeError(ticket_url)
+    except RuntimeError:
+        exc_info = __import__("sys").exc_info()
+    record = logging.LogRecord(
+        name="synthetic",
+        level=logging.ERROR,
+        pathname=__file__,
+        lineno=1,
+        msg=f"activation failed near {ticket_url}: %s",
+        args=(ticket_url,),
+        exc_info=exc_info,
+    )
+
+    assert _RedactActivationTicket().filter(record)
+    rendered = logging.Formatter("%(message)s\n%(exc_text)s").format(record)
+    assert synthetic_ticket not in rendered
+    assert "ticket=[REDACTED]" in rendered
 
 
 class FakeStore:
@@ -90,6 +172,24 @@ def test_activation_sets_secure_httponly_host_cookie() -> None:
     assert "HttpOnly" in cookie
     assert "SameSite=Lax" in cookie
     assert "Path=/" in cookie
+    assert response.headers["Cache-Control"] == "no-store"
+    assert response.headers["Referrer-Policy"] == "no-referrer"
+    assert response.headers["X-Content-Type-Options"] == "nosniff"
+    assert "history.replaceState" in response.get_data(as_text=True)
+    assert "window.top" not in response.get_data(as_text=True)
+    assert "single-use" not in response.get_data(as_text=True)
+
+
+def test_expired_or_replayed_activation_response_does_not_echo_ticket() -> None:
+    synthetic_ticket = "synthetic-expired-or-replayed-ticket"
+    with patch.dict(os.environ, _env(), clear=False):
+        client = create_app(FakeStore()).test_client()
+        response = client.get(f"/auth/session/activate?ticket={synthetic_ticket}")
+
+    assert response.status_code == 400
+    assert response.headers["Cache-Control"] == "no-store"
+    assert response.headers["Referrer-Policy"] == "no-referrer"
+    assert synthetic_ticket not in response.get_data(as_text=True)
 
 
 def test_billing_routes_require_same_origin_authenticated_cookie() -> None:

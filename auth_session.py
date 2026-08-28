@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 import html
 import os
+import re
 from urllib.parse import urlparse
 from typing import Any, MutableMapping, Protocol
 
@@ -12,6 +13,7 @@ from streamlit.components.v1 import html as component_html
 
 ACCESS_TOKEN_KEY = "supabase_access_token"
 REFRESH_TOKEN_KEY = "supabase_refresh_token"
+ACTIVATION_PATH_PATTERN = re.compile(r"^/auth/session/activate\?ticket=[A-Za-z0-9_-]+$")
 
 
 @dataclass(frozen=True)
@@ -202,9 +204,12 @@ def persist_current_session(user_id: str) -> None:
 
 
 def render_pending_session_activation() -> None:
-    path = st.session_state.get("furuflow_session_activation")
+    path = st.session_state.pop("furuflow_session_activation", None)
     origin = os.getenv("FURUFLOW_SESSION_BROKER_PUBLIC_ORIGIN", "").rstrip("/")
-    if not isinstance(path, str) or not path.startswith("/auth/session/activate?ticket=") or not origin:
+    if not isinstance(path, str) or not ACTIVATION_PATH_PATTERN.fullmatch(path) or not origin:
         return
     url = html.escape(origin + path, quote=True)
-    component_html(f'<iframe src="{url}" referrerpolicy="no-referrer" style="display:none"></iframe>', height=0)
+    component_html(
+        f'<iframe src="{url}" referrerpolicy="no-referrer" style="display:none" onload="this.remove()"></iframe>',
+        height=0,
+    )

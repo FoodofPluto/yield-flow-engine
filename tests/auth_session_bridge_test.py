@@ -60,3 +60,39 @@ def test_broker_persistence_failure_does_not_silently_claim_refresh_support() ->
         with patch("auth_session.get_auth_session_store", return_value=store):
             with pytest.raises(SessionBridgeError):
                 auth_session.persist_current_session("user-1")
+
+
+def test_pending_activation_is_rendered_once_then_removed_from_session_state() -> None:
+    synthetic_ticket = "synthetic-single-use-ticket"
+    state = {"furuflow_session_activation": f"/auth/session/activate?ticket={synthetic_ticket}"}
+    with patch.dict(
+        auth_session.os.environ,
+        {"FURUFLOW_SESSION_BROKER_PUBLIC_ORIGIN": "https://app.invalid"},
+        clear=False,
+    ):
+        with patch.object(auth_session.st, "session_state", state):
+            with patch("auth_session.component_html") as render:
+                auth_session.render_pending_session_activation()
+                auth_session.render_pending_session_activation()
+
+    assert "furuflow_session_activation" not in state
+    render.assert_called_once()
+    markup = render.call_args.args[0]
+    assert f"https://app.invalid/auth/session/activate?ticket={synthetic_ticket}" in markup
+    assert 'referrerpolicy="no-referrer"' in markup
+    assert 'onload="this.remove()"' in markup
+
+
+def test_pending_activation_rejects_unexpected_ticket_paths_without_rendering() -> None:
+    state = {"furuflow_session_activation": "/auth/session/activate?ticket=synthetic&next=https://evil.invalid"}
+    with patch.dict(
+        auth_session.os.environ,
+        {"FURUFLOW_SESSION_BROKER_PUBLIC_ORIGIN": "https://app.invalid"},
+        clear=False,
+    ):
+        with patch.object(auth_session.st, "session_state", state):
+            with patch("auth_session.component_html") as render:
+                auth_session.render_pending_session_activation()
+
+    assert "furuflow_session_activation" not in state
+    render.assert_not_called()
