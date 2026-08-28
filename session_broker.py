@@ -19,6 +19,7 @@ from billing_service import BillingConfigurationError, BillingOperationError, Bi
 
 COOKIE_NAME = "__Host-furuflow_session"
 _ACTIVATION_TICKET_PATTERN = re.compile(r"(ticket(?:=|%3D))[A-Za-z0-9_-]+", re.IGNORECASE)
+_ACTIVATION_QUERY_PATTERN = re.compile(rb"^ticket=([A-Za-z0-9_-]+)$")
 
 
 def _redact_activation_ticket(value: Any) -> Any:
@@ -275,7 +276,9 @@ def create_app(store: BrokerStore | None = None, billing_service: BillingService
 
     @app.get("/auth/session/activate")
     def activate():
-        opaque = broker_store.consume_ticket(request.args.get("ticket", ""))
+        query_match = _ACTIVATION_QUERY_PATTERN.fullmatch(request.query_string)
+        ticket = query_match.group(1).decode("ascii") if query_match else None
+        opaque = broker_store.consume_ticket(ticket) if ticket else None
         if not opaque:
             response = make_response("Session activation expired.", 400)
             response.headers["Cache-Control"] = "no-store"

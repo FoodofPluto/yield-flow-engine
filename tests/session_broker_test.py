@@ -130,7 +130,11 @@ def test_activation_ticket_redaction_covers_message_args_and_exception_text() ->
 
 
 class FakeStore:
+    def __init__(self) -> None:
+        self.consumed_tickets: list[str] = []
+
     def consume_ticket(self, ticket: str) -> str | None:
+        self.consumed_tickets.append(ticket)
         return "opaque-session" if ticket == "single-use" else None
 
 
@@ -163,9 +167,11 @@ class FakeBilling:
 
 
 def test_activation_sets_secure_httponly_host_cookie() -> None:
+    store = FakeStore()
     with patch.dict(os.environ, _env(), clear=False):
-        client = create_app(FakeStore()).test_client()
+        client = create_app(store).test_client()
         response = client.get("/auth/session/activate?ticket=single-use")
+    assert store.consumed_tickets == ["single-use"]
     cookie = response.headers["Set-Cookie"]
     assert "__Host-furuflow_session=opaque-session" in cookie
     assert "Secure" in cookie
@@ -178,6 +184,40 @@ def test_activation_sets_secure_httponly_host_cookie() -> None:
     assert "history.replaceState" in response.get_data(as_text=True)
     assert "window.top" not in response.get_data(as_text=True)
     assert "single-use" not in response.get_data(as_text=True)
+
+
+@pytest.mark.parametrize(
+    ("query", "synthetic_tickets"),
+    [
+        ("", ()),
+        ("ticket=", ()),
+        (
+            "ticket=single-use&ticket=synthetic-duplicate-b",
+            ("single-use", "synthetic-duplicate-b"),
+        ),
+        ("ticket=single-use&foo=bar", ("single-use",)),
+        ("foo=bar&ticket=single-use", ("single-use",)),
+        ("ticket=single-use&", ("single-use",)),
+        ("ticket=single-use&&", ("single-use",)),
+        ("ticket=single-use=extra", ("single-use",)),
+        ("ticket=synthetic%2Finvalid", ("synthetic/invalid",)),
+    ],
+)
+def test_malformed_activation_query_is_rejected_without_consuming_ticket(
+    query: str, synthetic_tickets: tuple[str, ...]
+) -> None:
+    store = FakeStore()
+    with patch.dict(os.environ, _env(), clear=False):
+        client = create_app(store).test_client()
+        response = client.get(f"/auth/session/activate?{query}")
+
+    assert response.status_code == 400
+    assert response.headers["Cache-Control"] == "no-store"
+    assert response.headers["Referrer-Policy"] == "no-referrer"
+    assert store.consumed_tickets == []
+    body = response.get_data(as_text=True)
+    for synthetic_ticket in synthetic_tickets:
+        assert synthetic_ticket not in body
 
 
 def test_expired_or_replayed_activation_response_does_not_echo_ticket() -> None:

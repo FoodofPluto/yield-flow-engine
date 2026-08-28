@@ -68,6 +68,8 @@ def test_nginx_template_keeps_broker_internal_and_websockets_enabled() -> None:
     assert "location = /v1/session" in rendered
     assert "location ^~ /v1/session/" in rendered
     assert "location = /auth/session/activate" in rendered
+    assert "location = /auth/session {" in rendered
+    assert "location ^~ /auth/session/" in rendered
     assert "location = /billing/checkout" in rendered
     assert "location = /billing/portal" in rendered
     assert "location = /stripe/webhook" in rendered
@@ -75,11 +77,25 @@ def test_nginx_template_keeps_broker_internal_and_websockets_enabled() -> None:
     assert "proxy_pass http://127.0.0.1:8501;" in rendered
     assert "proxy_set_header Upgrade $http_upgrade;" in rendered
     assert "access_log off;" in rendered
-    activation_location = rendered[
-        rendered.index("location = /auth/session/activate") : rendered.index("location / {")
-    ]
+    exact_activation_start = rendered.index("location = /auth/session/activate")
+    blocked_session_root_start = rendered.index("location = /auth/session {")
+    blocked_activation_start = rendered.index("location ^~ /auth/session/")
+    streamlit_start = rendered.index("location / {")
+    assert exact_activation_start < blocked_session_root_start < blocked_activation_start < streamlit_start
+    activation_location = rendered[exact_activation_start:blocked_session_root_start]
     assert "access_log off;" in activation_location
     assert "error_log /dev/null crit;" in activation_location
+    assert "proxy_pass http://127.0.0.1:8510;" in activation_location
+    blocked_locations = (
+        rendered[blocked_session_root_start:blocked_activation_start],
+        rendered[blocked_activation_start:streamlit_start],
+    )
+    for blocked_location in blocked_locations:
+        assert 'return 404 "Session activation unavailable.\\n";' in blocked_location
+        assert 'add_header Cache-Control "no-store" always;' in blocked_location
+        assert 'add_header Referrer-Policy "no-referrer" always;' in blocked_location
+        assert 'add_header X-Content-Type-Options "nosniff" always;' in blocked_location
+        assert "proxy_pass http://127.0.0.1:8501;" not in blocked_location
 
 
 def test_nginx_config_rejects_invalid_port() -> None:
