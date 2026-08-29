@@ -13,6 +13,7 @@ from market_research import (
     ComparisonWeights,
     DataStatus,
     active_filters,
+    all_pools_filters,
     apply_discovery_filters,
     comparison_rows,
     comparison_analysis,
@@ -223,6 +224,20 @@ def test_pool_universe_ignores_discovery_thresholds_and_orders_canonical_rows() 
     assert pool_universe(frame, "c")["pool"].tolist() == ["b", "a", "c"]
 
 
+def test_all_pools_preserves_user_controls_but_neutralizes_opportunity_defaults() -> None:
+    neutral = all_pools_filters(DEFAULT_FILTERS)
+    assert neutral.min_tvl == 0
+    assert neutral.max_risk == 100
+    assert neutral.sort_by == DEFAULT_FILTERS.sort_by
+
+    explicit = all_pools_filters(
+        replace(DEFAULT_FILTERS, search="usdc", min_tvl=12_000_000, max_risk=55, sort_by="Largest TVL")
+    )
+    assert explicit == replace(
+        DEFAULT_FILTERS, search="usdc", min_tvl=12_000_000, max_risk=55, sort_by="Largest TVL"
+    )
+
+
 def test_provenance_fresh_aging_stale_and_unavailable() -> None:
     now = datetime(2026, 8, 10, 12, tzinfo=timezone.utc)
     assert freshness(DataStatus("Provider", now - timedelta(minutes=5)), now=now)["label"] == "Current"
@@ -274,6 +289,7 @@ def test_comparison_limit_removal_and_missing_values() -> None:
     compared = comparison_rows(pools(), ("a", "c"))
     assert compared[1]["APY"] is None
     assert compared[1]["TVL (USD)"] is None
+    assert compared[1]["Signal evidence"] == "Insufficient evidence"
 
 
 def test_selected_set_model_is_deterministic_explainable_and_preserves_identity() -> None:

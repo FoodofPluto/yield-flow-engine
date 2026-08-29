@@ -99,6 +99,23 @@ class DiscoveryFilters:
 DEFAULT_FILTERS = DiscoveryFilters()
 
 
+def all_pools_filters(filters: DiscoveryFilters) -> DiscoveryFilters:
+    """Apply Discover controls without turning All Pools into Opportunities.
+
+    The opportunity defaults intentionally require material TVL and cap the
+    existing risk heuristic.  Those defaults would silently hide legitimate
+    provider rows in the broader All Pools workspace, so they become neutral
+    there.  Any non-default threshold chosen by the user remains authoritative,
+    as do search, classification, stablecoin, and sorting controls.
+    """
+
+    return replace(
+        filters,
+        min_tvl=0.0 if filters.min_tvl == DEFAULT_FILTERS.min_tvl else filters.min_tvl,
+        max_risk=100 if filters.max_risk == DEFAULT_FILTERS.max_risk else filters.max_risk,
+    )
+
+
 @dataclass(frozen=True)
 class DataStatus:
     source: str
@@ -459,6 +476,7 @@ def comparison_rows(frame: pd.DataFrame, selected: Iterable[str]) -> list[dict[s
                 "TVL (USD)": _known(row, "tvlUsd", "tvl_available"),
                 "Risk": str(row.get("risk_band") or "Unknown"),
                 "Signal": str(row.get("signal") or "Unavailable"),
+                "Signal evidence": "Observed" if bool(row.get("signal_available", False)) else "Insufficient evidence",
             }
         )
     return rows

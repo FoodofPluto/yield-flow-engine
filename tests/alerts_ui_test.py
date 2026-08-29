@@ -181,6 +181,29 @@ def test_authenticated_alerts_page_explains_and_pauses_persistent_alert(monkeypa
     assert any(button.label == "Resume" for button in app.button)
 
 
+def test_configured_alert_reopens_current_pool_with_alert_return_context(monkeypatch) -> None:
+    client = FakeNotificationClient(
+        alerts=[
+            {
+                "id": "alert-1",
+                "target_pool_id": "canonical-pool-1",
+                "enabled": True,
+                "minimum_strength": 60,
+                "signal_tier": "free",
+                "delivery_mode": "immediate",
+                "timezone": "UTC",
+                "cooldown_minutes": 1440,
+            }
+        ]
+    )
+    app = _authenticated_alert_app(monkeypatch, client)
+
+    _keyed_button(app, "alert_pool_alert-1").click().run()
+    assert app.query_params["page"] == ["Pool Detail"]
+    assert app.query_params["pool"] == ["canonical-pool-1"]
+    assert any(button.label == "← Back to Alerts" for button in app.button)
+
+
 def test_alert_create_edit_and_delete_survive_normal_reruns(monkeypatch) -> None:
     client = FakeNotificationClient()
     app = _authenticated_alert_app(monkeypatch, client)

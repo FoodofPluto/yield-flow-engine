@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 import html
+from pathlib import Path
 import re
 from urllib.parse import parse_qs, urlparse
 
@@ -47,14 +48,28 @@ class FakeSavedPoolsClient:
 
 
 class FakeMarketResponse:
-    def __init__(self, pool_id: str = "canonical-pool-1", rows: list[dict[str, object]] | None = None) -> None:
+    def __init__(
+        self,
+        pool_id: str = "canonical-pool-1",
+        rows: list[dict[str, object]] | None = None,
+        *,
+        chart: bool = False,
+    ) -> None:
         self.pool_id = pool_id
         self.rows = rows
+        self.chart = chart
 
     def raise_for_status(self) -> None:
         return None
 
     def json(self) -> dict[str, object]:
+        if self.chart:
+            return {
+                "data": [
+                    {"timestamp": 1_787_788_800, "apy": 4.0, "tvlUsd": 9_000_000},
+                    {"timestamp": 1_787_875_200, "apy": 5.0, "tvlUsd": 10_000_000},
+                ]
+            }
         return {
             "data": self.rows or [
                 {
@@ -81,6 +96,7 @@ def _authenticated_app(
     market_rows: list[dict[str, object]] | None = None,
     is_pro: bool = True,
     query_params: dict[str, str] | None = None,
+    signal_history: bool = False,
 ) -> AppTest:
     import auth_service
     import saved_pools
@@ -100,7 +116,15 @@ def _authenticated_app(
     monkeypatch.setattr(auth_service, "validate_session", lambda: True)
     monkeypatch.setattr(auth_service, "can_access_pro", lambda _user: is_pro)
     monkeypatch.setattr(saved_pools, "current_user_saved_pools_client", lambda: client)
-    monkeypatch.setattr(requests, "get", lambda *_args, **_kwargs: FakeMarketResponse(market_pool_id, market_rows))
+    monkeypatch.setattr(
+        requests,
+        "get",
+        lambda url, *_args, **_kwargs: FakeMarketResponse(
+            market_pool_id,
+            market_rows,
+            chart=signal_history and ("/chart/" in str(url) or "/chartLendBorrow/" in str(url)),
+        ),
+    )
     monkeypatch.delenv("FURUFLOW_MARKET_SAMPLE_MODE", raising=False)
     st.cache_data.clear()
     app = AppTest.from_file("app.py", default_timeout=60)
@@ -133,12 +157,17 @@ def test_home_routes_primary_actions_and_opens_canonical_pool_first(monkeypatch)
 
     assert home_tables
     assert home_tables[-1].index("<th>Pool</th>") < home_tables[-1].index("<th>Asset</th>")
+    assert ">aave-v3 · USDC</a>" in home_tables[-1]
     parsed = urlparse(_first_internal_url(home_tables[-1]))
     assert parse_qs(parsed.query)["return_route"] == ["Home"]
     assert 'target="_self"' in home_tables[-1]
     _button(app, "Browse All Pools").click().run()
     assert app.query_params["page"] == ["Discover"]
     assert next(radio for radio in app.radio if radio.label == "Discover view").value == "All Pools"
+
+    signals_app = _authenticated_app(monkeypatch, FakeSavedPoolsClient(), page="Home", is_pro=False)
+    _button(signals_app, "View Signals").click().run()
+    assert signals_app.query_params["page"] == ["Signals"]
 
 
 def test_expired_pool_detail_session_recovers_without_hiding_public_data(monkeypatch) -> None:
@@ -229,6 +258,14 @@ def test_missing_provider_pool_stays_saved_shows_degraded_state_and_can_be_remov
     _button(app, "Remove from Watchlist").click().run()
     assert "saved-pool-now-missing" not in client.rows
     assert any("Your watchlist is empty" in markdown.value for markdown in app.markdown)
+
+
+def test_watchlist_empty_state_routes_to_broader_discovery(monkeypatch) -> None:
+    app = _authenticated_app(monkeypatch, FakeSavedPoolsClient(), page="Watchlists")
+
+    _button(app, "Explore pools to save").click().run()
+    assert app.query_params["page"] == ["Discover"]
+    assert next(radio for radio in app.radio if radio.label == "Discover view").value == "All Pools"
 
 
 def test_strategy_results_actions_use_canonical_watchlist_and_pool_detail_primitives(monkeypatch) -> None:
@@ -330,6 +367,7 @@ def test_opportunities_table_puts_canonical_contextual_pool_link_first(monkeypat
     assert opportunity_tables
     opportunities = opportunity_tables[-1]
     assert opportunities.index("<th>Pool</th>") < opportunities.index("<th>Asset</th>")
+    assert ">aave-v3 · USDC</a>" in opportunities
     parsed = urlparse(_first_internal_url(opportunities))
     assert f"{parsed.scheme}://{parsed.netloc}" == "http://localhost:8501"
     assert parse_qs(parsed.query) == {
@@ -385,7 +423,13 @@ def test_discover_advanced_filters_and_sort_reconstruct_in_a_fresh_browser_sessi
 
 
 def test_signal_engine_renders_pool_link_as_first_visible_table_column(monkeypatch) -> None:
-    app = _authenticated_app(monkeypatch, FakeSavedPoolsClient(), page="Signals", is_pro=True)
+    app = _authenticated_app(
+        monkeypatch,
+        FakeSavedPoolsClient(),
+        page="Signals",
+        is_pro=True,
+        signal_history=True,
+    )
 
     signal_tables = _internal_tables(app, "Strength")
     assert signal_tables
@@ -395,6 +439,9 @@ def test_signal_engine_renders_pool_link_as_first_visible_table_column(monkeypat
     assert any(button.label == "Research" for button in app.button)
     rendered = "\n".join(markdown.value for markdown in app.markdown)
     assert "evidence to investigate, not a recommendation" in rendered
+    assert "Observed signal evidence" in rendered
+    assert "Pools evaluated" in rendered
+    assert "Non-steady classifications" in rendered
 
 
 def test_discover_all_pools_reaches_non_curated_pool_with_canonical_actions(monkeypatch) -> None:
@@ -437,7 +484,8 @@ def test_discover_all_pools_reaches_non_curated_pool_with_canonical_actions(monk
 
     next(radio for radio in app.radio if radio.label == "Discover view").set_value("All Pools").run()
     assert not app.exception
-    assert not any(expander.label == "Discover Filters" for expander in app.expander)
+    assert any(expander.label == "Discover Filters" for expander in app.expander)
+    assert any(expander.label == "Advanced filters & sorting" for expander in app.expander)
     universe_tables = _internal_tables(app, "Strategy")
     assert universe_tables[-1].index("aave-v3") < universe_tables[-1].index("zeta-protocol")
     parsed = urlparse(_first_internal_url(universe_tables[-1], "broader-pool"))
@@ -507,10 +555,14 @@ def test_research_is_selected_pool_analysis_not_discover_repeated(monkeypatch) -
     }
     assert any("Observed current metrics" in markdown.value for markdown in app.markdown)
     assert any("Calculated context" in markdown.value for markdown in app.markdown)
+    assert any("Insufficient evidence" in markdown.value for markdown in app.markdown)
     research_tables = _internal_tables(app, "Strategy")
     parsed = urlparse(_first_internal_url(research_tables[-1]))
     assert parse_qs(parsed.query)["return_route"] == ["Research"]
     assert any(button.label == "Create alert" for button in app.button)
+    next(button for button in app.button if button.key == "compare_remove_pool-a").click().run()
+    selected = next(multiselect for multiselect in app.multiselect if multiselect.label == "Selected pools")
+    assert selected.value == ["pool-b"]
 
 
 def test_pool_detail_carries_pool_into_research_without_pool_url_state(monkeypatch) -> None:
@@ -524,6 +576,20 @@ def test_pool_detail_carries_pool_into_research_without_pool_url_state(monkeypat
     assert "pool" not in app.query_params
     selection = next(multiselect for multiselect in app.multiselect if multiselect.label == "Selected pools")
     assert selection.value == ["canonical-pool-1"]
+
+
+def test_pool_detail_labels_protocol_destination_as_external(monkeypatch) -> None:
+    app = _authenticated_app(monkeypatch, FakeSavedPoolsClient(), page="Pool Detail")
+    app.query_params["pool"] = "canonical-pool-1"
+    app.run()
+
+    assert 'st.link_button("Open on protocol ↗"' in Path("app.py").read_text(encoding="utf-8")
+    assert any("External destination" in caption.value for caption in app.caption)
+    stats = next(table.value for table in app.dataframe if {"Metric", "Value"} <= set(table.value.columns))
+    values = dict(zip(stats["Metric"], stats["Value"], strict=True))
+    assert values["Classification"] == "Insufficient evidence"
+    assert values["7d APY change"] == "Insufficient evidence"
+    assert values["7d TVL change"] == "Insufficient evidence"
 
 
 def test_methodology_documents_actual_product_model_and_limitations(monkeypatch) -> None:

@@ -43,7 +43,8 @@ def test_internal_pool_detail_tables_do_not_use_new_tab_link_columns() -> None:
     assert "st.column_config.LinkColumn" not in app_source
     assert 'target="_self"' in shell_source
     assert "_blank" not in shell_source
-    assert 'st.link_button("Open Pool", row["pool_url"]' in app_source
+    assert 'st.link_button("Open on protocol ↗", row["pool_url"]' in app_source
+    assert 'st.caption("External destination")' in app_source
 
 
 def test_signal_metrics_use_distinct_canonical_semantics() -> None:

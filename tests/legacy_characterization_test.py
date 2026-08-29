@@ -19,6 +19,7 @@ def test_linkdebug_is_a_reduced_app_copy_with_known_canonical_shell_features_mis
     assert app_functions - linkdebug_functions == {
         "_alert_form",
         "_internal_table_value",
+        "_internal_pool_link_label",
         "build_signal_card_assets",
         "clear_discover_query_state",
         "fetch_enriched_pools",
@@ -26,6 +27,7 @@ def test_linkdebug_is_a_reduced_app_copy_with_known_canonical_shell_features_mis
         "open_research",
         "open_research_many",
         "open_pool_detail",
+        "remove_research_pool",
         "render_alerts_page",
         "render_internal_pool_table",
         "return_from_pool_detail",
