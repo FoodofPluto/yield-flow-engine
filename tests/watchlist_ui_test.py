@@ -344,8 +344,7 @@ def test_yield_spread_pair_carries_both_canonical_pools_into_research(monkeypatc
     assert any(button.label == "Create Alert" for button in app.button)
     _button(app, "Compare pair in Research").click().run()
     assert app.query_params["page"] == ["Research"]
-    selection = next(multiselect for multiselect in app.multiselect if multiselect.label == "Selected pools")
-    assert set(selection.value) == {"higher-pool", "lower-pool"}
+    assert set(app.session_state["research_selection"]) == {"higher-pool", "lower-pool"}
 
 
 def test_strategy_result_carries_canonical_pool_into_research(monkeypatch) -> None:
@@ -356,8 +355,7 @@ def test_strategy_result_carries_canonical_pool_into_research(monkeypatch) -> No
 
     next(button for button in app.button if button.key == "strategy_result_research").click().run()
     assert app.query_params["page"] == ["Research"]
-    selection = next(multiselect for multiselect in app.multiselect if multiselect.label == "Selected pools")
-    assert selection.value == ["canonical-pool-1"]
+    assert app.session_state["research_selection"] == ["canonical-pool-1"]
 
 
 def test_opportunities_table_puts_canonical_contextual_pool_link_first(monkeypatch) -> None:
@@ -538,12 +536,14 @@ def test_research_is_selected_pool_analysis_not_discover_repeated(monkeypatch) -
         page="Research",
         is_pro=True,
         market_rows=rows,
+        query_params={"compare": "pool-a"},
     )
 
     assert not any(expander.label in {"Discover Filters", "Advanced filters & sorting"} for expander in app.expander)
     assert not any(radio.label == "Research view" for radio in app.radio)
-    selected = next(multiselect for multiselect in app.multiselect if multiselect.label == "Selected pools")
-    selected.set_value(["pool-a", "pool-b"]).run()
+    picker = next(selectbox for selectbox in app.selectbox if selectbox.label == "Add pool to comparison")
+    picker.set_value("pool-b").run()
+    assert app.session_state["research_selection"] == ["pool-a", "pool-b"]
     assert not app.exception
     _button(app, "Yield Seeking").click().run()
     weights = {slider.label: slider.value for slider in app.slider if "weight" in slider.label.lower()}
@@ -561,8 +561,58 @@ def test_research_is_selected_pool_analysis_not_discover_repeated(monkeypatch) -
     assert parse_qs(parsed.query)["return_route"] == ["Research"]
     assert any(button.label == "Create alert" for button in app.button)
     next(button for button in app.button if button.key == "compare_remove_pool-a").click().run()
-    selected = next(multiselect for multiselect in app.multiselect if multiselect.label == "Selected pools")
-    assert selected.value == ["pool-b"]
+    assert app.session_state["research_selection"] == ["pool-b"]
+
+
+def test_research_selected_pool_controls_remove_only_their_canonical_identity(monkeypatch) -> None:
+    pool_ids = ("SOL", "YFI", "AERO", "USD3", "NEW")
+    rows = [
+        {
+            "pool": pool_id,
+            "chain": "Ethereum",
+            "project": "protocol",
+            "symbol": pool_id,
+            "apy": 5.0 + index,
+            "apyBase": 5.0 + index,
+            "apyReward": 0.0,
+            "tvlUsd": 10_000_000 + index,
+            "stablecoin": True,
+        }
+        for index, pool_id in enumerate(pool_ids)
+    ]
+    app = _authenticated_app(
+        monkeypatch,
+        FakeSavedPoolsClient(),
+        page="Research",
+        is_pro=True,
+        market_rows=rows,
+        query_params={"compare": "SOL,YFI,AERO,USD3"},
+    )
+
+    assert app.session_state["research_selection"] == ["SOL", "YFI", "AERO", "USD3"]
+    assert app.query_params["compare"] == ["SOL,YFI,AERO,USD3"]
+    picker = next(selectbox for selectbox in app.selectbox if selectbox.label == "Add pool to comparison")
+    assert picker.disabled
+
+    next(button for button in app.button if button.key == "research_selected_remove_AERO").click().run()
+    assert app.session_state["research_selection"] == ["SOL", "YFI", "USD3"]
+    assert app.query_params["compare"] == ["SOL,YFI,USD3"]
+    assert not any(button.key == "research_selected_remove_AERO" for button in app.button)
+
+    app.run()
+    next(button for button in app.button if button.key == "research_selected_remove_SOL").click().run()
+    assert app.session_state["research_selection"] == ["YFI", "USD3"]
+    assert app.query_params["compare"] == ["YFI,USD3"]
+
+    picker = next(selectbox for selectbox in app.selectbox if selectbox.label == "Add pool to comparison")
+    picker.set_value("NEW").run()
+    assert app.session_state["research_selection"] == ["YFI", "USD3", "NEW"]
+    assert app.query_params["compare"] == ["YFI,USD3,NEW"]
+    assert not app.exception
+
+    next(button for button in app.button if button.key == "research_selected_remove_NEW").click().run()
+    assert app.session_state["research_selection"] == ["YFI", "USD3"]
+    assert app.query_params["compare"] == ["YFI,USD3"]
 
 
 def test_pool_detail_carries_pool_into_research_without_pool_url_state(monkeypatch) -> None:
@@ -574,8 +624,7 @@ def test_pool_detail_carries_pool_into_research_without_pool_url_state(monkeypat
     assert not app.exception
     assert app.query_params["page"] == ["Research"]
     assert "pool" not in app.query_params
-    selection = next(multiselect for multiselect in app.multiselect if multiselect.label == "Selected pools")
-    assert selection.value == ["canonical-pool-1"]
+    assert app.session_state["research_selection"] == ["canonical-pool-1"]
 
 
 def test_pool_detail_labels_protocol_destination_as_external(monkeypatch) -> None:

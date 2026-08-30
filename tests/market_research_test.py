@@ -282,6 +282,7 @@ def test_comparison_limit_removal_and_missing_values() -> None:
     for pool_id in ("a", "b", "c", "d"):
         selected = update_comparison(selected, pool_id, selected_state=True)
     assert len(selected) == COMPARISON_LIMIT
+    assert update_comparison(selected, "b", selected_state=True) == selected
     with pytest.raises(ValueError, match="up to 4"):
         update_comparison(selected, "e", selected_state=True)
     selected = update_comparison(selected, "b", selected_state=False)
@@ -290,6 +291,35 @@ def test_comparison_limit_removal_and_missing_values() -> None:
     assert compared[1]["APY"] is None
     assert compared[1]["TVL (USD)"] is None
     assert compared[1]["Signal evidence"] == "Insufficient evidence"
+
+
+@pytest.mark.parametrize(
+    ("removed", "expected"),
+    [
+        ("a", ("b", "c", "d")),
+        ("c", ("a", "b", "d")),
+        ("d", ("a", "b", "c")),
+    ],
+)
+def test_comparison_removal_targets_canonical_identity_and_preserves_order(
+    removed: str,
+    expected: tuple[str, ...],
+) -> None:
+    assert update_comparison(("a", "b", "c", "d"), removed, selected_state=False) == expected
+
+
+def test_comparison_sequential_removal_and_addition_do_not_restore_stale_identity() -> None:
+    selected = update_comparison(("a", "b", "c", "d"), "b", selected_state=False)
+    assert selected == ("a", "c", "d")
+
+    selected = tuple(selected)
+    selected = update_comparison(selected, "c", selected_state=False)
+    assert selected == ("a", "d")
+
+    selected = update_comparison(selected, "e", selected_state=True)
+    assert selected == ("a", "d", "e")
+    assert "b" not in selected
+    assert "c" not in selected
 
 
 def test_selected_set_model_is_deterministic_explainable_and_preserves_identity() -> None:

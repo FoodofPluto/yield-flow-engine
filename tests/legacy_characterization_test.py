@@ -20,6 +20,7 @@ def test_linkdebug_is_a_reduced_app_copy_with_known_canonical_shell_features_mis
         "_alert_form",
         "_internal_table_value",
         "_internal_pool_link_label",
+        "add_research_pool_from_picker",
         "build_signal_card_assets",
         "clear_discover_query_state",
         "fetch_enriched_pools",

@@ -61,6 +61,7 @@ from market_research import (
     sensitive_query_keys,
     strategy_match_explanation,
     track_research_event,
+    update_comparison,
     yield_explanation,
     yield_spreads,
 )
@@ -1144,11 +1145,22 @@ def open_research_many(pool_ids: tuple[str, ...]) -> None:
 def remove_research_pool(pool_id: str) -> None:
     """Remove a canonical pool through a widget callback-safe state update."""
 
-    st.session_state["research_selection"] = [
-        selected_id
-        for selected_id in st.session_state.get("research_selection", ())
-        if str(selected_id) != str(pool_id)
-    ]
+    selected = tuple(st.session_state.get("research_selection") or ())
+    st.session_state["research_selection"] = list(
+        update_comparison(selected, str(pool_id), selected_state=False)
+    )
+
+
+def add_research_pool_from_picker() -> None:
+    """Add the picker value to canonical Research state by immutable pool ID."""
+
+    pool_id = str(st.session_state.get("research_pool_addition") or "")
+    if not pool_id:
+        return
+    selected = tuple(st.session_state.get("research_selection") or ())
+    st.session_state["research_selection"] = list(
+        update_comparison(selected, pool_id, selected_state=True)
+    )
 
 
 def go_to_route(route: str, *, view: str | None = None) -> None:
@@ -2406,19 +2418,52 @@ elif content_page == "Research Comparison":
         ):
             st.session_state["research_selection"] = available_saved
             st.rerun()
-        selected_compare = st.multiselect(
-            "Selected pools",
-            compare_options,
-            key="research_selection",
-            max_selections=COMPARISON_LIMIT,
-            format_func=lambda pool_id: label_by_pool.get(pool_id, pool_id),
-            placeholder="Choose two to four pools",
-        )
+        selected_compare = list(st.session_state["research_selection"])
         if selected_compare:
             st.query_params["compare"] = ",".join(selected_compare)
         elif "compare" in st.query_params:
             del st.query_params["compare"]
-        st.caption(f"{len(selected_compare)} of {COMPARISON_LIMIT} comparison slots used. Missing values remain unavailable, never zero-filled.")
+
+        st.markdown("**Selected pools**")
+        if selected_compare:
+            for pool_id in selected_compare:
+                selected_label = label_by_pool.get(pool_id, pool_id)
+                selected_label_col, selected_remove_col = st.columns([5, 1])
+                selected_label_col.markdown(selected_label)
+                selected_remove_col.button(
+                    "Remove",
+                    key=f"research_selected_remove_{pool_id}",
+                    help=f"Remove {selected_label} ({pool_id}) from this comparison.",
+                    width="stretch",
+                    on_click=remove_research_pool,
+                    args=(pool_id,),
+                )
+        else:
+            st.caption("Choose two to four pools.")
+
+        if st.session_state.get("research_pool_addition") in selected_compare:
+            st.session_state["research_pool_addition"] = None
+        remaining_compare_options = [
+            pool_id for pool_id in compare_options if pool_id not in selected_compare
+        ]
+        st.selectbox(
+            "Add pool to comparison",
+            remaining_compare_options,
+            index=None,
+            key="research_pool_addition",
+            disabled=len(selected_compare) >= COMPARISON_LIMIT or not remaining_compare_options,
+            format_func=lambda pool_id: label_by_pool.get(pool_id, pool_id),
+            placeholder=(
+                "Remove a pool before adding another"
+                if len(selected_compare) >= COMPARISON_LIMIT
+                else "Search the current pool universe"
+            ),
+            on_change=add_research_pool_from_picker,
+        )
+        st.caption(
+            f"{len(selected_compare)} of {COMPARISON_LIMIT} comparison slots used. "
+            "Missing values remain unavailable, never zero-filled."
+        )
         if st.button(
             "Clear comparison",
             key="clear_comparison",
