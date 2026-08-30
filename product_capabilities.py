@@ -108,6 +108,20 @@ PLANNED_TIERS = (
     ),
 )
 
+TIER_DEFINITIONS_BY_TIER = {definition.tier: definition for definition in PLANNED_TIERS}
+
+CAPABILITY_PRESENTATION = (
+    (Capability.BROWSE_POOLS, "Discover and Pool Detail"),
+    (Capability.BASIC_SIGNALS, "Basic signal evidence"),
+    (Capability.WATCHLISTS, "Durable Watchlists"),
+    (Capability.ALERTS, "Telegram Alerts"),
+    (Capability.RESEARCH_MODELING, "Research comparison"),
+    (Capability.PRO_TOOLS, "Strategy Builder and Yield Spreads"),
+    (Capability.FULL_SIGNALS, "Full Signals"),
+    (Capability.ADVANCED_SORTING, "Advanced sorting and full Discover depth"),
+    (Capability.CSV_EXPORT, "CSV export"),
+)
+
 
 def capabilities_for_tier(tier: ProductTier | str) -> ProductCapabilities:
     resolved = tier if isinstance(tier, ProductTier) else ProductTier(str(tier).strip().lower())
@@ -122,6 +136,26 @@ def capabilities_from_current_entitlement(*, is_pro: bool) -> ProductCapabilitie
     """
 
     return capabilities_for_tier(ProductTier.PRO if is_pro else ProductTier.FREE)
+
+
+def tier_definition(tier: ProductTier | str) -> TierDefinition:
+    resolved = tier if isinstance(tier, ProductTier) else ProductTier(str(tier).strip().lower())
+    return TIER_DEFINITIONS_BY_TIER[resolved]
+
+
+def capability_presentation(capabilities: ProductCapabilities) -> dict[str, tuple[str, ...] | str]:
+    """Return customer-facing plan details from the canonical capability set."""
+
+    included = tuple(label for capability, label in CAPABILITY_PRESENTATION if capabilities.allows(capability))
+    unavailable = tuple(label for capability, label in CAPABILITY_PRESENTATION if not capabilities.allows(capability))
+    definition = tier_definition(capabilities.tier)
+    return {
+        "plan": definition.name,
+        "price": definition.monthly_price,
+        "purpose": definition.purpose,
+        "included": included,
+        "unavailable": unavailable,
+    }
 
 
 def can_use_watchlists(capabilities: ProductCapabilities) -> bool:

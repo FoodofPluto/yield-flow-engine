@@ -66,4 +66,8 @@ def test_signal_metrics_use_distinct_canonical_semantics() -> None:
     assert "OBSERVED_SIGNAL_EVIDENCE_LABEL" in methodology_page
     assert "POOLS_EVALUATED_LABEL" in methodology_page
     assert "NON_STEADY_CLASSIFICATIONS_LABEL" in methodology_page
+    assert "signal_status[0].metric(POOLS_EVALUATED_LABEL" in methodology_page
+    assert "signal_status[1].metric(OBSERVED_SIGNAL_EVIDENCE_LABEL" in methodology_page
+    assert "signal_status[2].metric(NON_STEADY_CLASSIFICATIONS_LABEL" in methodology_page
+    assert "does not mean every pool was Steady" in methodology_page
     assert '"Active signals"' not in app_source

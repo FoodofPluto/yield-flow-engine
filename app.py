@@ -20,6 +20,7 @@ import streamlit as st
 
 
 from auth import login_form
+from beta_readiness import beta_diagnostics
 from auth_session import render_pending_session_activation
 from automation.store import AutomationStoreError
 from auth_service import can_access_pro, claim_session, get_current_user, is_admin, logout, validate_session
@@ -77,6 +78,7 @@ from product_capabilities import (
     can_use_pro_tools,
     can_use_research_modeling,
     can_use_watchlists,
+    capability_presentation,
     capabilities_from_current_entitlement,
     required_tier_name,
 )
@@ -123,7 +125,7 @@ from user_alerts import (
 
 APP_NAME = "FuruFlow"
 APP_VERSION = "v8.1"
-APP_TAGLINE = "Find the smartest yields. Avoid the dumb ones."
+APP_TAGLINE = "Research DeFi yields with clearer context."
 LINK_RESOLVER_VERSION = "2026-03-28-linkfix-2"
 POOL_LIMIT = 400
 FREE_POOL_LIMIT = 10
@@ -131,6 +133,7 @@ FREE_SORT_OPTIONS = ["Highest APY", "Largest TVL"]
 PRO_SORT_OPTIONS = ["FuruFlow rank", "Lowest risk", "Highest 24h volume", "Largest signal move"]
 TIMEOUT = 18
 SIGNAL_SAMPLE = 16
+BETA_DIAGNOSTICS = beta_diagnostics(os.environ, app_version=APP_VERSION)
 AFFILIATE_LINKS = {
     "aave": "https://app.aave.com/?ref=furuflow",
     "aave-v3": "https://app.aave.com/?ref=furuflow",
@@ -549,8 +552,8 @@ def fetch_pool_chart(pool_id: str) -> pd.DataFrame:
             chart = chart.dropna(subset=["timestamp"]).sort_values("timestamp")
             for col in ["apy", "apyBase", "apyReward", "tvlUsd"]:
                 if col not in chart.columns:
-                    chart[col] = 0.0
-                chart[col] = pd.to_numeric(chart[col], errors="coerce").fillna(0.0)
+                    chart[col] = pd.NA
+                chart[col] = pd.to_numeric(chart[col], errors="coerce")
             return chart[["timestamp", "apy", "apyBase", "apyReward", "tvlUsd"]].copy()
         except Exception:
             continue
@@ -574,7 +577,9 @@ def fetch_signal_snapshots(pool_ids: tuple[str, ...]) -> pd.DataFrame:
                 chart = pd.DataFrame()
             if chart.empty:
                 continue
-            rows.append(derive_chart_signal(pool_id, chart))
+            observed = derive_chart_signal(pool_id, chart)
+            if "signal" in observed:
+                rows.append(observed)
 
     return pd.DataFrame(rows)
 
@@ -597,11 +602,14 @@ def get_pool_chart_with_fallback(row: pd.Series) -> tuple[pd.DataFrame, str]:
 
 
 def derive_chart_signal(pool_id: str, chart: pd.DataFrame) -> dict[str, Any]:
-    recent = chart.dropna(subset=["timestamp"]).sort_values("timestamp").tail(30).copy()
-    if recent.empty:
+    required = {"timestamp", "apy", "tvlUsd"}
+    if not required.issubset(chart.columns):
         return {"pool": pool_id}
-    recent["apy_change"] = recent["apy"].pct_change().replace([float("inf"), float("-inf")], 0).fillna(0)
-    recent["tvl_change"] = recent["tvlUsd"].pct_change().replace([float("inf"), float("-inf")], 0).fillna(0)
+    recent = chart.dropna(subset=["timestamp", "apy", "tvlUsd"]).sort_values("timestamp").tail(30).copy()
+    if len(recent) < 2:
+        return {"pool": pool_id}
+    recent["apy_change"] = recent["apy"].pct_change(fill_method=None).replace([float("inf"), float("-inf")], pd.NA)
+    recent["tvl_change"] = recent["tvlUsd"].pct_change(fill_method=None).replace([float("inf"), float("-inf")], pd.NA)
     apy_last = float(recent["apy"].iloc[-1])
     apy_prev = float(recent["apy"].iloc[max(0, len(recent) - 8)])
     tvl_last = float(recent["tvlUsd"].iloc[-1])
@@ -1116,6 +1124,34 @@ def clear_discover_query_state() -> None:
             del st.query_params[key]
 
 
+def reset_discover_filters() -> None:
+    """Restore the canonical Discover defaults from any actionable empty state."""
+
+    st.session_state.update(
+        {
+            "market_search": DEFAULT_FILTERS.search,
+            "market_chains": [],
+            "market_protocols": [],
+            "market_strategies": [],
+            "market_signals": [],
+            "market_stable": DEFAULT_FILTERS.stablecoin_only,
+            "market_min_tvl": int(DEFAULT_FILTERS.min_tvl),
+            "market_max_risk": DEFAULT_FILTERS.max_risk,
+            "market_min_apy": DEFAULT_FILTERS.min_apy,
+            "market_sort": DEFAULT_FILTERS.sort_by,
+        }
+    )
+    clear_discover_query_state()
+
+
+def refresh_market_data() -> None:
+    """Clear only bounded public market caches before a user-requested retry."""
+
+    fetch_enriched_pools.clear()
+    fetch_pool_chart.clear()
+    fetch_signal_snapshots.clear()
+
+
 def start_alert_creation(pool_id: str) -> None:
     st.session_state.update(alert_creation_state(pool_id))
     clear_discover_query_state()
@@ -1376,6 +1412,8 @@ def render_home_page(
     watchlist_count: int,
     capabilities: ProductCapabilities,
     signed_in: bool,
+    source_label: str,
+    freshness_label: str,
 ) -> None:
     indexed_count = len(pool_universe(market_df))
     opportunity_count = len(opportunity_df)
@@ -1395,20 +1433,28 @@ def render_home_page(
         """,
         unsafe_allow_html=True,
     )
-    section_header("Workflow", "Find → Evaluate → Save → Monitor → Optimize", "Start with public discovery. Capabilities unlock the next step without changing the identity of the pool you selected.")
-    action_columns = st.columns(5)
-    if action_columns[0].button("Browse All Pools", key="home_browse_all", type="primary", width="stretch"):
+    plan = capability_presentation(capabilities)
+    if signed_in:
+        render_status(
+            "info",
+            "Start with one pool",
+            "Discover finds pools; Pool Detail evaluates one; Research compares; Watchlist saves; Alerts monitors; Signals shows observed changes. Higher tiers reduce manual work and unlock advanced workflows.",
+        )
+    section_header(
+        "Workflow",
+        "Find → Evaluate → Save → Monitor → Optimize",
+        f"Current plan: {plan['plan']}. Data: {source_label} · {freshness_label}. Start with discovery, then keep the same canonical pool identity through each available step.",
+    )
+    action_columns = st.columns(3)
+    if action_columns[0].button("Discover Pools", key="home_browse_all", type="primary", width="stretch"):
         go_to_route("Discover", view="All Pools")
         st.rerun()
-    if action_columns[1].button("View Opportunities", key="home_opportunities", width="stretch"):
-        go_to_route("Discover", view="Opportunities")
-        st.rerun()
-    if action_columns[2].button("View Signals", key="home_signals", width="stretch"):
+    if action_columns[1].button("View Signals", key="home_signals", width="stretch"):
         go_to_route("Signals")
         st.rerun()
     research_enabled = can_use_research_modeling(capabilities)
     research_tier = required_tier_name(Capability.RESEARCH_MODELING)
-    if action_columns[3].button(
+    if action_columns[2].button(
         "Compare Pools" if research_enabled else f"Comparison · {research_tier}",
         key="home_research",
         width="stretch",
@@ -1419,7 +1465,8 @@ def render_home_page(
         st.rerun()
     watch_enabled = signed_in and can_use_watchlists(capabilities)
     watchlist_tier = required_tier_name(Capability.WATCHLISTS)
-    if action_columns[4].button(
+    monitor_columns = st.columns(2)
+    if monitor_columns[0].button(
         "Open Watchlist" if watch_enabled else f"Watchlists · {watchlist_tier}",
         key="home_watchlist",
         width="stretch",
@@ -1427,6 +1474,17 @@ def render_home_page(
         help=None if watch_enabled else f"The planned {watchlist_tier} capability adds durable Watchlists.",
     ):
         go_to_route("Watchlists")
+        st.rerun()
+    alerts_enabled_for_user = signed_in and can_use_alerts(capabilities)
+    alerts_tier = required_tier_name(Capability.ALERTS)
+    if monitor_columns[1].button(
+        "Open Alerts" if alerts_enabled_for_user else f"Alerts · {alerts_tier}",
+        key="home_alerts",
+        width="stretch",
+        disabled=not alerts_enabled_for_user,
+        help=None if alerts_enabled_for_user else f"The planned {alerts_tier} capability adds Telegram monitoring rules.",
+    ):
+        go_to_route("Alerts")
         st.rerun()
 
     stat_columns = st.columns(4)
@@ -1444,7 +1502,7 @@ def render_home_page(
         if watch_enabled:
             stat_card("Watched pools", f"{watchlist_count:,}", "Durable saved pools for this account")
         else:
-            stat_card("Public access", "Free", "Browse, inspect, and open canonical pool links")
+            stat_card("Current plan", str(plan["plan"]), "Review included and unavailable capabilities in Account")
 
     st.markdown("<div class='panel'>", unsafe_allow_html=True)
     section_header("Current opportunities", "Open a pool first", "The first column opens canonical Pool Detail; use the reported metrics for triage, not as a promise of performance.")
@@ -1742,8 +1800,14 @@ def render_alerts_page(df: pd.DataFrame, *, full_signal_access: bool, account_ti
     if not alerts:
         render_state(
             "No alerts yet",
-            "Create a pool alert to be notified when that exact pool qualifies in the existing FuruFlow signal pipeline.",
+            (
+                "Choose an exact pool, then create a Telegram rule for the signal conditions you want monitored. "
+                + ("Your verified Telegram connection is ready." if linked else "Telegram must be verified before the first alert can be created.")
+            ),
         )
+        if st.button("Browse pools for an alert", key="alerts_empty_discover", type="primary"):
+            go_to_route("Discover", view="All Pools")
+            st.rerun()
         return
 
     st.markdown("### Configured alerts")
@@ -1858,6 +1922,13 @@ with st.sidebar:
                 st.caption("Your session ended. Use the recovery controls on this page to sign in again.")
             else:
                 login_form()
+    with st.expander("Beta help", expanded=False):
+        st.caption("Report the page, approximate time, pool, attempted action, and visible error. Never send passwords, magic links, tokens, or session cookies.")
+        if BETA_DIAGNOSTICS.support_url:
+            st.link_button("Beta feedback ↗", BETA_DIAGNOSTICS.support_url, width="stretch")
+            st.caption("External support destination")
+        else:
+            st.caption("A beta feedback destination is not configured in this build.")
 
 account_user = get_current_user()
 signed_in = bool(account_user and account_user.get("_identity_verified"))
@@ -1949,6 +2020,13 @@ if session_expired:
         with st.container(border=True, key="session_recovery_login"):
             login_form()
 
+if signed_in and not bool(db_user.get("_account_available", True)):
+    render_status(
+        "degraded",
+        "Account state temporarily unavailable",
+        "FuruFlow could not confirm account capabilities. Paid and account-owned actions remain unavailable; refresh or sign in again after the account service recovers.",
+    )
+
 allowed, denial_reason = route_access(
     page,
     signed_in=signed_in,
@@ -1965,6 +2043,9 @@ if not allowed:
             "Capability not available",
             "This workflow is outside the current account capability set. Pricing shows the planned beta ladder; no unsupported checkout is offered.",
         )
+        if st.button("Review plans", key="denied_review_plans", type="primary"):
+            go_to_route("Pricing")
+            st.rerun()
     else:
         render_status("unauthorized", "Unauthorized", "This route is restricted to verified administrators.")
     st.stop()
@@ -1995,19 +2076,22 @@ signal_df = fetch_signal_snapshots(signal_source)
 if not signal_df.empty:
     df = df.merge(signal_df, on="pool", how="left")
 df["signal_available"] = df["pool"].isin(signal_df["pool"]) if not signal_df.empty else False
-for col, default in [("signal", "Steady"), ("apy_delta_7", 0.0), ("tvl_delta_7_pct", 0.0), ("apy_volatility", 0.0)]:
+if "signal" not in df.columns:
+    df["signal"] = "Insufficient evidence"
+df["signal"] = df["signal"].fillna("Insufficient evidence")
+for col in ("apy_delta_7", "tvl_delta_7_pct", "apy_volatility"):
     if col not in df.columns:
-        df[col] = default
-    df[col] = df[col].fillna(default)
+        df[col] = pd.NA
+    df[col] = pd.to_numeric(df[col], errors="coerce")
 
 if df.empty:
     df["signal_strength"] = pd.Series(dtype="float64")
 else:
     df["signal_strength"] = df.apply(
-        lambda row: score_signal_movement(
-            row["apy_delta_7"],
-            row["tvl_delta_7_pct"],
-            row["apy_volatility"],
+        lambda row: (
+            score_signal_movement(row["apy_delta_7"], row["tvl_delta_7_pct"], row["apy_volatility"])
+            if bool(row["signal_available"])
+            else pd.NA
         ),
         axis=1,
     )
@@ -2085,21 +2169,7 @@ with st.sidebar:
                 "Clear all filters",
                 key="market_clear_all",
                 width="stretch",
-                on_click=st.session_state.update,
-                args=(
-                    {
-                        "market_search": DEFAULT_FILTERS.search,
-                        "market_chains": [],
-                        "market_protocols": [],
-                        "market_strategies": [],
-                        "market_signals": [],
-                        "market_stable": DEFAULT_FILTERS.stablecoin_only,
-                        "market_min_tvl": int(DEFAULT_FILTERS.min_tvl),
-                        "market_max_risk": DEFAULT_FILTERS.max_risk,
-                        "market_min_apy": DEFAULT_FILTERS.min_apy,
-                        "market_sort": DEFAULT_FILTERS.sort_by,
-                    },
-                ),
+                on_click=reset_discover_filters,
             ):
                 track_research_event("filters_reset", {"action": "clear_all", "view": page})
     else:
@@ -2215,6 +2285,7 @@ if market_data_status.availability == "unavailable" and market_filters_apply(pag
         "Market provider unavailable",
         f"{market_source_label} did not return usable market data. This is not a zero-results state, and no sample values were substituted.",
     )
+    st.button("Retry market data", key=f"market_retry_{page}", type="primary", on_click=refresh_market_data)
 elif market_data_status.availability == "sample" and market_filters_apply(page) and page != "Pool Detail":
     render_status("degraded", "Development sample mode", f"{market_source_label} is not live market data.")
 elif market_data_status.availability == "partial" and market_filters_apply(page) and page != "Pool Detail":
@@ -2233,6 +2304,8 @@ if content_page == "Home":
         watchlist_count=len(saved_pool_entries),
         capabilities=capabilities,
         signed_in=signed_in,
+        source_label=market_source_label,
+        freshness_label=market_freshness["label"],
     )
 
 elif content_page == "Scanner":
@@ -2246,6 +2319,12 @@ elif content_page == "Scanner":
                 "empty",
                 "No pools match the active filters",
                 "Remove an active filter or use Clear all filters. The market provider loaded successfully; this is a genuine zero-match result.",
+            )
+            st.button(
+                "Reset filters",
+                key="discover_zero_reset",
+                type="primary",
+                on_click=reset_discover_filters,
             )
         for start in range(0, len(top_cards), 2):
             cols = st.columns(2, gap="medium")
@@ -2285,13 +2364,16 @@ elif content_page == "Scanner":
                 file_name="furuflow_scanner.csv",
                 mime="text/csv",
             )
-        else:
+        elif not export_enabled:
             st.markdown(
                 "<div class='signal-card'><div class='signal-title'>CSV export · Pro — $24.99</div>"
                 f"<div class='signal-copy'>{html.escape(CSV_UPGRADE_MESSAGE)} The future tier is planned and is not yet purchasable.</div></div>",
                 unsafe_allow_html=True,
             )
             render_billing_action(db_user, label="Unlock CSV export")
+        else:
+            render_status("error", "CSV export unavailable", csv_export.message)
+            st.button("Retry CSV generation", key="csv_export_retry")
         st.markdown("</div>", unsafe_allow_html=True)
     with right:
         st.markdown("<div class='panel'>", unsafe_allow_html=True)
@@ -2326,6 +2408,13 @@ elif content_page == "Pool Universe":
             if not df.empty
             else "The provider returned no usable canonical pool identities.",
         )
+        if not df.empty:
+            st.button(
+                "Reset filters",
+                key="universe_zero_reset",
+                type="primary",
+                on_click=reset_discover_filters,
+            )
     else:
         st.caption(
             f"{len(universe_df):,} canonical pool{'s' if len(universe_df) != 1 else ''} match. "
@@ -2386,6 +2475,9 @@ elif content_page == "Research Comparison":
     research_universe = pool_universe(df)
     if research_universe.empty:
         render_status("empty", "Research data unavailable", "The provider returned no usable canonical pools for comparison.")
+        if st.button("Return to Discover", key="research_unavailable_discover", type="primary"):
+            go_to_route("Discover", view="All Pools")
+            st.rerun()
     else:
         if not research_modeling_enabled:
             render_status(
@@ -2479,6 +2571,9 @@ elif content_page == "Research Comparison":
                 "Choose pools to research",
                 "Carry a pool here from Discover, Pool Detail, Signals, or Pro Tools, select one manually, or load current Watchlist pools.",
             )
+            if st.button("Find pools in Discover", key="research_empty_discover", type="primary"):
+                go_to_route("Discover", view="All Pools")
+                st.rerun()
         else:
             track_research_event("comparison_opened", {"count": len(compared_rows), "view": "Comparison"})
             selected_ids = [str(row["pool"]) for row in compared_rows]
@@ -3069,21 +3164,26 @@ elif content_page == "Pool Detail":
         cols = st.columns([1.3, 1], gap="large")
         with cols[0]:
             chart, chart_mode = get_pool_chart_with_fallback(row)
-            if chart.empty:
+            chart_has_apy = "apy" in chart and chart["apy"].notna().any()
+            chart_has_tvl = "tvlUsd" in chart and chart["tvlUsd"].notna().any()
+            if chart.empty or not (chart_has_apy or chart_has_tvl):
                 render_status(
                     "empty",
                     "Historical series unavailable",
-                    "No live or legitimately stored history exists for this pool. FuruFlow does not generate a trend from a single snapshot.",
+                    "No usable live or legitimately stored observations exist for this pool. FuruFlow does not convert missing history to zero or generate a trend from a single snapshot.",
                 )
             else:
                 fig = go.Figure()
-                fig.add_trace(go.Scatter(x=chart["timestamp"], y=chart["apy"], mode="lines", name="APY"))
-                if chart["tvlUsd"].gt(0).any():
+                if chart_has_apy:
+                    fig.add_trace(go.Scatter(x=chart["timestamp"], y=chart["apy"], mode="lines", name="APY"))
+                if chart_has_tvl:
                     fig.add_trace(go.Scatter(x=chart["timestamp"], y=chart["tvlUsd"], mode="lines", name="TVL", yaxis="y2"))
                     fig.update_layout(yaxis2=dict(overlaying="y", side="right", showgrid=False, title="TVL"))
                 fig.update_xaxes(title="Time")
                 fig.update_yaxes(title="APY %")
                 st.plotly_chart(plotly_theme(fig, 430), width="stretch")
+                if not chart_has_apy or not chart_has_tvl:
+                    st.caption("Historical coverage is partial; missing APY or TVL observations remain unavailable rather than zero-filled.")
                 if chart_mode == "stored":
                     st.caption("The provider history endpoint was unavailable; this chart uses real snapshots previously stored by FuruFlow and may be stale.")
                 else:
@@ -3457,6 +3557,7 @@ elif content_page == "Methodology & Data Status":
     }
     if market_data_status.availability == "unavailable":
         render_status("error", "Provider unavailable", f"{market_source_label} returned no usable rows; no sample opportunities were substituted.")
+        st.button("Retry market data", key="data_status_retry", type="primary", on_click=refresh_market_data)
     elif market_data_status.availability == "sample":
         render_status("degraded", "Development sample mode", f"{market_source_label}; values must not be interpreted as live.")
     elif market_data_status.availability == "partial":
@@ -3481,6 +3582,17 @@ elif content_page == "Methodology & Data Status":
         "Latest retrieval",
         retrieved_at.astimezone(timezone.utc).strftime("%b %d · %H:%M UTC") if retrieved_at else "Not reported",
     )
+    observed_status_count = int(df["signal_available"].fillna(False).astype(bool).sum()) if "signal_available" in df else 0
+    non_steady_status_count = (
+        int(df.loc[df["signal_available"].fillna(False).astype(bool), "signal"].ne("Steady").sum())
+        if observed_status_count and "signal" in df
+        else 0
+    )
+    signal_status = st.columns(3)
+    signal_status[0].metric(POOLS_EVALUATED_LABEL, f"{len(df):,}" if len(df) else "Unavailable")
+    signal_status[1].metric(OBSERVED_SIGNAL_EVIDENCE_LABEL, f"{observed_status_count:,}")
+    signal_status[2].metric(NON_STEADY_CLASSIFICATIONS_LABEL, f"{non_steady_status_count:,}")
+    st.caption("A zero observed-evidence count means history was insufficient or unavailable; it does not mean every pool was Steady.")
     st.caption(
         f"Provider: {market_source_label}. {market_freshness['age']}. "
         "The retrieval timestamp describes FuruFlow's current fetch, because the provider does not report a per-pool observation time."
@@ -3614,13 +3726,29 @@ elif content_page == "Alerts":
 
 elif content_page == "Account & Billing":
     st.markdown("<div class='panel'>", unsafe_allow_html=True)
-    section_header("Account & Billing", str(db_user.get("email") or "Signed-in account"), "Your plan comes from verified FuruFlow account state.")
-    current_plan = "Pro" if is_pro else "Free"
+    plan_presentation = capability_presentation(capabilities)
+    section_header(
+        "Account & Billing",
+        str(db_user.get("email") or "Signed-in account"),
+        "Your plan and available actions come from verified FuruFlow account state.",
+    )
+    current_plan = str(plan_presentation["plan"])
     render_status(
         "success" if is_pro else "info",
         f"{current_plan} plan",
         f"Access source: {billing_access_source(db_user)}. Entitlement is reconstructed from trusted account state.",
     )
+    capability_columns = st.columns(2, gap="large")
+    with capability_columns[0]:
+        st.markdown("### Included now")
+        st.markdown("\n".join(f"- {feature}" for feature in plan_presentation["included"]))
+    with capability_columns[1]:
+        st.markdown("### Not included")
+        unavailable_features = plan_presentation["unavailable"]
+        if unavailable_features:
+            st.markdown("\n".join(f"- {feature}" for feature in unavailable_features))
+        else:
+            st.markdown("All capabilities in the current beta ladder are available.")
     billing_status = subscription_summary(db_user)
     if billing_status:
         st.markdown(f"**Subscription:** {billing_status}")
@@ -3633,6 +3761,57 @@ elif content_page == "Account & Billing":
     if db_user.get("subscription_status") not in {None, "inactive", "incomplete_expired"}:
         render_billing_action(db_user, label="Manage billing", portal=True)
     st.caption("Account access remains available if Stripe is temporarily unavailable; billing actions may be retried later.")
+
+    st.markdown("### Telegram")
+    if alerts_enabled:
+        try:
+            account_telegram_status = current_user_notification_client().telegram_status()
+        except RuntimeError:
+            render_status(
+                "degraded",
+                "Telegram state unavailable",
+                "FuruFlow could not verify the notification connection. No routing identifier was shown or guessed; retry later from Alerts.",
+            )
+        else:
+            telegram_connected = bool(account_telegram_status.get("available"))
+            render_status(
+                "success" if telegram_connected else "warning",
+                "Telegram connected" if telegram_connected else "Telegram not connected",
+                (
+                    "The verified notification destination is ready; routing identifiers remain hidden."
+                    if telegram_connected
+                    else "A trusted operator must verify and link Telegram before alert delivery is available."
+                ),
+            )
+    else:
+        render_status(
+            "restricted",
+            f"Telegram Alerts require {required_tier_name(Capability.ALERTS)}",
+            "Your current plan does not include durable alert rules.",
+        )
+
+    st.markdown("### Beta support and diagnostics")
+    st.markdown(
+        "When reporting an issue, include the page, approximate time, pool, attempted action, and visible error. "
+        "Do not send passwords, magic links, access or refresh tokens, session cookies, or other credentials."
+    )
+    if BETA_DIAGNOSTICS.support_url:
+        st.link_button("Open beta support ↗", BETA_DIAGNOSTICS.support_url)
+        st.caption("External support destination")
+    else:
+        render_status(
+            "warning",
+            "Support destination not configured",
+            "This build has no configured feedback URL. Deployment must set FURUFLOW_SUPPORT_URL to an approved HTTPS destination.",
+        )
+    diagnostic_columns = st.columns(3)
+    diagnostic_columns[0].metric("Environment", BETA_DIAGNOSTICS.environment)
+    diagnostic_columns[1].metric("App version", BETA_DIAGNOSTICS.app_version)
+    diagnostic_columns[2].metric("Build", BETA_DIAGNOSTICS.build_id or "Not supplied")
+    st.caption("Only non-sensitive release metadata is shown. Credentials, connection strings, tokens, and raw service configuration are never displayed.")
+    if st.button("Sign out", key="account_page_logout"):
+        logout()
+        st.rerun()
     st.markdown("</div>", unsafe_allow_html=True)
 
 elif content_page == "Admin":

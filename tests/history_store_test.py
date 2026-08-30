@@ -191,6 +191,23 @@ def test_corrupt_and_non_object_history_are_treated_as_empty(tmp_path, monkeypat
     assert history_store.load_history("pool-0").empty
 
 
+def test_missing_history_values_remain_missing_not_zero(tmp_path, monkeypatch) -> None:
+    destination = tmp_path / "pool_history.json"
+    monkeypatch.setenv(history_store.HISTORY_PATH_ENV, str(destination))
+    frame = _frame("2026-08-18T20:00:00+00:00", count=1)
+    frame["apy"] = 0.0
+    frame["apy_available"] = False
+    frame["tvlUsd"] = 0.0
+    frame["tvl_available"] = False
+
+    assert history_store.save_snapshot(frame) is True
+    stored = json.loads(destination.read_text(encoding="utf-8"))["pool-0"][0]
+    loaded = history_store.load_history("pool-0").iloc[0]
+
+    assert stored["apy"] is None and stored["tvlUsd"] is None
+    assert pd.isna(loaded["apy"]) and pd.isna(loaded["tvlUsd"])
+
+
 def test_snapshot_store_retains_configured_pool_limit(tmp_path, monkeypatch) -> None:
     destination = tmp_path / "pool_history.json"
     monkeypatch.setattr(history_store, "HISTORY_FILE", destination)

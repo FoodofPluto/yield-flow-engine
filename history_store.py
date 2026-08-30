@@ -65,9 +65,18 @@ def load_history(pool_id: str) -> pd.DataFrame:
     frame["timestamp"] = pd.to_datetime(frame["timestamp"], errors="coerce", utc=True).dt.tz_localize(None)
     for col in ["apy", "apyBase", "apyReward", "tvlUsd"]:
         if col not in frame.columns:
-            frame[col] = 0.0
-        frame[col] = pd.to_numeric(frame[col], errors="coerce").fillna(0.0)
+            frame[col] = pd.NA
+        frame[col] = pd.to_numeric(frame[col], errors="coerce")
     return frame.dropna(subset=["timestamp"]).sort_values("timestamp")
+
+
+def _observed_number(row: pd.Series, value_key: str, availability_key: str, digits: int) -> float | None:
+    if availability_key in row and not bool(row.get(availability_key)):
+        return None
+    value = row.get(value_key)
+    if value is None or bool(pd.isna(value)):
+        return None
+    return round(float(value), digits)
 
 
 def save_snapshot(df: pd.DataFrame) -> bool:
@@ -88,10 +97,10 @@ def save_snapshot(df: pd.DataFrame) -> bool:
                 continue
             point = {
                 "timestamp": timestamp,
-                "apy": round(float(row.get("apy", 0.0) or 0.0), 4),
-                "apyBase": round(float(row.get("apyBase", 0.0) or 0.0), 4),
-                "apyReward": round(float(row.get("apyReward", 0.0) or 0.0), 4),
-                "tvlUsd": round(float(row.get("tvlUsd", 0.0) or 0.0), 2),
+                "apy": _observed_number(row, "apy", "apy_available", 4),
+                "apyBase": _observed_number(row, "apyBase", "apy_base_available", 4),
+                "apyReward": _observed_number(row, "apyReward", "apy_reward_available", 4),
+                "tvlUsd": _observed_number(row, "tvlUsd", "tvl_available", 2),
             }
             points = history.setdefault(pool_id, [])
             if points and points[-1].get("timestamp") == timestamp:

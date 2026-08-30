@@ -35,6 +35,7 @@ CSV_COLUMNS = (
 
 FORMULA_PREFIXES = ("=", "+", "-", "@")
 CSV_UPGRADE_MESSAGE = "CSV export is planned for Pro — $24.99 and is not included in Free, Core, or Plus."
+CSV_FAILURE_MESSAGE = "CSV generation failed. Refresh the current results and retry; no file was created."
 
 
 @dataclass(frozen=True)
@@ -89,5 +90,8 @@ def prepare_csv_export(
     if not can_export_csv(capabilities):
         return CsvExportResult(False, None, CSV_UPGRADE_MESSAGE)
     frame = rows if isinstance(rows, pd.DataFrame) else list(rows)
-    content = serialize_csv(frame)
+    try:
+        content = serialize_csv(frame)
+    except (csv.Error, TypeError, UnicodeError, ValueError):
+        return CsvExportResult(False, None, CSV_FAILURE_MESSAGE)
     return CsvExportResult(True, content, "CSV export ready.", len(frame))

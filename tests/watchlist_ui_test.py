@@ -161,13 +161,66 @@ def test_home_routes_primary_actions_and_opens_canonical_pool_first(monkeypatch)
     parsed = urlparse(_first_internal_url(home_tables[-1]))
     assert parse_qs(parsed.query)["return_route"] == ["Home"]
     assert 'target="_self"' in home_tables[-1]
-    _button(app, "Browse All Pools").click().run()
+    rendered = "\n".join(markdown.value for markdown in app.markdown)
+    assert "Start with one pool" in rendered
+    assert "Find → Evaluate → Save → Monitor → Optimize" in rendered
+    for action in ("Discover Pools", "View Signals", "Compare Pools", "Open Watchlist", "Open Alerts"):
+        assert any(button.label == action for button in app.button)
+
+    _button(app, "Discover Pools").click().run()
     assert app.query_params["page"] == ["Discover"]
     assert next(radio for radio in app.radio if radio.label == "Discover view").value == "All Pools"
 
     signals_app = _authenticated_app(monkeypatch, FakeSavedPoolsClient(), page="Home", is_pro=False)
     _button(signals_app, "View Signals").click().run()
     assert signals_app.query_params["page"] == ["Signals"]
+
+
+def test_discover_zero_result_has_working_reset_action(monkeypatch) -> None:
+    app = _authenticated_app(
+        monkeypatch,
+        FakeSavedPoolsClient(),
+        page="Discover",
+        is_pro=True,
+        query_params={"q": "does-not-exist"},
+    )
+
+    assert any("No pools match the active filters" in markdown.value for markdown in app.markdown)
+    _button(app, "Reset filters").click().run()
+
+    assert not app.exception
+    assert "q" not in app.query_params
+    assert _button(app, "View details").disabled is False
+
+
+def test_signals_no_evidence_is_not_rendered_as_steady(monkeypatch) -> None:
+    app = _authenticated_app(monkeypatch, FakeSavedPoolsClient(), page="Signals", is_pro=True)
+    rendered = "\n".join(markdown.value for markdown in app.markdown)
+
+    assert "Observed signal evidence unavailable" in rendered
+    assert "movement is not shown as zero" in rendered
+    assert "no signal-history observations were retrieved" in rendered
+
+
+def test_account_explains_plan_capabilities_telegram_and_safe_diagnostics(monkeypatch) -> None:
+    import user_alerts
+
+    class ConnectedNotifications:
+        @staticmethod
+        def telegram_status() -> dict[str, bool]:
+            return {"available": True}
+
+    monkeypatch.setattr(user_alerts, "current_user_notification_client", lambda: ConnectedNotifications())
+    app = _authenticated_app(monkeypatch, FakeSavedPoolsClient(), page="Account & Billing", is_pro=True)
+    rendered = "\n".join(markdown.value for markdown in app.markdown)
+
+    assert "Included now" in rendered
+    assert "Not included" in rendered
+    assert "Telegram connected" in rendered
+    assert "Beta support and diagnostics" in rendered
+    assert "Support destination not configured" in rendered
+    assert {"Environment", "App version", "Build"} <= {metric.label for metric in app.metric}
+    assert any(button.label == "Sign out" for button in app.button)
 
 
 def test_expired_pool_detail_session_recovers_without_hiding_public_data(monkeypatch) -> None:

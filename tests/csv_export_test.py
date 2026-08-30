@@ -7,7 +7,8 @@ from pathlib import Path
 
 import pandas as pd
 
-from csv_export import CSV_COLUMNS, CSV_UPGRADE_MESSAGE, prepare_csv_export, serialize_csv
+import csv_export
+from csv_export import CSV_COLUMNS, CSV_FAILURE_MESSAGE, CSV_UPGRADE_MESSAGE, prepare_csv_export, serialize_csv
 from product_capabilities import ProductTier, capabilities_for_tier
 
 
@@ -113,6 +114,20 @@ def test_repeated_unauthorized_attempts_never_generate_bytes_or_state() -> None:
     results = [prepare_csv_export(representative_rows(100), denied) for _ in range(20)]
 
     assert all(not result.allowed and result.content is None and result.row_count == 0 for result in results)
+
+
+def test_authorized_generation_failure_is_bounded_and_produces_no_file(monkeypatch) -> None:
+    def invalid_rows(_rows):
+        raise ValueError("sensitive provider detail must not escape")
+
+    monkeypatch.setattr(csv_export, "serialize_csv", invalid_rows)
+    result = prepare_csv_export(representative_rows(1), capabilities_for_tier(ProductTier.PRO))
+
+    assert result.allowed is False
+    assert result.content is None
+    assert result.row_count == 0
+    assert result.message == CSV_FAILURE_MESSAGE
+    assert "sensitive" not in result.message
 
 
 def test_large_50k_export_has_no_truncation_and_stable_schema() -> None:
