@@ -1155,6 +1155,7 @@ def refresh_market_data() -> None:
 
 def start_alert_creation(pool_id: str) -> None:
     st.session_state.update(alert_creation_state(pool_id))
+    st.session_state["alert_create_request_key"] = uuid.uuid4().hex
     clear_discover_query_state()
     st.query_params["page"] = "Alerts"
     if "pool" in st.query_params:
@@ -1623,7 +1624,18 @@ def _alert_form(
     prefill = str(st.session_state.get("alert_prefill_pool_id") or "")
     if existing and existing.target_pool_id not in options:
         options.insert(0, existing.target_pool_id)
-    selected_default = existing.target_pool_id if existing else prefill if prefill in options else options[0]
+    if existing:
+        selected_default = existing.target_pool_id
+    elif prefill and prefill not in options:
+        for key in ("alert_form_mode", "alert_prefill_pool_id", "alert_create_request_key"):
+            st.session_state.pop(key, None)
+        render_state(
+            "Choose the exact pool again",
+            "The carried alert target is not a current canonical pool ID. Start a new alert and choose the exact pool; FuruFlow will not guess from a display label.",
+        )
+        return
+    else:
+        selected_default = prefill or options[0]
     tier_options = ["all", "free"]
     if full_signal_access or (existing and existing.signal_tier == "pro"):
         tier_options.append("pro")
@@ -1634,7 +1646,12 @@ def _alert_form(
     if selected_timezone not in timezone_options:
         selected_timezone = "UTC"
 
-    form_key = f"alert_form_{existing.id if existing else 'create'}"
+    if existing:
+        form_key = f"alert_form_{existing.id}"
+    else:
+        request_key = str(st.session_state.get("alert_create_request_key") or uuid.uuid4().hex)
+        st.session_state["alert_create_request_key"] = request_key
+        form_key = f"alert_form_create_{request_key}"
     with st.form(form_key):
         st.markdown(f"#### {'Edit pool alert' if existing else 'Create pool alert'}")
         target_pool_id = st.selectbox(
@@ -1765,7 +1782,13 @@ def render_alerts_page(
     full_signal_access: bool,
     account_timezone: str,
 ) -> None:
-    pool_labels = pool_label_mapping(df[["pool", "project", "symbol", "chain"]].to_dict("records")) if not df.empty else {}
+    pool_labels = (
+        pool_label_mapping(
+            df[["pool", "project", "symbol", "chain", "strategy_type", "exposure"]].to_dict("records")
+        )
+        if not df.empty
+        else {}
+    )
     try:
         client = current_user_notification_client()
         telegram_status = client.telegram_status()
@@ -1808,6 +1831,7 @@ def render_alerts_page(
             width="stretch",
             disabled=not can_create_alert,
         ):
+            st.session_state.pop("alert_prefill_pool_id", None)
             st.session_state["alert_form_mode"] = "create"
             st.session_state["alert_create_request_key"] = uuid.uuid4().hex
             st.rerun()

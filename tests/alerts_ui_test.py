@@ -6,6 +6,7 @@ import streamlit as st
 
 from automation.store import AutomationStoreError
 from saved_pools import SavedPool
+from ui_shell import alert_creation_state
 
 
 @pytest.fixture(autouse=True)
@@ -93,26 +94,59 @@ class FakeSavedPoolsClient:
         return existed
 
 
+GENERAL_POOL_ID = "aa70268e-4b52-42bf-a116-608b370f9501"
+PRIME_POOL_ID = "effcb4a4-4dcb-45e5-935d-f15542c13e6b"
+DUPLICATE_POOL_ROWS = [
+    {
+        "pool": GENERAL_POOL_ID,
+        "chain": "Ethereum",
+        "project": "aave-v3",
+        "symbol": "USDC",
+        "poolMeta": "General",
+        "exposure": "single",
+        "apy": 11.02,
+        "apyBase": 11.02,
+        "apyReward": 0.0,
+        "tvlUsd": 28_065_143,
+        "stablecoin": True,
+    },
+    {
+        "pool": PRIME_POOL_ID,
+        "chain": "Ethereum",
+        "project": "aave-v3",
+        "symbol": "USDC",
+        "poolMeta": "Prime Instance",
+        "exposure": "single",
+        "apy": 4.98,
+        "apyBase": 4.98,
+        "apyReward": 0.0,
+        "tvlUsd": 56_660_000,
+        "stablecoin": True,
+    },
+]
+
+
 class FakeMarketResponse:
+    def __init__(self, rows: list[dict[str, object]] | None = None) -> None:
+        self.rows = rows or [
+            {
+                "pool": "canonical-pool-1",
+                "chain": "Ethereum",
+                "project": "aave-v3",
+                "symbol": "USDC",
+                "apy": 5.0,
+                "apyBase": 5.0,
+                "apyReward": 0.0,
+                "tvlUsd": 1_000_000,
+                "stablecoin": True,
+            }
+        ]
+
     def raise_for_status(self) -> None:
         return None
 
     def json(self) -> dict[str, object]:
-        return {
-            "data": [
-                {
-                    "pool": "canonical-pool-1",
-                    "chain": "Ethereum",
-                    "project": "aave-v3",
-                    "symbol": "USDC",
-                    "apy": 5.0,
-                    "apyBase": 5.0,
-                    "apyReward": 0.0,
-                    "tvlUsd": 1_000_000,
-                    "stablecoin": True,
-                }
-            ]
-        }
+        return {"data": self.rows}
 
 
 def _authenticated_alert_app(
@@ -122,6 +156,7 @@ def _authenticated_alert_app(
     page: str = "Alerts",
     pool_id: str | None = None,
     saved_pool_ids: tuple[str, ...] = (),
+    market_rows: list[dict[str, object]] | None = None,
 ) -> AppTest:
     import auth_service
     import user_alerts
@@ -144,7 +179,7 @@ def _authenticated_alert_app(
     monkeypatch.setattr(auth_service, "can_access_pro", lambda _user: True)
     monkeypatch.setattr(user_alerts, "current_user_notification_client", lambda: client)
     monkeypatch.setattr(saved_pools, "current_user_saved_pools_client", lambda: FakeSavedPoolsClient(saved_pool_ids))
-    monkeypatch.setattr(requests, "get", lambda *_args, **_kwargs: FakeMarketResponse())
+    monkeypatch.setattr(requests, "get", lambda *_args, **_kwargs: FakeMarketResponse(market_rows))
     monkeypatch.delenv("FURUFLOW_MARKET_SAMPLE_MODE", raising=False)
     st.cache_data.clear()
     app = AppTest.from_file("app.py", default_timeout=60)
@@ -164,6 +199,10 @@ def _create_form_submits(app: AppTest):
         for button in app.button
         if button.label == "Create alert" and str(button.key).startswith("FormSubmitter:alert_form_create")
     ]
+
+
+def _pool_selectbox(app: AppTest):
+    return next(selectbox for selectbox in app.selectbox if selectbox.label == "Pool")
 
 
 def test_authenticated_alerts_page_has_honest_empty_state(monkeypatch) -> None:
@@ -247,6 +286,132 @@ def test_alert_create_edit_and_delete_survive_normal_reruns(monkeypatch) -> None
     assert client.deleted == ["alert-1"]
     assert not client.alerts
     assert any("No alerts yet" in markdown.value for markdown in app.markdown)
+
+
+@pytest.mark.parametrize("pool_id", [GENERAL_POOL_ID, PRIME_POOL_ID])
+def test_duplicate_label_watchlist_create_persists_and_reopens_exact_pool(monkeypatch, pool_id: str) -> None:
+    client = FakeNotificationClient()
+    app = _authenticated_alert_app(
+        monkeypatch,
+        client,
+        page="Watchlists",
+        saved_pool_ids=(pool_id,),
+        market_rows=DUPLICATE_POOL_ROWS,
+    )
+
+    next(button for button in app.button if button.label == "Create alert").click().run()
+    pool_selectbox = _pool_selectbox(app)
+    assert pool_selectbox.value == pool_id
+    assert pool_selectbox.options == [
+        "aave-v3 · USDC · Ethereum · General",
+        "aave-v3 · USDC · Ethereum · Prime Instance",
+    ]
+
+    _create_form_submits(app)[0].click().run()
+    assert client.created[-1]["target_pool_id"] == pool_id
+    app.run()
+    assert client.alerts[0]["target_pool_id"] == pool_id
+
+    _keyed_button(app, "alert_pool_alert-1").click().run()
+    assert app.query_params["page"] == ["Pool Detail"]
+    assert app.query_params["pool"] == [pool_id]
+
+
+@pytest.mark.parametrize("pool_id", [GENERAL_POOL_ID, PRIME_POOL_ID])
+def test_duplicate_label_pool_detail_create_persists_and_reopens_exact_pool(monkeypatch, pool_id: str) -> None:
+    client = FakeNotificationClient()
+    app = _authenticated_alert_app(
+        monkeypatch,
+        client,
+        page="Pool Detail",
+        pool_id=pool_id,
+        market_rows=DUPLICATE_POOL_ROWS,
+    )
+
+    next(button for button in app.button if button.label == "Create alert").click().run()
+    assert app.session_state["alert_prefill_pool_id"] == pool_id
+
+    # AppTest retains a stale Pool Detail sidebar widget after the route-changing
+    # rerun. Start the Alerts render from the exact canonical transition state to
+    # exercise the form submission without relying on that test-runner artifact.
+    app = _authenticated_alert_app(monkeypatch, client, market_rows=DUPLICATE_POOL_ROWS)
+    for key, value in alert_creation_state(pool_id).items():
+        app.session_state[key] = value
+    app.session_state["alert_create_request_key"] = f"pool-detail-{pool_id}"
+    app.run()
+    assert _pool_selectbox(app).value == pool_id
+    _create_form_submits(app)[0].click().run()
+    assert client.created[-1]["target_pool_id"] == pool_id
+
+    _keyed_button(app, "alert_pool_alert-1").click().run()
+    assert app.query_params["page"] == ["Pool Detail"]
+    assert app.query_params["pool"] == [pool_id]
+
+
+@pytest.mark.parametrize("pool_id", [GENERAL_POOL_ID, PRIME_POOL_ID])
+def test_duplicate_label_manual_alert_selection_uses_canonical_option_value(monkeypatch, pool_id: str) -> None:
+    client = FakeNotificationClient()
+    app = _authenticated_alert_app(monkeypatch, client, market_rows=DUPLICATE_POOL_ROWS)
+
+    _keyed_button(app, "alerts_create").click().run()
+    pool_selectbox = _pool_selectbox(app)
+    pool_selectbox.set_value(pool_id)
+    _create_form_submits(app)[0].click().run()
+
+    assert client.created[-1]["target_pool_id"] == pool_id
+    assert client.created[-1]["target_pool_id"] != (
+        PRIME_POOL_ID if pool_id == GENERAL_POOL_ID else GENERAL_POOL_ID
+    )
+
+
+def test_duplicate_label_alert_identity_survives_reload_edit_pause_resume_and_reopen(monkeypatch) -> None:
+    client = FakeNotificationClient()
+    app = _authenticated_alert_app(
+        monkeypatch,
+        client,
+        page="Watchlists",
+        saved_pool_ids=(GENERAL_POOL_ID,),
+        market_rows=DUPLICATE_POOL_ROWS,
+    )
+    next(button for button in app.button if button.label == "Create alert").click().run()
+    _create_form_submits(app)[0].click().run()
+    assert client.alerts[0]["target_pool_id"] == GENERAL_POOL_ID
+
+    app = _authenticated_alert_app(monkeypatch, client, market_rows=DUPLICATE_POOL_ROWS)
+    assert client.alerts[0]["target_pool_id"] == GENERAL_POOL_ID
+    _keyed_button(app, "alert_edit_alert-1").click().run()
+    next(slider for slider in app.slider if slider.label == "Minimum signal strength").set_value(75)
+    next(button for button in app.button if button.label == "Save changes").click().run()
+    assert client.alerts[0]["target_pool_id"] == GENERAL_POOL_ID
+
+    app = _authenticated_alert_app(monkeypatch, client, market_rows=DUPLICATE_POOL_ROWS)
+    _keyed_button(app, "alert_toggle_alert-1").click().run()
+    assert client.alerts[0]["target_pool_id"] == GENERAL_POOL_ID
+    assert client.alerts[0]["enabled"] is False
+    _keyed_button(app, "alert_toggle_alert-1").click().run()
+    assert client.alerts[0]["target_pool_id"] == GENERAL_POOL_ID
+    assert client.alerts[0]["enabled"] is True
+
+    _keyed_button(app, "alert_pool_alert-1").click().run()
+    assert app.query_params["pool"] == [GENERAL_POOL_ID]
+
+
+def test_ambiguous_legacy_label_prefill_fails_closed_without_creation(monkeypatch) -> None:
+    client = FakeNotificationClient()
+    app = _authenticated_alert_app(monkeypatch, client, market_rows=DUPLICATE_POOL_ROWS)
+    app.session_state["alert_form_mode"] = "create"
+    app.session_state["alert_prefill_pool_id"] = "aave-v3 · USDC · Ethereum"
+    app.session_state["alert_create_request_key"] = "legacy-label-request"
+
+    app.run()
+
+    assert not app.exception
+    assert not _create_form_submits(app)
+    assert "alert_form_mode" not in app.session_state.filtered_state
+    assert "alert_prefill_pool_id" not in app.session_state.filtered_state
+    assert "alert_create_request_key" not in app.session_state.filtered_state
+    assert client.created == []
+    assert any("Choose the exact pool again" in markdown.value for markdown in app.markdown)
 
 
 def test_pool_detail_create_alert_preserves_canonical_context_without_pool_query(monkeypatch) -> None:

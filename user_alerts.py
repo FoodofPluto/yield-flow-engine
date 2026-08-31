@@ -67,8 +67,13 @@ def safe_pool_label(pool_id: str, pool_labels: Mapping[str, str]) -> str:
     return pool_labels.get(pool_id) or f"Pool {pool_id[:12]}…"
 
 
+def _meaningful_pool_detail(value: Any) -> str:
+    detail = str(value or "").strip()
+    return "" if detail.casefold() in {"", "nan", "none", "unknown"} else detail
+
+
 def pool_label_mapping(rows: list[Mapping[str, Any]]) -> dict[str, str]:
-    labels: dict[str, str] = {}
+    pool_details: dict[str, tuple[str, str, str]] = {}
     for row in rows:
         pool_id = str(row.get("pool") or "").strip()
         if not pool_id:
@@ -76,7 +81,37 @@ def pool_label_mapping(rows: list[Mapping[str, Any]]) -> dict[str, str]:
         project = str(row.get("project") or "Unknown protocol")
         symbol = str(row.get("symbol") or "Unknown assets")
         chain = str(row.get("chain") or "Unknown chain")
-        labels[pool_id] = f"{project} · {symbol} · {chain}"
+        base_label = f"{project} · {symbol} · {chain}"
+        strategy = _meaningful_pool_detail(row.get("strategy_type") or row.get("poolMeta"))
+        exposure = _meaningful_pool_detail(row.get("exposure"))
+        pool_details[pool_id] = (base_label, strategy, exposure)
+
+    base_counts: dict[str, int] = {}
+    for base_label, _strategy, _exposure in pool_details.values():
+        base_counts[base_label] = base_counts.get(base_label, 0) + 1
+
+    labels: dict[str, str] = {}
+    for pool_id, (base_label, strategy, _exposure) in pool_details.items():
+        labels[pool_id] = (
+            base_label
+            if base_counts[base_label] == 1
+            else f"{base_label} · {strategy or 'Strategy unavailable'}"
+        )
+
+    label_counts: dict[str, int] = {}
+    for label in labels.values():
+        label_counts[label] = label_counts.get(label, 0) + 1
+    for pool_id, label in tuple(labels.items()):
+        if label_counts[label] > 1:
+            exposure = pool_details[pool_id][2]
+            labels[pool_id] = f"{label} · {exposure}" if exposure else label
+
+    label_counts.clear()
+    for label in labels.values():
+        label_counts[label] = label_counts.get(label, 0) + 1
+    for pool_id, label in tuple(labels.items()):
+        if label_counts[label] > 1:
+            labels[pool_id] = f"{label} · {pool_id}"
     return labels
 
 

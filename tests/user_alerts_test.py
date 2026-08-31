@@ -71,6 +71,62 @@ def test_pool_labels_use_canonical_ids_and_fail_safe_when_market_data_is_missing
     assert safe_pool_label("unavailable-canonical-pool", labels) == "Pool unavailable-…"
 
 
+def test_duplicate_pool_labels_use_strategy_without_changing_canonical_keys() -> None:
+    general_id = "aa70268e-4b52-42bf-a116-608b370f9501"
+    prime_id = "effcb4a4-4dcb-45e5-935d-f15542c13e6b"
+    labels = pool_label_mapping(
+        [
+            {
+                "pool": general_id,
+                "project": "aave-v3",
+                "symbol": "USDC",
+                "chain": "Ethereum",
+                "strategy_type": "General",
+            },
+            {
+                "pool": prime_id,
+                "project": "aave-v3",
+                "symbol": "USDC",
+                "chain": "Ethereum",
+                "strategy_type": "Prime Instance",
+            },
+        ]
+    )
+
+    assert labels == {
+        general_id: "aave-v3 · USDC · Ethereum · General",
+        prime_id: "aave-v3 · USDC · Ethereum · Prime Instance",
+    }
+    assert len(set(labels.values())) == 2
+
+
+def test_duplicate_pool_labels_fall_back_to_canonical_id_only_when_metadata_still_collides() -> None:
+    labels = pool_label_mapping(
+        [
+            {
+                "pool": "pool-a",
+                "project": "aave-v3",
+                "symbol": "USDC",
+                "chain": "Ethereum",
+                "strategy_type": "General",
+            },
+            {
+                "pool": "pool-b",
+                "project": "aave-v3",
+                "symbol": "USDC",
+                "chain": "Ethereum",
+                "strategy_type": "General",
+            },
+        ]
+    )
+
+    assert labels == {
+        "pool-a": "aave-v3 · USDC · Ethereum · General · pool-a",
+        "pool-b": "aave-v3 · USDC · Ethereum · General · pool-b",
+    }
+    assert len(set(labels.values())) == 2
+
+
 def test_alert_pool_options_are_meaningful_and_deterministic() -> None:
     labels = {
         "pool-z": "Morpho · USDC · Base",
