@@ -91,6 +91,14 @@ def deterministic_pool_options(pool_labels: Mapping[str, str]) -> tuple[str, ...
     )
 
 
+def alert_creation_prerequisites_met(
+    *, alerts_entitled: bool, telegram_status: Mapping[str, Any]
+) -> bool:
+    """Require both trusted product access and an explicitly usable destination."""
+
+    return alerts_entitled and telegram_status.get("available") is True
+
+
 def format_alert_time(value: str | None) -> str:
     if not value:
         return "Not yet"

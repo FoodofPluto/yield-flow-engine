@@ -18,6 +18,7 @@ def test_linkdebug_is_a_reduced_app_copy_with_known_canonical_shell_features_mis
 
     assert app_functions - linkdebug_functions == {
         "_alert_form",
+        "_clear_alert_creation_intent",
         "_internal_table_value",
         "_internal_pool_link_label",
         "add_research_pool_from_picker",

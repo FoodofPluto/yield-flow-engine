@@ -115,6 +115,7 @@ from ui_shell import (
 from ui_theme import inject_theme_css
 from user_alerts import (
     UserAlert,
+    alert_creation_prerequisites_met,
     alert_explanation,
     current_user_notification_client,
     deterministic_pool_options,
@@ -1608,6 +1609,7 @@ def _alert_form(
     pool_labels: dict[str, str],
     full_signal_access: bool,
     account_timezone: str,
+    creation_allowed: bool,
     existing: UserAlert | None = None,
 ) -> None:
     if not pool_labels and existing is None:
@@ -1705,9 +1707,13 @@ def _alert_form(
             "Save changes" if existing else "Create alert",
             type="primary",
             width="stretch",
+            disabled=existing is None and not creation_allowed,
         )
 
     if not submitted:
+        return
+    if existing is None and not creation_allowed:
+        st.error("A verified Telegram connection is required before an alert can be created.")
         return
     start_value = quiet_start.strftime("%H:%M:%S") if quiet_start else None
     end_value = quiet_end.strftime("%H:%M:%S") if quiet_end else None
@@ -1746,13 +1752,26 @@ def _alert_form(
     st.rerun()
 
 
-def render_alerts_page(df: pd.DataFrame, *, full_signal_access: bool, account_timezone: str) -> None:
+def _clear_alert_creation_intent() -> None:
+    if st.session_state.get("alert_form_mode") == "create":
+        st.session_state.pop("alert_form_mode", None)
+    st.session_state.pop("alert_create_request_key", None)
+
+
+def render_alerts_page(
+    df: pd.DataFrame,
+    *,
+    alerts_entitled: bool,
+    full_signal_access: bool,
+    account_timezone: str,
+) -> None:
     pool_labels = pool_label_mapping(df[["pool", "project", "symbol", "chain"]].to_dict("records")) if not df.empty else {}
     try:
         client = current_user_notification_client()
         telegram_status = client.telegram_status()
         alerts = [UserAlert.from_row(row) for row in client.list_alerts()]
     except AutomationStoreError:
+        _clear_alert_creation_intent()
         render_status(
             "degraded",
             "Alert controls temporarily unavailable",
@@ -1760,7 +1779,13 @@ def render_alerts_page(df: pd.DataFrame, *, full_signal_access: bool, account_ti
         )
         return
 
-    linked = bool(telegram_status.get("available"))
+    linked = telegram_status.get("available") is True
+    can_create_alert = alert_creation_prerequisites_met(
+        alerts_entitled=alerts_entitled,
+        telegram_status=telegram_status,
+    )
+    if not can_create_alert:
+        _clear_alert_creation_intent()
     status_kind = "success" if linked else "warning"
     status_title = "Telegram connected" if linked else "Telegram connection required"
     status_copy = (
@@ -1781,7 +1806,7 @@ def render_alerts_page(df: pd.DataFrame, *, full_signal_access: bool, account_ti
             key="alerts_create",
             type="primary",
             width="stretch",
-            disabled=not linked,
+            disabled=not can_create_alert,
         ):
             st.session_state["alert_form_mode"] = "create"
             st.session_state["alert_create_request_key"] = uuid.uuid4().hex
@@ -1789,12 +1814,13 @@ def render_alerts_page(df: pd.DataFrame, *, full_signal_access: bool, account_ti
     with action_cols[1]:
         st.caption("Delivery channel: Telegram · one verified account connection · no browser-provided routing IDs")
 
-    if st.session_state.get("alert_form_mode") == "create":
+    if can_create_alert and st.session_state.get("alert_form_mode") == "create":
         _alert_form(
             client,
             pool_labels=pool_labels,
             full_signal_access=full_signal_access,
             account_timezone=account_timezone,
+            creation_allowed=can_create_alert,
         )
 
     if not alerts:
@@ -1887,6 +1913,7 @@ def render_alerts_page(df: pd.DataFrame, *, full_signal_access: bool, account_ti
                     pool_labels=pool_labels,
                     full_signal_access=full_signal_access,
                     account_timezone=account_timezone,
+                    creation_allowed=can_create_alert,
                     existing=alert,
                 )
 inject_theme_css()
@@ -3720,6 +3747,7 @@ elif content_page == "Alerts":
     alert_target_df = df if market_source_status in {"live", "partial"} else df.iloc[0:0]
     render_alerts_page(
         alert_target_df,
+        alerts_entitled=alerts_enabled,
         full_signal_access=full_signals_enabled,
         account_timezone=str(db_user.get("timezone") or "UTC"),
     )

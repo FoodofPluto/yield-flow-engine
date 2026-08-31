@@ -4,6 +4,7 @@ import pytest
 from streamlit.testing.v1 import AppTest
 import streamlit as st
 
+from automation.store import AutomationStoreError
 from saved_pools import SavedPool
 
 
@@ -14,15 +15,24 @@ def _clear_streamlit_cache_after_test():
 
 
 class FakeNotificationClient:
-    def __init__(self, *, alerts: list[dict[str, object]] | None = None, linked: bool = True) -> None:
+    def __init__(
+        self,
+        *,
+        alerts: list[dict[str, object]] | None = None,
+        linked: bool = True,
+        status_error: bool = False,
+    ) -> None:
         self.alerts = alerts or []
         self.linked = linked
+        self.status_error = status_error
         self.toggles: list[tuple[str, bool]] = []
         self.created: list[dict[str, object]] = []
         self.updated: list[dict[str, object]] = []
         self.deleted: list[str] = []
 
     def telegram_status(self) -> dict[str, object]:
+        if self.status_error:
+            raise AutomationStoreError("status unavailable")
         return {"available": self.linked, "status": "linked" if self.linked else "not_linked"}
 
     def list_alerts(self) -> list[dict[str, object]]:
@@ -148,6 +158,14 @@ def _keyed_button(app: AppTest, key: str):
     return next(button for button in app.button if button.key == key)
 
 
+def _create_form_submits(app: AppTest):
+    return [
+        button
+        for button in app.button
+        if button.label == "Create alert" and str(button.key).startswith("FormSubmitter:alert_form_create")
+    ]
+
+
 def test_authenticated_alerts_page_has_honest_empty_state(monkeypatch) -> None:
     app = _authenticated_alert_app(monkeypatch, FakeNotificationClient())
 
@@ -244,6 +262,101 @@ def test_pool_detail_create_alert_preserves_canonical_context_without_pool_query
     assert app.query_params["page"] == ["Alerts"]
     assert "pool" not in app.query_params
     assert any(selectbox.label == "Pool" and selectbox.value == "canonical-pool-1" for selectbox in app.selectbox)
+
+
+def test_watchlist_create_alert_fails_closed_while_telegram_is_unlinked(monkeypatch) -> None:
+    client = FakeNotificationClient(linked=False)
+    app = _authenticated_alert_app(
+        monkeypatch,
+        client,
+        page="Watchlists",
+        saved_pool_ids=("canonical-pool-1",),
+    )
+
+    next(button for button in app.button if button.label == "Create alert").click().run()
+    assert not app.exception
+    assert app.query_params["page"] == ["Alerts"]
+    assert app.session_state["alert_prefill_pool_id"] == "canonical-pool-1"
+    assert _keyed_button(app, "alerts_create").disabled
+    assert not _create_form_submits(app)
+    assert any("Telegram connection required" in markdown.value for markdown in app.markdown)
+    assert client.created == []
+
+    app.run()
+    assert not _create_form_submits(app)
+    assert client.created == []
+
+
+def test_pool_detail_create_alert_fails_closed_without_corrupting_pool_identity(monkeypatch) -> None:
+    client = FakeNotificationClient(linked=False)
+    app = _authenticated_alert_app(
+        monkeypatch,
+        client,
+        page="Pool Detail",
+        pool_id="canonical-pool-1",
+    )
+
+    next(button for button in app.button if button.label == "Create alert").click().run()
+    assert not app.exception
+    assert app.query_params["page"] == ["Alerts"]
+    assert "pool" not in app.query_params
+    assert app.session_state["alert_prefill_pool_id"] == "canonical-pool-1"
+    assert _keyed_button(app, "alerts_create").disabled
+    assert not _create_form_submits(app)
+    assert client.created == []
+
+
+def test_stale_create_state_is_cleared_and_linkage_changes_fail_closed(monkeypatch) -> None:
+    client = FakeNotificationClient(linked=False)
+    app = _authenticated_alert_app(monkeypatch, client)
+    app.session_state["alert_prefill_pool_id"] = "canonical-pool-1"
+    app.session_state["alert_form_mode"] = "create"
+    app.session_state["alert_create_request_key"] = "stale-request-key"
+
+    app.run()
+    assert not app.exception
+    assert "alert_form_mode" not in app.session_state.filtered_state
+    assert "alert_create_request_key" not in app.session_state.filtered_state
+    assert not _create_form_submits(app)
+    assert client.created == []
+
+    app.run()
+    assert not _create_form_submits(app)
+
+    client.linked = True
+    app.run()
+    assert not _keyed_button(app, "alerts_create").disabled
+    assert not _create_form_submits(app)
+
+    _keyed_button(app, "alerts_create").click().run()
+    create_submit = _create_form_submits(app)
+    assert len(create_submit) == 1
+    assert not create_submit[0].disabled
+    assert any(
+        selectbox.label == "Pool" and selectbox.value == "canonical-pool-1"
+        for selectbox in app.selectbox
+    )
+
+    client.linked = False
+    app.run()
+    assert _keyed_button(app, "alerts_create").disabled
+    assert not _create_form_submits(app)
+    assert client.created == []
+
+
+def test_telegram_status_failure_clears_stale_creation_without_mutation(monkeypatch) -> None:
+    client = FakeNotificationClient(status_error=True)
+    app = _authenticated_alert_app(monkeypatch, client)
+    app.session_state["alert_form_mode"] = "create"
+    app.session_state["alert_create_request_key"] = "stale-request-key"
+
+    app.run()
+    assert not app.exception
+    assert "alert_form_mode" not in app.session_state.filtered_state
+    assert "alert_create_request_key" not in app.session_state.filtered_state
+    assert not _create_form_submits(app)
+    assert any("temporarily unavailable" in markdown.value for markdown in app.markdown)
+    assert client.created == []
 
 
 def test_strategy_result_carries_canonical_pool_directly_into_alert_creation(monkeypatch) -> None:
