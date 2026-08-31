@@ -197,6 +197,7 @@ def test_signals_no_evidence_is_not_rendered_as_steady(monkeypatch) -> None:
     app = _authenticated_app(monkeypatch, FakeSavedPoolsClient(), page="Signals", is_pro=True)
     rendered = "\n".join(markdown.value for markdown in app.markdown)
 
+    assert not app.exception
     assert "Observed signal evidence unavailable" in rendered
     assert "movement is not shown as zero" in rendered
     assert "no signal-history observations were retrieved" in rendered

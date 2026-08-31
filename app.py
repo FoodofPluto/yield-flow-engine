@@ -88,6 +88,7 @@ from saved_pools import (
     UserSavedPoolsClient,
     current_user_saved_pools_client,
 )
+from signal_visualization import build_signal_scatter
 from ui_shell import (
     DISCOVER_VIEWS,
     OPPORTUNITIES_TABLE_COLUMNS,
@@ -2993,8 +2994,7 @@ elif content_page == "Signals":
         for title, copy in guides:
             st.markdown(f"<div class='signal-card'><div class='signal-title'>{title}</div><div class='signal-copy'>{copy}</div></div>", unsafe_allow_html=True)
         if not filtered.empty:
-            sig_plot_df = filtered.groupby("signal", as_index=False).agg(avg_apy=("apy", "mean"), avg_tvl=("tvlUsd", "mean"), avg_strength=("signal_strength", "mean"))
-            fig = px.scatter(sig_plot_df, x="avg_tvl", y="avg_apy", size="avg_strength", color="signal", hover_name="signal", size_max=42, log_x=True)
+            fig = build_signal_scatter(filtered)
             fig.update_xaxes(title="Average TVL")
             fig.update_yaxes(title="Average APY %")
             st.plotly_chart(plotly_theme(fig, 320), width="stretch")
