@@ -22,10 +22,10 @@ class NavItem:
 
 
 PUBLIC_NAV = (
-    NavItem("Home", "Home", "Explore"),
-    NavItem("Discover", "Discover", "Explore"),
-    NavItem("Research", "Research", "Explore"),
-    NavItem("Signals", "Signals", "Analyze"),
+    NavItem("Home", "Home", "Find"),
+    NavItem("Discover", "Discover", "Find"),
+    NavItem("Research", "Research", "Compare"),
+    NavItem("Signals", "Signals", "Investigate"),
     NavItem("Methodology & Data Status", "Methodology & data", "Learn & account"),
     NavItem("Pricing", "Pricing", "Learn & account"),
 )
@@ -33,7 +33,7 @@ PUBLIC_NAV = (
 AUTHENTICATED_NAV = (
     NavItem("Watchlists", "Watchlist", "Monitor", requires_auth=True, required_capability=Capability.WATCHLISTS),
     NavItem("Alerts", "Alerts", "Monitor", requires_auth=True, required_capability=Capability.ALERTS),
-    NavItem("Pro Tools", "Pro tools", "Analyze", requires_auth=True, required_capability=Capability.PRO_TOOLS),
+    NavItem("Pro Tools", "Pro tools", "Advanced", requires_auth=True, required_capability=Capability.PRO_TOOLS),
     NavItem("Account & Billing", "Account & billing", "Learn & account", requires_auth=True),
 )
 
@@ -57,10 +57,10 @@ LEGACY_ROUTE_ALIASES = {
 }
 
 PAGE_CONTEXT = {
-    "Home": ("Find → Evaluate → Save → Monitor → Optimize", "Move from the current pool universe to evidence, a durable shortlist, monitoring, and advanced workflows."),
-    "Discover": ("Discover", "Explore curated opportunities or search the broader current pool universe."),
-    "Research": ("Research", "Compare a deliberately selected set of pools, their tradeoffs, and current evidence."),
-    "Signals": ("Signals", "Investigate material yield and liquidity movement detected by FuruFlow."),
+    "Home": ("Find → Understand → Compare → Monitor → Act", "Move from current provider reports to evidence, comparison, monitoring, and an informed external action."),
+    "Discover": ("Discover", "Find investigation candidates or search the broader current pool universe."),
+    "Research": ("Research", "Compare a deliberately selected set of pools, their reported metrics, evidence, and tradeoffs."),
+    "Signals": ("Signals", "Investigate observed yield and liquidity movement without treating missing history as a weak signal."),
     "Pricing": ("Pricing", "Preview the planned Free, Core, Plus, and Pro capability ladder; new paid tiers are not yet purchasable."),
     "Methodology & Data Status": (
         "Methodology & data status",
@@ -85,11 +85,11 @@ OPPORTUNITIES_TABLE_COLUMNS = (
     ("project", "Protocol"),
     ("strategy_type", "Strategy"),
     ("apy", "APY"),
-    ("apyBase", "Base"),
-    ("apyReward", "Rewards"),
     ("tvlUsd", "TVL (USD)"),
+    ("evidence_coverage", "Evidence"),
+    ("confidence_level", "Confidence"),
     ("risk_score", "Risk"),
-    ("signal", "Signal"),
+    ("data_freshness", "Freshness"),
 )
 SIGNAL_ENGINE_TABLE_COLUMNS = (
     ("pool", "Pool"),
@@ -98,6 +98,10 @@ SIGNAL_ENGINE_TABLE_COLUMNS = (
     ("symbol", "Asset"),
     ("signal", "Signal"),
     ("signal_strength", "Strength"),
+    ("evidence_coverage", "Evidence"),
+    ("confidence_level", "Confidence"),
+    ("risk_band", "Risk"),
+    ("data_freshness", "Freshness"),
     ("apy_delta_7", "7d APY Δ"),
     ("tvl_delta_7_pct", "7d TVL Δ %"),
     ("apy_volatility", "APY volatility"),
@@ -203,7 +207,15 @@ def visible_navigation(
                 items.append(item)
     if signed_in and is_admin:
         items.append(ADMIN_NAV)
-    section_order = {"Explore": 0, "Monitor": 1, "Analyze": 2, "Learn & account": 3, "Restricted": 4}
+    section_order = {
+        "Find": 0,
+        "Compare": 1,
+        "Investigate": 2,
+        "Monitor": 3,
+        "Advanced": 4,
+        "Learn & account": 5,
+        "Restricted": 6,
+    }
     route_order = {
         route: index
         for index, route in enumerate(
@@ -211,9 +223,9 @@ def visible_navigation(
                 "Home",
                 "Discover",
                 "Research",
+                "Signals",
                 "Watchlists",
                 "Alerts",
-                "Signals",
                 "Pro Tools",
                 "Methodology & Data Status",
                 "Pricing",

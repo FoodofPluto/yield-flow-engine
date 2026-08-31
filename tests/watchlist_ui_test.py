@@ -162,8 +162,8 @@ def test_home_routes_primary_actions_and_opens_canonical_pool_first(monkeypatch)
     assert parse_qs(parsed.query)["return_route"] == ["Home"]
     assert 'target="_self"' in home_tables[-1]
     rendered = "\n".join(markdown.value for markdown in app.markdown)
-    assert "Start with one pool" in rendered
-    assert "Find → Evaluate → Save → Monitor → Optimize" in rendered
+    assert "Keep the decision signals separate" in rendered
+    assert "Find → Understand → Compare → Monitor → Act" in rendered
     for action in ("Discover Pools", "View Signals", "Compare Pools", "Open Watchlist", "Open Alerts"):
         assert any(button.label == action for button in app.button)
 
@@ -190,6 +190,23 @@ def test_discover_zero_result_has_working_reset_action(monkeypatch) -> None:
 
     assert not app.exception
     assert "q" not in app.query_params
+
+
+def test_discover_summary_keeps_reported_yield_evidence_confidence_and_risk_separate(monkeypatch) -> None:
+    app = _authenticated_app(monkeypatch, FakeSavedPoolsClient(), page="Discover", is_pro=True)
+    rendered = "\n".join(markdown.value for markdown in app.markdown) + "\n" + "\n".join(
+        caption.value for caption in app.caption
+    )
+    opportunity_tables = _internal_tables(app, "Evidence")
+    card_source = Path("app.py").read_text(encoding="utf-8")
+
+    assert opportunity_tables
+    for label in ("Evidence", "Confidence", "Risk", "Freshness"):
+        assert f"<th>{label}</th>" in opportunity_tables[-1]
+    for label in ("Reported APY", "Evidence", "Confidence", "Risk"):
+        assert f'<div class="ff-metric-mini-label">{label}</div>' in card_source
+    assert "Investigation priority" in rendered
+    assert "do not estimate expected return" in rendered
     assert _button(app, "View details").disabled is False
 
 
@@ -689,8 +706,12 @@ def test_pool_detail_labels_protocol_destination_as_external(monkeypatch, tmp_pa
 
     assert 'st.link_button("Open on protocol ↗"' in Path("app.py").read_text(encoding="utf-8")
     assert any("External destination" in caption.value for caption in app.caption)
-    stats = next(table.value for table in app.dataframe if {"Metric", "Value"} <= set(table.value.columns))
-    values = dict(zip(stats["Metric"], stats["Value"], strict=True))
+    stats = [table.value for table in app.dataframe if {"Metric", "Value"} <= set(table.value.columns)]
+    values = {
+        metric: value
+        for table in stats
+        for metric, value in zip(table["Metric"], table["Value"], strict=True)
+    }
     assert values["Total APY · reported"] == "5.00%"
     assert values["Evidence coverage"] == "Insufficient evidence"
     assert values["Confidence"] == "Low"

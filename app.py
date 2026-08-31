@@ -137,7 +137,7 @@ APP_TAGLINE = "Research DeFi yields with clearer context."
 LINK_RESOLVER_VERSION = "2026-03-28-linkfix-2"
 POOL_LIMIT = 400
 FREE_POOL_LIMIT = 10
-FREE_SORT_OPTIONS = ["Highest APY", "Largest TVL"]
+FREE_SORT_OPTIONS = ["Investigation priority", "Highest APY", "Largest TVL"]
 PRO_SORT_OPTIONS = ["FuruFlow rank", "Lowest risk", "Highest 24h volume", "Largest signal move"]
 TIMEOUT = 18
 SIGNAL_SAMPLE = 16
@@ -913,7 +913,17 @@ def render_link_table(
         if sort_cols:
             ascending = [False] * len(sort_cols)
             view = view.sort_values(sort_cols, ascending=ascending)
-        cols = ["pool", "project", "chain", "symbol", "apy", "tvlUsd", "risk_score", "signal"]
+        cols = [
+            "pool",
+            "project",
+            "chain",
+            "symbol",
+            "apy",
+            "evidence_coverage",
+            "confidence_level",
+            "risk_band",
+            "data_freshness",
+        ]
         cols = [c for c in cols if c in view.columns]
         link_view = view[cols].head(limit).copy()
         labels = {
@@ -922,16 +932,17 @@ def render_link_table(
             "chain": "Chain",
             "symbol": "Asset",
             "apy": "APY",
-            "tvlUsd": "TVL (USD)",
-            "risk_score": "Risk",
-            "signal": "Signal",
+            "evidence_coverage": "Evidence",
+            "confidence_level": "Confidence",
+            "risk_band": "Risk",
+            "data_freshness": "Freshness",
         }
         render_internal_pool_table(
             link_view,
             tuple((column, labels[column]) for column in cols),
             return_route=return_route,
             return_view=return_view,
-            formats={"apy": "percent", "tvlUsd": "money", "risk_score": "number"},
+            formats={"apy": "percent"},
             max_height=min(120 + 42 * len(link_view), 420),
         )
     st.markdown("</div>", unsafe_allow_html=True)
@@ -1330,27 +1341,38 @@ def render_opportunity_card(
     signal = row.get("signal", "Steady") if bool(row.get("signal_available", False)) else "Insufficient evidence"
     apy_text = f"{row['apy']:.2f}%" if bool(row.get("apy_available", True)) else "Unavailable"
     tvl_text = format_money(row["tvlUsd"]) if bool(row.get("tvl_available", True)) else "Unavailable"
+    evidence_text = str(row.get("evidence_coverage") or "No evidence")
+    confidence_text = str(row.get("confidence_level") or "Unavailable")
+    risk_text = f"{row.get('risk_band', 'Unknown')} · {int(row['risk_score'])}/100"
+    safe_project = html.escape(str(row.get("project") or "Unknown"))
+    safe_symbol = html.escape(str(row.get("symbol") or "Unknown"))
+    safe_chain = html.escape(str(row.get("chain") or "Unknown"))
+    safe_protocol_tier = html.escape(str(row.get("protocol_tier") or "Unknown"))
+    safe_protocol_badge = html.escape(str(row.get("protocol_badge") or "?"))
+    safe_strategy = html.escape(str(row.get("strategy_type") or "Unknown"))
+    safe_signal = html.escape(signal)
+    safe_freshness = html.escape(freshness_label)
     card_html = f"""
     <div class="ff-card-wrap">
         <div class="ff-opp-top">
             <div>
-                <div class="ff-opp-name">{row['project']}</div>
-                <div class="ff-opp-sub">{row['symbol']} • {row['chain']} • {row['protocol_tier']}</div>
+                <div class="ff-opp-name">{safe_project}</div>
+                <div class="ff-opp-sub">{safe_symbol} • {safe_chain} • {safe_protocol_tier}</div>
             </div>
-            <div class="ff-protocol-dot">{row['protocol_badge']}</div>
+            <div class="ff-protocol-dot">{safe_protocol_badge}</div>
         </div>
         {'<span class="ff-watch-pill">★ Watched</span>' if watched else ''}
         <div class="ff-badge-row">
-            <span class="ff-badge">{row['strategy_type']}</span>
-            <span class="ff-badge">{row['risk_band']} risk</span>
-            <span class="ff-badge">{row['scorecard']}</span>
-            <span class="ff-badge">{signal}</span>
-            <span class="ff-badge">Data: {freshness_label}</span>
+            <span class="ff-badge">TVL: {html.escape(tvl_text)}</span>
+            <span class="ff-badge">{safe_strategy}</span>
+            <span class="ff-badge">Signal: {safe_signal}</span>
+            <span class="ff-badge">Data: {safe_freshness}</span>
         </div>
         <div class="ff-metric-strip">
-            <div class="ff-metric-box"><div class="ff-metric-mini-label">APY</div><div class="ff-metric-mini-value">{apy_text}</div></div>
-            <div class="ff-metric-box"><div class="ff-metric-mini-label">TVL</div><div class="ff-metric-mini-value">{tvl_text}</div></div>
-            <div class="ff-metric-box"><div class="ff-metric-mini-label">Risk</div><div class="ff-metric-mini-value">{int(row['risk_score'])}/100</div></div>
+            <div class="ff-metric-box"><div class="ff-metric-mini-label">Reported APY</div><div class="ff-metric-mini-value">{html.escape(apy_text)}</div></div>
+            <div class="ff-metric-box"><div class="ff-metric-mini-label">Evidence</div><div class="ff-metric-mini-value">{html.escape(evidence_text)}</div></div>
+            <div class="ff-metric-box"><div class="ff-metric-mini-label">Confidence</div><div class="ff-metric-mini-value">{html.escape(confidence_text)}</div></div>
+            <div class="ff-metric-box"><div class="ff-metric-mini-label">Risk</div><div class="ff-metric-mini-value">{html.escape(risk_text)}</div></div>
         </div>
     </div>
     """
@@ -1436,23 +1458,98 @@ def render_home_page(
         """
         <section class="hero-shell"><div class="hero-inner">
           <div class="eyebrow">DeFi yield decision support</div>
-          <div class="hero-title">Find viable pools. Evaluate the evidence. Keep monitoring coherent.</div>
-          <div class="hero-subtitle">FuruFlow connects the current pool universe to transparent comparison, canonical Pool Detail, durable monitoring, and advanced workflows—without promising returns or predicting outcomes.</div>
+          <div class="hero-title">Find → Understand → Compare → Monitor → Act</div>
+          <div class="hero-subtitle">Investigate what providers report now, test it against observed evidence and risk context, then keep the same pool identity through comparison and monitoring. FuruFlow does not forecast profit or recommend an investment.</div>
         </div></section>
         """,
         unsafe_allow_html=True,
     )
     plan = capability_presentation(capabilities)
-    if signed_in:
-        render_status(
-            "info",
-            "Start with one pool",
-            "Discover finds pools; Pool Detail evaluates one; Research compares; Watchlist saves; Alerts monitors; Signals shows observed changes. Higher tiers reduce manual work and unlock advanced workflows.",
-        )
+    render_status(
+        "info",
+        "Keep the decision signals separate",
+        "Opportunity is not confidence, confidence is not safety, and none of them is expected profit. Open Pool Detail before acting on an external protocol.",
+    )
+
     section_header(
-        "Workflow",
-        "Find → Evaluate → Save → Monitor → Optimize",
-        f"Current plan: {plan['plan']}. Data: {source_label} · {freshness_label}. Start with discovery, then keep the same canonical pool identity through each available step.",
+        "Market overview",
+        "What the current snapshot can support",
+        f"Provider: {source_label} · {freshness_label}. These are current market facts and observed classifications, not forecasts.",
+    )
+    stat_columns = st.columns(4)
+    with stat_columns[0]:
+        stat_card("Indexed pools", f"{indexed_count:,}", "Canonical pools in the current provider response")
+    with stat_columns[1]:
+        stat_card("Current opportunities", f"{opportunity_count:,}", "Pools matching the current opportunity filters")
+    with stat_columns[2]:
+        stat_card(
+            NON_STEADY_CLASSIFICATIONS_LABEL,
+            f"{non_steady_classification_count:,}",
+            "Visible opportunity pools whose current rules-based classification is not Steady",
+        )
+    with stat_columns[3]:
+        watch_enabled = signed_in and can_use_watchlists(capabilities)
+        if watch_enabled:
+            stat_card("Watched pools", f"{watchlist_count:,}", "Durable saved pools for this account")
+        else:
+            stat_card("Current plan", str(plan["plan"]), "Review included and unavailable capabilities in Account")
+
+    st.markdown("<div class='panel'>", unsafe_allow_html=True)
+    section_header(
+        "Opportunities to investigate",
+        "Open one pool and understand the evidence",
+        "Candidates meet the current opportunity criteria and ordering. Inclusion is a research starting point, not an expected-profit claim.",
+    )
+    if opportunity_df.empty:
+        render_status("empty", "No current opportunities", "Adjust Discover filters or browse All Pools; no placeholder rows were substituted.")
+    else:
+        home_source = opportunity_df.head(8).copy()
+        render_internal_pool_table(
+            home_source,
+            (
+                ("pool", "Pool"),
+                ("symbol", "Asset"),
+                ("chain", "Network"),
+                ("project", "Protocol"),
+                ("apy", "APY"),
+                ("tvlUsd", "TVL (USD)"),
+                ("evidence_coverage", "Evidence"),
+                ("confidence_level", "Confidence"),
+                ("risk_band", "Risk"),
+                ("data_freshness", "Freshness"),
+            ),
+            return_route="Home",
+            return_view="Home",
+            link_columns={"pool": "Open Pool"},
+            formats={"apy": "percent", "tvlUsd": "money"},
+            max_height=320,
+        )
+    st.markdown("</div>", unsafe_allow_html=True)
+
+    section_header(
+        "Your monitoring",
+        "Return to what you chose to track",
+        "Watchlists preserve your chosen canonical pools. Alerts remain separate durable rules and require their accepted account and Telegram prerequisites.",
+    )
+    monitor_summary = st.columns(2)
+    with monitor_summary[0]:
+        stat_card(
+            "Watched pools" if watch_enabled else "Watchlists",
+            f"{watchlist_count:,}" if watch_enabled else f"{required_tier_name(Capability.WATCHLISTS)} tier",
+            "Saved for this account" if watch_enabled else "Durable monitoring is not included in the current capability set",
+        )
+    alerts_enabled_for_user = signed_in and can_use_alerts(capabilities)
+    with monitor_summary[1]:
+        stat_card(
+            "Alert workflow",
+            "Available" if alerts_enabled_for_user else f"{required_tier_name(Capability.ALERTS)} tier",
+            "Open Alerts to verify Telegram readiness and rule state" if alerts_enabled_for_user else "Alert rules remain gated without exposing protected data",
+        )
+
+    section_header(
+        "Next actions",
+        "Continue the investigation",
+        f"Current plan: {plan['plan']}. Available controls route to the existing workflows; gated controls name the required tier.",
     )
     action_columns = st.columns(3)
     if action_columns[0].button("Discover Pools", key="home_browse_all", type="primary", width="stretch"):
@@ -1472,7 +1569,6 @@ def render_home_page(
     ):
         go_to_route("Research")
         st.rerun()
-    watch_enabled = signed_in and can_use_watchlists(capabilities)
     watchlist_tier = required_tier_name(Capability.WATCHLISTS)
     monitor_columns = st.columns(2)
     if monitor_columns[0].button(
@@ -1484,7 +1580,6 @@ def render_home_page(
     ):
         go_to_route("Watchlists")
         st.rerun()
-    alerts_enabled_for_user = signed_in and can_use_alerts(capabilities)
     alerts_tier = required_tier_name(Capability.ALERTS)
     if monitor_columns[1].button(
         "Open Alerts" if alerts_enabled_for_user else f"Alerts · {alerts_tier}",
@@ -1495,49 +1590,6 @@ def render_home_page(
     ):
         go_to_route("Alerts")
         st.rerun()
-
-    stat_columns = st.columns(4)
-    with stat_columns[0]:
-        stat_card("Indexed pools", f"{indexed_count:,}", "Canonical pools in the current provider response")
-    with stat_columns[1]:
-        stat_card("Current opportunities", f"{opportunity_count:,}", "Pools matching the current opportunity filters")
-    with stat_columns[2]:
-        stat_card(
-            NON_STEADY_CLASSIFICATIONS_LABEL,
-            f"{non_steady_classification_count:,}",
-            "Visible opportunity pools whose current rules-based classification is not Steady",
-        )
-    with stat_columns[3]:
-        if watch_enabled:
-            stat_card("Watched pools", f"{watchlist_count:,}", "Durable saved pools for this account")
-        else:
-            stat_card("Current plan", str(plan["plan"]), "Review included and unavailable capabilities in Account")
-
-    st.markdown("<div class='panel'>", unsafe_allow_html=True)
-    section_header("Current opportunities", "Open a pool first", "The first column opens canonical Pool Detail; use the reported metrics for triage, not as a promise of performance.")
-    if opportunity_df.empty:
-        render_status("empty", "No current opportunities", "Adjust Discover filters or browse All Pools; no placeholder rows were substituted.")
-    else:
-        home_source = opportunity_df.head(8).copy()
-        render_internal_pool_table(
-            home_source,
-            (
-                ("pool", "Pool"),
-                ("symbol", "Asset"),
-                ("chain", "Network"),
-                ("project", "Protocol"),
-                ("apy", "APY"),
-                ("tvlUsd", "TVL (USD)"),
-                ("risk_band", "Risk"),
-                ("signal", "Signal"),
-            ),
-            return_route="Home",
-            return_view="Home",
-            link_columns={"pool": "Open Pool"},
-            formats={"apy": "percent", "tvlUsd": "money"},
-            max_height=320,
-        )
-    st.markdown("</div>", unsafe_allow_html=True)
 
 
 def render_recaps_page(
@@ -2166,6 +2218,7 @@ df["evidence_coverage"] = [assessment.coverage.value for assessment in confidenc
 df["confidence_level"] = [assessment.confidence.value for assessment in confidence_assessments]
 df["confidence_interpretation"] = [assessment.interpretation for assessment in confidence_assessments]
 df["confidence_missing"] = ["; ".join(assessment.missing) for assessment in confidence_assessments]
+df["data_freshness"] = market_freshness["label"]
 
 watchlist_df = df[df["pool"].isin(saved_pool_ids)].copy()
 if market_source_status == "live":
@@ -2299,7 +2352,7 @@ if page == "Discover":
         key="discover_view",
     )
     st.caption(
-        "Opportunities uses FuruFlow's current filters and deterministic ranking to surface a focused set. "
+        "Opportunities applies the visible criteria and selected deterministic order to surface a focused investigation set. "
         "All Pools keeps the broader provider universe searchable and sortable without the default opportunity TVL or risk thresholds."
     )
     content_page = {"Opportunities": "Scanner", "All Pools": "Pool Universe"}[active_view]
@@ -2383,7 +2436,14 @@ elif content_page == "Scanner":
     left, right = st.columns([1.6, 1], gap="large")
     with left:
         st.markdown("<div class='panel'>", unsafe_allow_html=True)
-        section_header("Opportunities", "Visible opportunity set", "Triage the current market slice, then open a contextual Pool Detail view for deeper inspection.")
+        section_header(
+            "Opportunities",
+            "Visible investigation candidates",
+            "By default, candidates have at least $5M reported TVL and an existing risk score no higher than 70. Investigation priority orders confidence, evidence coverage, lower risk, larger TVL, then reported APY, with canonical pool ID as the final tie-breaker.",
+        )
+        st.caption(
+            f"Current order: {current_filters.sort_by}. Inclusion and order support investigation only; they do not estimate expected return or establish safety."
+        )
         top_cards = filtered.head(6)
         if filtered.empty and market_data_status.availability != "unavailable":
             render_status(
@@ -2450,9 +2510,9 @@ elif content_page == "Scanner":
         st.markdown("<div class='panel'>", unsafe_allow_html=True)
         section_header("Discovery guidance", "How to investigate an opportunity", "Use the cards for triage, then verify identity, freshness, yield composition, and risk context in Pool Detail.")
         bullets = [
-            ("Yield changes", "APY is provider-reported and can change quickly; unusually high APY is not a guaranteed return."),
-            ("Liquidity context", "TVL describes current pool size, not safety. Protocol, network, token, and contract exposure still matter."),
-            ("Signals and freshness", "A signal is evidence of detected movement, not an instruction to invest. Check when the data was retrieved."),
+            ("Yield", "APY is provider-reported and can change quickly; unusually high APY is not a guaranteed return."),
+            ("Evidence", "Coverage and confidence describe what FuruFlow has actually observed. Missing history is not a neutral signal."),
+            ("Risk", "Risk is a separate contextual heuristic. TVL, confidence, or freshness does not make a pool safe."),
         ]
         for title, copy in bullets:
             st.markdown(f"<div class='signal-card'><div class='signal-title'>{title}</div><div class='signal-copy'>{copy}</div></div>", unsafe_allow_html=True)
@@ -2539,8 +2599,8 @@ elif content_page == "Pool Universe":
 elif content_page == "Research Comparison":
     st.markdown("<div class='panel'>", unsafe_allow_html=True)
     section_header(
-        "Selected-pool analysis",
-        "Compare evidence and tradeoffs",
+        "1 · Select pools",
+        "Build an intentional comparison",
         f"Choose up to {COMPARISON_LIMIT} pools from the full current universe. Research separates provider observations, calculated context, and interpretation; it does not select an investment for you.",
     )
     research_universe = pool_universe(df)
@@ -2668,7 +2728,7 @@ elif content_page == "Research Comparison":
                 selected_source.at[source_index, "confidence_level"] = source_assessment.confidence.value
             compared_rows = comparison_rows(selected_source, selected_ids)
             section_header(
-                "Comparison model",
+                "2 · Comparison lens",
                 "Choose what matters in this selected set",
                 "Each dimension is min-max normalized only across these pools. Lower existing risk scores are better; missing dimensions are omitted and disclosed through coverage.",
             )
@@ -2736,6 +2796,11 @@ elif content_page == "Research Comparison":
                 f"Configured weight total: {configured_total}. Values are proportionally normalized; this is deterministic decision support, not a return prediction."
             )
             if len(analysis["rows"]) >= 2:
+                section_header(
+                    "3 · Review tradeoffs",
+                    "Read ranking, evidence, and risk separately",
+                    "The selected-set score explains the configured comparison lens. Independent evidence confidence and existing risk remain separate and are not expected-return estimates.",
+                )
                 winner = analysis["winner"]
                 if winner:
                     render_status(
@@ -3259,6 +3324,7 @@ elif content_page == "Pool Detail":
 
         cols = st.columns([1.3, 1], gap="large")
         with cols[0]:
+            st.markdown("#### History")
             chart, chart_mode = get_pool_chart_with_fallback(row)
             chart_has_apy = "apy" in chart and chart["apy"].notna().any()
             chart_has_tvl = "tvlUsd" in chart and chart["tvlUsd"].notna().any()
@@ -3301,27 +3367,26 @@ elif content_page == "Pool Detail":
 
             pool_yield = yield_explanation(row)
             pool_risk = risk_explanation(row)
-            st.markdown("#### Yield, liquidity & evidence")
-            stats = pd.DataFrame([
+            st.markdown("#### Reported now")
+            reported_stats = pd.DataFrame([
                 ["Total APY · reported", f"{pool_yield['total']:.2f}%" if pool_yield["total"] is not None else "Unavailable"],
                 ["Base APY · reported", f"{pool_yield['base']:.2f}%" if pool_yield["base"] is not None else "Unavailable"],
                 ["Reward APY · reported", f"{pool_yield['reward']:.2f}%" if pool_yield["reward"] is not None else "Unavailable"],
                 ["TVL · reported", format_money(row['tvlUsd']) if bool(row.get("tvl_available", True)) else "Unavailable"],
+                ["Provider freshness", f"{market_freshness['label']} · {market_freshness['age']}"],
+            ], columns=["Metric", "Value"])
+            st.dataframe(reported_stats, width="stretch", hide_index=True, height=245)
+
+            st.markdown("#### Evidence")
+            evidence_stats = pd.DataFrame([
                 ["Evidence coverage", detail_assessment.coverage.value],
                 ["Confidence", detail_assessment.confidence.value],
                 ["Classification", signal_classification],
                 ["Signal evidence", signal_evidence],
-                ["Data freshness", f"{market_freshness['label']} · {market_freshness['age']}"],
-                ["Risk", f"{pool_risk['score']}/100 ({pool_risk['label']})" if pool_risk["score"] is not None else "Unknown · inputs missing"],
-                ["Audit confidence", f"{int(row['audit_score'])}/100"],
-                ["Protocol age", f"{int(row['protocol_age_score'])}/100"],
-                ["TVL stability", f"{int(row['tvl_stability_score'])}/100"],
-                ["Pool volatility", f"{int(row['pool_volatility_score'])}/100"],
                 ["7d APY change", f"{float(row['apy_delta_7']):.2f}" if signal_evidence == "Observed" else "Insufficient evidence"],
                 ["7d TVL change", f"{float(row['tvl_delta_7_pct']):.2f}%" if signal_evidence == "Observed" else "Insufficient evidence"],
             ], columns=["Metric", "Value"])
-
-            st.dataframe(stats, width="stretch", hide_index=True, height=360)
+            st.dataframe(evidence_stats, width="stretch", hide_index=True, height=285)
             st.caption(detail_assessment.interpretation)
             if detail_assessment.limiting_factors:
                 st.caption("Confidence is limited by: " + "; ".join(detail_assessment.limiting_factors) + ".")
@@ -3334,8 +3399,21 @@ elif content_page == "Pool Detail":
                     f"Reported base plus reward APY differs from reported total APY by {pool_yield['discrepancy']:.2f} percentage points. Values are shown without forcing reconciliation."
                 )
 
-            st.markdown("#### Explainable risk factors")
-            st.dataframe(pd.DataFrame(pool_risk["factors"]), width="stretch", hide_index=True, height=260)
+            st.markdown("#### Risk")
+            render_status(
+                "warning" if pool_risk["score"] is not None and int(pool_risk["score"]) >= 60 else "info",
+                f"{pool_risk['label']} risk" if pool_risk["score"] is not None else "Risk unknown",
+                f"Existing risk score: {pool_risk['score']}/100. Risk is independent of reported APY and evidence confidence."
+                if pool_risk["score"] is not None
+                else "Important risk inputs are missing, so FuruFlow does not substitute a reassuring score.",
+            )
+            risk_factor_rows = list(pool_risk["factors"]) + [
+                {"factor": "Audit confidence", "status": f"{int(row['audit_score'])}/100", "detail": "Existing protocol context input."},
+                {"factor": "Protocol age", "status": f"{int(row['protocol_age_score'])}/100", "detail": "Existing protocol context input."},
+                {"factor": "TVL stability", "status": f"{int(row['tvl_stability_score'])}/100", "detail": "Existing liquidity context input."},
+                {"factor": "Pool volatility", "status": f"{int(row['pool_volatility_score'])}/100", "detail": "Existing volatility context input."},
+            ]
+            st.dataframe(pd.DataFrame(risk_factor_rows), width="stretch", hide_index=True, height=330)
             st.caption(pool_risk["method"])
 
             st.markdown("#### Data provenance")
@@ -3397,59 +3475,61 @@ elif content_page == "Pool Detail":
                                 key=f"download_pool_card_{current_pool_id}",
                             )
 
-            c1, c2, c3, c4 = st.columns(4)
-            with c1:
-                watched = row["pool"] in saved_pool_ids
-                st.markdown("<div class='watch-wrap'>", unsafe_allow_html=True)
-                if st.button(
-                    (
-                        "Remove from Watchlist"
-                        if watched
-                        else "Add to Watchlist"
-                        if signed_in and watchlists_enabled and watchlist_client is not None
-                        else "Watchlist unavailable"
-                        if signed_in and watchlists_enabled
-                        else f"Watchlists · {required_tier_name(Capability.WATCHLISTS)}"
-                        if signed_in
-                        else "Sign in to save"
-                    ),
-                    key=f"drill_watch_{current_pool_id}",
-                    width="stretch",
-                    disabled=not signed_in or not watchlists_enabled or watchlist_client is None,
-                ):
-                    track_research_event("watchlist_action_initiated", {"pool": current_pool_id, "action": "toggle"})
-                    if watch_toggle(str(row["pool"]), watched=watched, client=watchlist_client):
-                        st.rerun()
-                st.markdown("</div>", unsafe_allow_html=True)
-            with c2:
-                if st.button(
-                    "Sign in for alerts"
-                    if not signed_in
-                    else f"Alerts · {required_tier_name(Capability.ALERTS)}"
-                    if not alerts_enabled
-                    else "Create alert",
-                    key=f"pool_alert_{current_pool_id}",
-                    width="stretch",
-                    disabled=not signed_in or not alerts_enabled or market_source_status == "sample",
-                    help="Sample-mode pools cannot become persistent alerts." if market_source_status == "sample" else None,
-                ):
-                    start_alert_creation(current_pool_id)
+        st.markdown("#### Actions")
+        st.caption("Continue with the same canonical pool. The protocol destination is external; FuruFlow does not execute or recommend a transaction.")
+        c1, c2, c3, c4 = st.columns(4)
+        with c1:
+            watched = row["pool"] in saved_pool_ids
+            st.markdown("<div class='watch-wrap'>", unsafe_allow_html=True)
+            if st.button(
+                (
+                    "Remove from Watchlist"
+                    if watched
+                    else "Add to Watchlist"
+                    if signed_in and watchlists_enabled and watchlist_client is not None
+                    else "Watchlist unavailable"
+                    if signed_in and watchlists_enabled
+                    else f"Watchlists · {required_tier_name(Capability.WATCHLISTS)}"
+                    if signed_in
+                    else "Sign in to save"
+                ),
+                key=f"drill_watch_{current_pool_id}",
+                width="stretch",
+                disabled=not signed_in or not watchlists_enabled or watchlist_client is None,
+            ):
+                track_research_event("watchlist_action_initiated", {"pool": current_pool_id, "action": "toggle"})
+                if watch_toggle(str(row["pool"]), watched=watched, client=watchlist_client):
                     st.rerun()
-            with c3:
-                if st.button(
-                    "Research"
-                    if research_modeling_enabled
-                    else f"Research · {required_tier_name(Capability.RESEARCH_MODELING)}",
-                    key=f"pool_research_{current_pool_id}",
-                    width="stretch",
-                    disabled=not research_modeling_enabled,
-                ):
-                    open_research(current_pool_id)
-                    st.rerun()
-            with c4:
-                with st.container(key="pool_detail_open_pool"):
-                    st.link_button("Open on protocol ↗", row["pool_url"], width="stretch")
-                    st.caption("External destination")
+            st.markdown("</div>", unsafe_allow_html=True)
+        with c2:
+            if st.button(
+                "Sign in for alerts"
+                if not signed_in
+                else f"Alerts · {required_tier_name(Capability.ALERTS)}"
+                if not alerts_enabled
+                else "Create alert",
+                key=f"pool_alert_{current_pool_id}",
+                width="stretch",
+                disabled=not signed_in or not alerts_enabled or market_source_status == "sample",
+                help="Sample-mode pools cannot become persistent alerts." if market_source_status == "sample" else None,
+            ):
+                start_alert_creation(current_pool_id)
+                st.rerun()
+        with c3:
+            if st.button(
+                "Research"
+                if research_modeling_enabled
+                else f"Research · {required_tier_name(Capability.RESEARCH_MODELING)}",
+                key=f"pool_research_{current_pool_id}",
+                width="stretch",
+                disabled=not research_modeling_enabled,
+            ):
+                open_research(current_pool_id)
+                st.rerun()
+        with c4:
+            with st.container(key="pool_detail_open_pool"):
+                st.link_button("Open on protocol ↗", row["pool_url"], width="stretch")
+                st.caption("External destination")
         st.markdown("</div>", unsafe_allow_html=True)
 
 elif content_page == "Strategy Builder":
@@ -3769,7 +3849,8 @@ elif content_page == "Methodology & Data Status":
         st.markdown("### Discovery methodology")
         st.markdown(
             "Opportunities applies the user's search and filters, then the selected deterministic sort. Filters decide eligibility; sorting decides order. "
-            "The existing FuruFlow rank combines reported yield and capital depth with existing protocol/audit context and the existing risk score. "
+            "The default Investigation priority order compares confidence first, then evidence coverage, lower existing risk score, larger reported TVL, and finally higher reported APY; canonical pool ID breaks ties. "
+            "This makes APY a visible input without allowing its magnitude alone to dominate the default order. The optional existing FuruFlow rank remains available and unchanged. "
             "All Pools is different: it exposes the normalized provider universe without Discover's default TVL, risk, ranking, or Free/Pro depth thresholds, while preserving the user's explicit filters and sort."
         )
         st.markdown(

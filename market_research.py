@@ -22,6 +22,7 @@ CURRENT_SECONDS = 20 * 60
 AGING_SECONDS = 60 * 60
 
 SORT_OPTIONS = (
+    "Investigation priority",
     "Highest APY",
     "Largest TVL",
     "FuruFlow rank",
@@ -93,7 +94,7 @@ class DiscoveryFilters:
     min_tvl: float = 5_000_000.0
     max_risk: int = 70
     min_apy: float = 0.0
-    sort_by: str = "Highest APY"
+    sort_by: str = "Investigation priority"
 
 
 DEFAULT_FILTERS = DiscoveryFilters()
@@ -407,6 +408,36 @@ def apply_discovery_filters(frame: pd.DataFrame, filters: DiscoveryFilters) -> p
 def sort_pools(frame: pd.DataFrame, sort_by: str) -> pd.DataFrame:
     if frame.empty:
         return frame.copy()
+    if sort_by == "Investigation priority":
+        out = frame.copy()
+        confidence_priority = {"High": 3, "Moderate": 2, "Low": 1, "Unavailable": 0}
+        evidence_priority = {
+            "Sufficient evidence": 3,
+            "Partial evidence": 2,
+            "Insufficient evidence": 1,
+            "No evidence": 0,
+        }
+        out["_confidence_priority"] = (
+            out.get("confidence_level", pd.Series("Unavailable", index=out.index))
+            .fillna("Unavailable")
+            .map(confidence_priority)
+            .fillna(0)
+        )
+        out["_evidence_priority"] = (
+            out.get("evidence_coverage", pd.Series("No evidence", index=out.index))
+            .fillna("No evidence")
+            .map(evidence_priority)
+            .fillna(0)
+        )
+        return (
+            out.sort_values(
+                ["_confidence_priority", "_evidence_priority", "risk_score", "tvlUsd", "apy", "pool"],
+                ascending=[False, False, True, False, False, True],
+                na_position="last",
+                kind="mergesort",
+            )
+            .drop(columns=["_confidence_priority", "_evidence_priority"])
+        )
     rules = {
         "Highest APY": (["apy", "tvlUsd", "pool"], [False, False, True]),
         "Largest TVL": (["tvlUsd", "apy", "pool"], [False, False, True]),
@@ -415,7 +446,7 @@ def sort_pools(frame: pd.DataFrame, sort_by: str) -> pd.DataFrame:
         "Largest signal move": (["apy_delta_7", "tvl_delta_7_pct", "pool"], [False, False, True]),
         "FuruFlow rank": (["rank_score", "apy", "tvlUsd", "pool"], [False, False, False, True]),
     }
-    columns, ascending = rules.get(sort_by, rules[DEFAULT_FILTERS.sort_by])
+    columns, ascending = rules.get(sort_by, rules["Highest APY"])
     return frame.sort_values(columns, ascending=ascending, na_position="last", kind="mergesort")
 
 

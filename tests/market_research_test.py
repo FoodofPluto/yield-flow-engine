@@ -26,6 +26,7 @@ from market_research import (
     remove_filter,
     risk_explanation,
     sensitive_query_keys,
+    sort_pools,
     strategy_match_explanation,
     track_research_event,
     update_comparison,
@@ -210,6 +211,22 @@ def test_discovery_search_filters_sort_and_zero_results_are_deterministic() -> N
     assert filtered["pool"].tolist() == ["a", "b", "c"]
     assert apply_discovery_filters(frame, replace(DEFAULT_FILTERS, search="no match", min_tvl=0)).empty
     assert apply_discovery_filters(frame, replace(DEFAULT_FILTERS, min_apy=5, min_tvl=0))["pool"].tolist() == ["a"]
+
+
+def test_investigation_priority_is_evidence_first_and_apy_is_only_a_late_tie_breaker() -> None:
+    frame = pd.DataFrame(
+        [
+            {"pool": "partial-risk-50", "confidence_level": "High", "evidence_coverage": "Partial evidence", "risk_score": 50, "tvlUsd": 10, "apy": 1},
+            {"pool": "moderate", "confidence_level": "Moderate", "evidence_coverage": "Sufficient evidence", "risk_score": 1, "tvlUsd": 1_000, "apy": 20_000},
+            {"pool": "extreme-apy", "confidence_level": "High", "evidence_coverage": "Partial evidence", "risk_score": 40, "tvlUsd": 5, "apy": 20_000},
+            {"pool": "sufficient", "confidence_level": "High", "evidence_coverage": "Sufficient evidence", "risk_score": 80, "tvlUsd": 1, "apy": 0.1},
+        ]
+    )
+
+    ordered = sort_pools(frame, "Investigation priority")
+
+    assert ordered["pool"].tolist() == ["sufficient", "extreme-apy", "partial-risk-50", "moderate"]
+    assert not {"_confidence_priority", "_evidence_priority"} & set(ordered.columns)
 
 
 def test_pool_universe_ignores_discovery_thresholds_and_orders_canonical_rows() -> None:

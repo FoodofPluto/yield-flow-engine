@@ -338,7 +338,7 @@ UI_THEME_CSS = """
     .ff-badge { display: inline-flex; max-width: 100%; padding: .28rem .58rem; border: 1px solid var(--ff-color-border);
         border-radius: 999px; background: rgba(255, 255, 255, .045); color: var(--ff-color-text-muted);
         font-size: var(--ff-font-size-meta); font-weight: 750; line-height: 1.25; overflow-wrap: anywhere; }
-    .ff-metric-strip { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: var(--ff-space-2); margin-top: var(--ff-space-2); }
+    .ff-metric-strip { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: var(--ff-space-2); margin-top: var(--ff-space-2); }
     .ff-metric-box { min-width: 0; padding: .68rem .45rem; border: 1px solid var(--ff-color-border);
         border-radius: var(--ff-radius-sm); background: rgba(6, 16, 29, .58); text-align: center; }
     .ff-metric-mini-label { color: var(--ff-color-text-subtle); font-size: .68rem; font-weight: 800; letter-spacing: .06em; text-transform: uppercase; }
@@ -388,7 +388,7 @@ UI_THEME_CSS = """
     }
 
     @media (max-width: 760px) {
-        .ff-metric-strip { grid-template-columns: 1fr; }
+        .ff-metric-strip { grid-template-columns: repeat(2, minmax(0, 1fr)); }
         .ff-card-wrap { padding: var(--ff-space-3); }
         .ff-badge { white-space: normal; }
     }
