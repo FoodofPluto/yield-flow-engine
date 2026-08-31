@@ -3759,8 +3759,10 @@ elif content_page == "Methodology & Data Status":
             "Risk remains a separate interpretation of the inputs that are available. A fresh current APY, a large TVL, or a high reported APY cannot replace required history."
         )
         st.markdown(
-            "Moderate confidence requires at least 14 valid APY and 14 valid TVL observations spanning at least 7 days with adequate continuity. "
-            "High confidence requires at least 30 of each spanning 30 days, adequate continuity, current data, observed base/reward decomposition, and signal history. "
+            "Moderate confidence requires at least 14 valid paired APY/TVL observations spanning at least 7 days with at least 70% continuity. "
+            "High confidence requires at least 30 valid APY and 30 valid TVL observations spanning at least 30 days with at least 80% continuity, "
+            "complete current provider data, sufficient base/reward APY history, and signal history. "
+            "Historical evidence older than 48 hours limits confidence. "
             "Missing prerequisites cap confidence explicitly; no expected APY or profitability estimate is created."
         )
 

@@ -36,6 +36,26 @@ def test_data_status_uses_existing_provider_truth_and_honest_unavailable_states(
     assert "SLA" in page
 
 
+def test_methodology_discloses_authoritative_confidence_thresholds() -> None:
+    source = (ROOT / "app.py").read_text(encoding="utf-8")
+    page = source[
+        source.index('st.markdown("### Evidence and confidence")') : source.index(
+            'st.markdown("### Discovery methodology")'
+        )
+    ]
+
+    assert "14 valid paired APY/TVL observations" in page
+    assert "7 days" in page
+    assert "70% continuity" in page
+    assert "30 valid APY and 30 valid TVL observations" in page
+    assert "30 days" in page
+    assert "80% continuity" in page
+    assert "complete current provider data" in page
+    assert "sufficient base/reward APY history" in page
+    assert "signal history" in page
+    assert "Historical evidence older than 48 hours limits confidence" in page
+
+
 def test_internal_pool_detail_tables_do_not_use_new_tab_link_columns() -> None:
     app_source = (ROOT / "app.py").read_text(encoding="utf-8")
     shell_source = (ROOT / "ui_shell.py").read_text(encoding="utf-8")
