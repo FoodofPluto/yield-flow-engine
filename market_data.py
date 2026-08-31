@@ -30,3 +30,16 @@ def provider_pool_frame(rows: Iterable[Mapping[str, Any]]) -> pd.DataFrame:
     """Materialize the bounded public market projection used by FuruFlow."""
 
     return pd.DataFrame.from_records(rows, columns=list(PROVIDER_POOL_FIELDS))
+
+
+def normalize_provider_numbers(values: pd.Series) -> tuple[pd.Series, pd.Series]:
+    """Return safe numeric presentation values plus independent availability.
+
+    The zero fill is rendering/storage compatibility only.  Callers must use
+    the availability series for analytical semantics.
+    """
+    numeric = (
+        pd.to_numeric(values, errors="coerce").replace([float("inf"), float("-inf")], float("nan")).astype("float64")
+    )
+    available = numeric.notna()
+    return numeric.fillna(0.0), available

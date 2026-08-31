@@ -607,7 +607,7 @@ def test_research_is_selected_pool_analysis_not_discover_repeated(monkeypatch) -
         "Risk weight": 15,
         "Signal / momentum weight": 10,
     }
-    assert any("Observed current metrics" in markdown.value for markdown in app.markdown)
+    assert any("Provider-reported current metrics" in markdown.value for markdown in app.markdown)
     assert any("Calculated context" in markdown.value for markdown in app.markdown)
     assert any("Insufficient evidence" in markdown.value for markdown in app.markdown)
     research_tables = _internal_tables(app, "Strategy")
@@ -681,7 +681,8 @@ def test_pool_detail_carries_pool_into_research_without_pool_url_state(monkeypat
     assert app.session_state["research_selection"] == ["canonical-pool-1"]
 
 
-def test_pool_detail_labels_protocol_destination_as_external(monkeypatch) -> None:
+def test_pool_detail_labels_protocol_destination_as_external(monkeypatch, tmp_path) -> None:
+    monkeypatch.setenv("FURUFLOW_HISTORY_PATH", str(tmp_path / "pool-history.json"))
     app = _authenticated_app(monkeypatch, FakeSavedPoolsClient(), page="Pool Detail")
     app.query_params["pool"] = "canonical-pool-1"
     app.run()
@@ -690,6 +691,9 @@ def test_pool_detail_labels_protocol_destination_as_external(monkeypatch) -> Non
     assert any("External destination" in caption.value for caption in app.caption)
     stats = next(table.value for table in app.dataframe if {"Metric", "Value"} <= set(table.value.columns))
     values = dict(zip(stats["Metric"], stats["Value"], strict=True))
+    assert values["Total APY · reported"] == "5.00%"
+    assert values["Evidence coverage"] == "Insufficient evidence"
+    assert values["Confidence"] == "Low"
     assert values["Classification"] == "Insufficient evidence"
     assert values["7d APY change"] == "Insufficient evidence"
     assert values["7d TVL change"] == "Insufficient evidence"
@@ -703,6 +707,7 @@ def test_methodology_documents_actual_product_model_and_limitations(monkeypatch)
         "Data sources and freshness",
         "Pool identity",
         "Metrics",
+        "Evidence and confidence",
         "Discovery methodology",
         "Signals methodology",
         "Risk interpretation",
@@ -713,3 +718,4 @@ def test_methodology_documents_actual_product_model_and_limitations(monkeypatch)
         assert concept in rendered
     assert "DeFiLlama Yields" in rendered
     assert "descriptive, not predictive" in rendered
+    assert "not certainty about future returns" in rendered

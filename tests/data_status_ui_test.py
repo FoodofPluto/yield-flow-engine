@@ -71,3 +71,17 @@ def test_signal_metrics_use_distinct_canonical_semantics() -> None:
     assert "signal_status[2].metric(NON_STEADY_CLASSIFICATIONS_LABEL" in methodology_page
     assert "does not mean every pool was Steady" in methodology_page
     assert '"Active signals"' not in app_source
+
+
+def test_evidence_confidence_semantics_are_shared_across_analytical_surfaces() -> None:
+    source = (ROOT / "app.py").read_text(encoding="utf-8")
+    pool_detail = source[source.index('elif content_page == "Pool Detail"') : source.index('elif content_page == "Strategy Builder"')]
+    signals = source[source.index('elif content_page == "Signals"') : source.index('elif content_page == "Arbitrage"')]
+    research = source[source.index('elif content_page == "Research Comparison"') : source.index('elif content_page == "Signals"')]
+
+    assert "assess_confidence(" in pool_detail
+    assert '"Evidence coverage"' in pool_detail
+    assert '"Confidence"' in pool_detail
+    assert "evidence_coverage" in signals and "confidence_level" in signals
+    assert "Evidence coverage" in research and "Confidence" in research
+    assert "expected-return or persistence conclusion" in research

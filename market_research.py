@@ -477,6 +477,8 @@ def comparison_rows(frame: pd.DataFrame, selected: Iterable[str]) -> list[dict[s
                 "Risk": str(row.get("risk_band") or "Unknown"),
                 "Signal": str(row.get("signal") or "Unavailable"),
                 "Signal evidence": "Observed" if bool(row.get("signal_available", False)) else "Insufficient evidence",
+                "Evidence coverage": str(row.get("evidence_coverage") or "No evidence"),
+                "Confidence": str(row.get("confidence_level") or "Unavailable"),
             }
         )
     return rows
@@ -576,6 +578,8 @@ def comparison_analysis(
                 "Risk rank": metric_ranks["risk"].get(pool_id),
                 "Signal": str(row.get("signal") or "Unavailable"),
                 "Signal rank": metric_ranks["signal"].get(pool_id),
+                "Evidence coverage": str(row.get("evidence_coverage") or "No evidence"),
+                "Confidence": str(row.get("confidence_level") or "Unavailable"),
                 "Score": None if score is None else round(score, 2),
                 "Coverage %": round(available_weight / total_configured_weight * 100, 1) if total_configured_weight else 0.0,
                 "Reason": reason,

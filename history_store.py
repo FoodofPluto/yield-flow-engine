@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import logging
+import math
 import os
 from pathlib import Path
 import tempfile
@@ -71,12 +72,18 @@ def load_history(pool_id: str) -> pd.DataFrame:
 
 
 def _observed_number(row: pd.Series, value_key: str, availability_key: str, digits: int) -> float | None:
-    if availability_key in row and not bool(row.get(availability_key)):
-        return None
+    if availability_key in row:
+        availability = row.get(availability_key)
+        if availability is None or bool(pd.isna(availability)) or not bool(availability):
+            return None
     value = row.get(value_key)
-    if value is None or bool(pd.isna(value)):
+    try:
+        if value is None or bool(pd.isna(value)):
+            return None
+        number = float(value)
+    except (TypeError, ValueError, OverflowError):
         return None
-    return round(float(value), digits)
+    return round(number, digits) if math.isfinite(number) else None
 
 
 def save_snapshot(df: pd.DataFrame) -> bool:

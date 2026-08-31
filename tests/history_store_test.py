@@ -208,6 +208,21 @@ def test_missing_history_values_remain_missing_not_zero(tmp_path, monkeypatch) -
     assert pd.isna(loaded["apy"]) and pd.isna(loaded["tvlUsd"])
 
 
+def test_non_finite_and_unknown_availability_are_not_persisted_as_observations(tmp_path, monkeypatch) -> None:
+    destination = tmp_path / "pool_history.json"
+    monkeypatch.setenv(history_store.HISTORY_PATH_ENV, str(destination))
+    frame = _frame("2026-08-18T20:00:00+00:00", count=1)
+    frame["apy"] = float("inf")
+    frame["tvlUsd"] = float("nan")
+    frame["apy_available"] = pd.NA
+    frame["tvl_available"] = True
+
+    assert history_store.save_snapshot(frame) is True
+    stored = json.loads(destination.read_text(encoding="utf-8"))["pool-0"][0]
+    assert stored["apy"] is None
+    assert stored["tvlUsd"] is None
+
+
 def test_snapshot_store_retains_configured_pool_limit(tmp_path, monkeypatch) -> None:
     destination = tmp_path / "pool_history.json"
     monkeypatch.setattr(history_store, "HISTORY_FILE", destination)

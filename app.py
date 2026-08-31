@@ -26,6 +26,12 @@ from automation.store import AutomationStoreError
 from auth_service import can_access_pro, claim_session, get_current_user, is_admin, logout, validate_session
 from utils.external_side_effects import set_demo_side_effect_block
 from history_store import load_history, save_snapshot
+from evidence_confidence import (
+    assess_confidence,
+    evidence_from_mapping,
+    historical_evidence,
+    serialize_evidence,
+)
 from engine.performance import SignalHistoryReadError, alert_snapshot, latest_signal_history, trend_summary_df
 from engine.recap import build_daily_recap, build_weekly_recap
 from engine.scoring import (
@@ -66,7 +72,7 @@ from market_research import (
     yield_explanation,
     yield_spreads,
 )
-from market_data import provider_pool_frame
+from market_data import normalize_provider_numbers, provider_pool_frame
 from product_capabilities import (
     Capability,
     PLANNED_TIERS,
@@ -636,6 +642,7 @@ def derive_chart_signal(pool_id: str, chart: pd.DataFrame) -> dict[str, Any]:
         "apy_delta_7": round(apy_delta, 2),
         "tvl_delta_7_pct": round(tvl_delta_pct, 2),
         "apy_volatility": round(apy_vol, 2),
+        **serialize_evidence(historical_evidence(recent, signal_history_available=True)),
     }
 
 
@@ -653,8 +660,7 @@ def enrich(df: pd.DataFrame, resolver_version: str = LINK_RESOLVER_VERSION) -> p
             "volumeUsd1d": "volume_1d_available",
             "volumeUsd7d": "volume_7d_available",
         }[column]
-        data[availability_name] = pd.to_numeric(data[column], errors="coerce").notna()
-        data[column] = pd.to_numeric(data[column], errors="coerce").fillna(0.0)
+        data[column], data[availability_name] = normalize_provider_numbers(data[column])
 
     for col in ["chain", "project", "symbol", "poolMeta", "exposure", "pool"]:
         if col not in data.columns:
@@ -2148,6 +2154,19 @@ else:
         axis=1,
     )
 
+confidence_assessments = [
+    assess_confidence(
+        evidence_from_mapping(row),
+        provider_availability=market_data_status.availability,
+        freshness=market_freshness["label"],
+    )
+    for row in df.to_dict("records")
+]
+df["evidence_coverage"] = [assessment.coverage.value for assessment in confidence_assessments]
+df["confidence_level"] = [assessment.confidence.value for assessment in confidence_assessments]
+df["confidence_interpretation"] = [assessment.interpretation for assessment in confidence_assessments]
+df["confidence_missing"] = ["; ".join(assessment.missing) for assessment in confidence_assessments]
+
 watchlist_df = df[df["pool"].isin(saved_pool_ids)].copy()
 if market_source_status == "live":
     save_snapshot(df)
@@ -2634,6 +2653,20 @@ elif content_page == "Research Comparison":
                 {pool_id: index for index, pool_id in enumerate(selected_ids)}
             )
             selected_source = selected_source.sort_values("_research_order")
+            for source_index, source_row in selected_source.iterrows():
+                source_evidence = evidence_from_mapping(source_row)
+                if not bool(source_row.get("signal_available", False)):
+                    stored_history = load_history(str(source_row["pool"]))
+                    if not stored_history.empty:
+                        source_evidence = historical_evidence(stored_history)
+                source_assessment = assess_confidence(
+                    source_evidence,
+                    provider_availability=market_data_status.availability,
+                    freshness=market_freshness["label"],
+                )
+                selected_source.at[source_index, "evidence_coverage"] = source_assessment.coverage.value
+                selected_source.at[source_index, "confidence_level"] = source_assessment.confidence.value
+            compared_rows = comparison_rows(selected_source, selected_ids)
             section_header(
                 "Comparison model",
                 "Choose what matters in this selected set",
@@ -2697,7 +2730,7 @@ elif content_page == "Research Comparison":
                 key="research_weight_signal",
             )
             comparison_weights = ComparisonWeights(yield_weight, liquidity_weight, risk_weight, signal_weight)
-            analysis = comparison_analysis(df, selected_ids, comparison_weights)
+            analysis = comparison_analysis(selected_source, selected_ids, comparison_weights)
             configured_total = sum(analysis["weights"].values())
             st.caption(
                 f"Configured weight total: {configured_total}. Values are proportionally normalized; this is deterministic decision support, not a return prediction."
@@ -2707,8 +2740,9 @@ elif content_page == "Research Comparison":
                 if winner:
                     render_status(
                         "info",
-                        f"{winner['Pool']} ranks first under these weights",
-                        f"{winner['Reason']} Score {winner['Score']:.2f}/100 with {winner['Coverage %']:.1f}% weighted-data coverage.",
+                        f"{winner['Pool']} ranks first on reported-current metrics under these weights",
+                        f"{winner['Reason']} Score {winner['Score']:.2f}/100 with {winner['Coverage %']:.1f}% weighted-data coverage. "
+                        f"Its independent evidence confidence is {winner['Confidence']}; this rank is not an expected-return or persistence conclusion.",
                     )
                 leader_by_pool = {row["pool"]: row["Pool"] for row in analysis["rows"]}
                 leader_notes = []
@@ -2731,6 +2765,8 @@ elif content_page == "Research Comparison":
                         "Pool",
                         "Score",
                         "Coverage %",
+                        "Evidence coverage",
+                        "Confidence",
                         "APY",
                         "APY vs median",
                         "TVL (USD)",
@@ -2788,7 +2824,7 @@ elif content_page == "Research Comparison":
                     total_compare = f"{compared['APY']:.2f}%" if compared["APY"] is not None else "Unavailable"
                     base_compare = f"{compared['Base APY']:.2f}%" if compared["Base APY"] is not None else "Unavailable"
                     reward_compare = f"{compared['Reward APY']:.2f}%" if compared["Reward APY"] is not None else "Unavailable"
-                    st.markdown("**Observed current metrics**")
+                    st.markdown("**Provider-reported current metrics**")
                     st.markdown(f"Yield: {total_compare} total · {base_compare} base · {reward_compare} rewards  ")
                     st.markdown(
                         f"TVL: {format_money(compared['TVL (USD)']) if compared['TVL (USD)'] is not None else 'Unavailable'} · "
@@ -2808,6 +2844,7 @@ elif content_page == "Research Comparison":
                         )
                     st.markdown("**Interpretation**")
                     st.markdown(
+                        f"Evidence coverage: {compared['Evidence coverage']} · Confidence: {compared['Confidence']}. "
                         "Compare reported yield with liquidity, reward dependence, token exposure, and data freshness. "
                         "The signal describes detected movement and the risk label is contextual; neither is a prediction or recommendation."
                     )
@@ -2919,7 +2956,11 @@ elif content_page == "Signals":
                     key_prefix="signals",
                     alerts_available=market_source_status != "sample",
                 )
-                st.caption(f"Signal strength: {row['signal_strength']:.1f} • 7d APY Δ: {row['apy_delta_7']:.2f} • 7d TVL Δ: {row['tvl_delta_7_pct']:.2f}%")
+                st.caption(
+                    f"Signal strength: {row['signal_strength']:.1f} • 7d APY Δ: {row['apy_delta_7']:.2f} • "
+                    f"7d TVL Δ: {row['tvl_delta_7_pct']:.2f}% • Evidence: {row['evidence_coverage']} • "
+                    f"Confidence: {row['confidence_level']}"
+                )
         st.markdown("</div>", unsafe_allow_html=True)
     else:
         render_status(
@@ -2985,6 +3026,10 @@ elif content_page == "Signals":
     with right:
         st.markdown("<div class='panel'>", unsafe_allow_html=True)
         section_header("Interpretation", "Operator notes", "These are decision-support signals, not guarantees.")
+        st.caption(
+            "Confidence uses the same historical-evidence prerequisites as Pool Detail and Research. "
+            "Signal strength measures observed movement intensity; it is not evidence confidence."
+        )
         guides = [
             ("APY spike", "Yield jumped quickly. Check whether emissions, rewards, or a short-term campaign are driving the move."),
             ("Farm rotation", "Yield and TVL rolled over together. Capital may be leaving after incentives decayed or a newer farm launched."),
@@ -3238,7 +3283,13 @@ elif content_page == "Pool Detail":
                 if chart_mode == "stored":
                     st.caption("The provider history endpoint was unavailable; this chart uses real snapshots previously stored by FuruFlow and may be stale.")
                 else:
-                    st.caption("Reported pool history loaded from the DeFiLlama history endpoint.")
+                    st.caption("Provider-reported historical series retrieved from the DeFiLlama history endpoint; FuruFlow does not independently verify it.")
+
+            detail_assessment = assess_confidence(
+                historical_evidence(chart, signal_history_available=bool(row.get("signal_available", False))),
+                provider_availability=market_data_status.availability,
+                freshness=market_freshness["label"],
+            )
 
         with cols[1]:
             signal_evidence = "Observed" if bool(row.get("signal_available", False)) else "Insufficient evidence"
@@ -3256,6 +3307,8 @@ elif content_page == "Pool Detail":
                 ["Base APY · reported", f"{pool_yield['base']:.2f}%" if pool_yield["base"] is not None else "Unavailable"],
                 ["Reward APY · reported", f"{pool_yield['reward']:.2f}%" if pool_yield["reward"] is not None else "Unavailable"],
                 ["TVL · reported", format_money(row['tvlUsd']) if bool(row.get("tvl_available", True)) else "Unavailable"],
+                ["Evidence coverage", detail_assessment.coverage.value],
+                ["Confidence", detail_assessment.confidence.value],
                 ["Classification", signal_classification],
                 ["Signal evidence", signal_evidence],
                 ["Data freshness", f"{market_freshness['label']} · {market_freshness['age']}"],
@@ -3269,6 +3322,11 @@ elif content_page == "Pool Detail":
             ], columns=["Metric", "Value"])
 
             st.dataframe(stats, width="stretch", hide_index=True, height=360)
+            st.caption(detail_assessment.interpretation)
+            if detail_assessment.limiting_factors:
+                st.caption("Confidence is limited by: " + "; ".join(detail_assessment.limiting_factors) + ".")
+            if detail_assessment.missing:
+                st.caption("Major evidence missing: " + "; ".join(detail_assessment.missing) + ".")
             if pool_yield["mode"] == "aggregate_only":
                 st.caption("The provider reports only aggregate APY for this pool; no yield decomposition is implied.")
             elif pool_yield["reconciles"] is False:
@@ -3284,7 +3342,7 @@ elif content_page == "Pool Detail":
             st.markdown(
                 f"**Source:** {market_data_status.source}  \n**Availability:** {market_data_status.availability.title()}  \n"
                 f"**Freshness:** {market_freshness['label']} · {market_freshness['age']}  \n"
-                "**Value origin:** APY and TVL are provider-reported; FuruFlow risk, rank, and signal labels are derived."
+                "**Value origin:** APY and TVL are provider-reported; history is observed; measurements are calculated from that history; confidence and risk are separate FuruFlow interpretations."
             )
 
             if admin_user:
@@ -3398,7 +3456,7 @@ elif content_page == "Strategy Builder":
     if not pro_tools_enabled:
         preview = strategy_builder_filter(df, True, 8.0, 10_000_000.0, 40, "Any")[["project", "chain", "symbol", "apy", "risk_score", "signal"]].copy().head(8)
         preview.columns = ["Protocol", "Chain", "Asset", "APY", "Risk", "Signal"]
-        require_pro("Strategy Builder", preview_df=preview, preview_note="Build reusable high-conviction slices in Pro.")
+        require_pro("Strategy Builder", preview_df=preview, preview_note="Build reusable rules-based matching slices in Pro.")
     left, right = st.columns([1, 1.1], gap="large")
     with left:
         st.markdown("<div class='panel'>", unsafe_allow_html=True)
@@ -3693,6 +3751,17 @@ elif content_page == "Methodology & Data Status":
             "**APY, base APY, reward APY, TVL, and volume** are provider-reported when available. Missing reported values remain unavailable in explanatory views. "
             "**Protocol, network, asset/pair, metadata, and exposure** describe pool identity and composition. "
             "**Signal movement values** summarize recent APY and TVL change plus APY volatility from available chart observations."
+        )
+        st.markdown("### Evidence and confidence")
+        st.markdown(
+            "**Evidence coverage** records whether usable APY and TVL history is absent, insufficient, partial, or sufficient. "
+            "**Confidence** measures how much evidence supports FuruFlow's analytical assessment—not certainty about future returns. "
+            "Risk remains a separate interpretation of the inputs that are available. A fresh current APY, a large TVL, or a high reported APY cannot replace required history."
+        )
+        st.markdown(
+            "Moderate confidence requires at least 14 valid APY and 14 valid TVL observations spanning at least 7 days with adequate continuity. "
+            "High confidence requires at least 30 of each spanning 30 days, adequate continuity, current data, observed base/reward decomposition, and signal history. "
+            "Missing prerequisites cap confidence explicitly; no expected APY or profitability estimate is created."
         )
 
         st.markdown("### Discovery methodology")

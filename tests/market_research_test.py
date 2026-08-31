@@ -291,6 +291,8 @@ def test_comparison_limit_removal_and_missing_values() -> None:
     assert compared[1]["APY"] is None
     assert compared[1]["TVL (USD)"] is None
     assert compared[1]["Signal evidence"] == "Insufficient evidence"
+    assert compared[1]["Evidence coverage"] == "No evidence"
+    assert compared[1]["Confidence"] == "Unavailable"
 
 
 @pytest.mark.parametrize(
@@ -336,6 +338,7 @@ def test_selected_set_model_is_deterministic_explainable_and_preserves_identity(
     assert balanced["networks"] == ["Arbitrum", "Base"]
     assert "strongest selected-set contribution" in balanced["winner"]["Reason"]
     assert next(row for row in balanced["rows"] if row["pool"] == "c")["Coverage %"] < 100
+    assert all("Evidence coverage" in row and "Confidence" in row for row in balanced["rows"])
 
 
 def test_weighting_presets_change_rank_predictably_without_changing_inputs() -> None:
