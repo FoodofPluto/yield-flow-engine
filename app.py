@@ -1143,6 +1143,36 @@ def clear_discover_query_state() -> None:
             del st.query_params[key]
 
 
+DISCOVER_NAVIGATION_STATE_KEY = "_discover_navigation_state"
+
+
+def persist_discover_navigation_state(filters: DiscoveryFilters, view: str) -> None:
+    """Keep public Discover controls across same-session internal navigation."""
+
+    if view not in DISCOVER_VIEWS:
+        return
+    st.session_state[DISCOVER_NAVIGATION_STATE_KEY] = {
+        "filters": filter_query(filters),
+        "view": view,
+    }
+
+
+def restore_discover_navigation_state(*, view: str | None = None) -> None:
+    """Restore only allowlisted Discover state when an internal route returns."""
+
+    persisted = st.session_state.get(DISCOVER_NAVIGATION_STATE_KEY)
+    persisted_filters = persisted.get("filters") if isinstance(persisted, dict) else None
+    if isinstance(persisted_filters, dict):
+        clear_discover_query_state()
+        for key, value in persisted_filters.items():
+            if key in FILTER_QUERY_KEYS and isinstance(value, str) and value:
+                st.query_params[key] = value
+    persisted_view = str(persisted.get("view") or "") if isinstance(persisted, dict) else ""
+    restored_view = view or persisted_view
+    if restored_view in DISCOVER_VIEWS:
+        st.session_state["discover_view"] = restored_view
+
+
 def reset_discover_filters() -> None:
     """Restore the canonical Discover defaults from any actionable empty state."""
 
@@ -1221,8 +1251,8 @@ def add_research_pool_from_picker() -> None:
 
 def go_to_route(route: str, *, view: str | None = None) -> None:
     st.session_state["current_route"] = route
-    if route == "Discover" and view:
-        st.session_state["discover_view"] = view
+    if route == "Discover":
+        restore_discover_navigation_state(view=view)
     st.query_params["page"] = route
     for key in ("pool", "return_route", "return_view"):
         if key in st.query_params:
@@ -2351,6 +2381,7 @@ if page == "Discover":
         label_visibility="collapsed",
         key="discover_view",
     )
+    persist_discover_navigation_state(current_filters, active_view)
     st.caption(
         "Opportunities applies the visible criteria and selected deterministic order to surface a focused investigation set. "
         "All Pools keeps the broader provider universe searchable and sortable without the default opportunity TVL or risk thresholds."

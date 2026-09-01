@@ -29,11 +29,13 @@ def test_linkdebug_is_a_reduced_app_copy_with_known_canonical_shell_features_mis
         "open_research",
         "open_research_many",
         "open_pool_detail",
+        "persist_discover_navigation_state",
         "refresh_market_data",
         "remove_research_pool",
         "reset_discover_filters",
         "render_alerts_page",
         "render_internal_pool_table",
+        "restore_discover_navigation_state",
         "return_from_pool_detail",
         "start_alert_creation",
     }

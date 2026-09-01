@@ -138,6 +138,32 @@ def _button(app: AppTest, label: str):
     return next(button for button in app.button if button.label == label)
 
 
+CURVE_POOL_ID = "25171c4c-1877-449a-9f88-45a9f153ee31"
+
+
+def _curve_market_rows() -> list[dict[str, object]]:
+    return [
+        {
+            "pool": CURVE_POOL_ID,
+            "chain": "Ethereum",
+            "project": "curve-dex",
+            "symbol": "DAI-USDC-USDT",
+            "apy": 3.0,
+            "apyBase": 3.0,
+            "apyReward": 0.0,
+            "tvlUsd": 160_000_000,
+            "stablecoin": True,
+        }
+    ]
+
+
+def _assert_curve_discover_state(app: AppTest) -> None:
+    assert app.query_params["chains"] == ["Ethereum"]
+    assert app.query_params["q"] == ["curve"]
+    assert next(item for item in app.multiselect if item.label == "Chains").value == ["Ethereum"]
+    assert next(item for item in app.text_input if item.label.startswith("Search protocol")).value == "curve"
+
+
 def test_current_free_capabilities_keep_discovery_useful_without_invalid_actions(monkeypatch) -> None:
     app = _authenticated_app(monkeypatch, FakeSavedPoolsClient(), page="Discover", is_pro=False)
 
@@ -489,6 +515,82 @@ def test_discover_advanced_filters_and_sort_reconstruct_in_a_fresh_browser_sessi
     assert not {"chains", "protocols", "strategies", "signals", "min_tvl", "max_risk", "min_apy", "sort"} & set(
         refreshed.query_params
     )
+
+
+def test_discover_filters_persist_through_home_round_trip(monkeypatch) -> None:
+    app = _authenticated_app(
+        monkeypatch,
+        FakeSavedPoolsClient(),
+        page="Discover",
+        market_rows=_curve_market_rows(),
+        query_params={"chains": "Ethereum", "q": "curve"},
+    )
+    _assert_curve_discover_state(app)
+    assert next(radio for radio in app.radio if radio.label == "Discover view").value == "Opportunities"
+    assert next(selectbox for selectbox in app.selectbox if selectbox.label == "Sort by").value == "Investigation priority"
+
+    _button(app, "Home").click().run()
+    assert app.query_params == {"page": ["Home"]}
+    _button(app, "Discover").click().run()
+
+    _assert_curve_discover_state(app)
+    assert next(radio for radio in app.radio if radio.label == "Discover view").value == "Opportunities"
+    assert next(selectbox for selectbox in app.selectbox if selectbox.label == "Sort by").value == "Investigation priority"
+
+
+def test_discover_filters_and_uuid_survive_pool_detail_round_trip(monkeypatch) -> None:
+    app = _authenticated_app(
+        monkeypatch,
+        FakeSavedPoolsClient(),
+        page="Discover",
+        market_rows=_curve_market_rows(),
+        query_params={"chains": "Ethereum", "q": "curve"},
+    )
+
+    _button(app, "View details").click().run()
+    assert app.query_params["page"] == ["Pool Detail"]
+    assert app.query_params["pool"] == [CURVE_POOL_ID]
+    assert app.query_params["chains"] == ["Ethereum"]
+    assert app.query_params["q"] == ["curve"]
+
+    _button(app, "← Back to opportunities").click().run()
+    _assert_curve_discover_state(app)
+
+
+def test_discover_state_persists_through_signals_with_mode_and_sort(monkeypatch) -> None:
+    app = _authenticated_app(
+        monkeypatch,
+        FakeSavedPoolsClient(),
+        page="Discover",
+        market_rows=_curve_market_rows(),
+        query_params={"chains": "Ethereum", "q": "curve"},
+    )
+    next(selectbox for selectbox in app.selectbox if selectbox.label == "Sort by").set_value("Largest TVL").run()
+    next(radio for radio in app.radio if radio.label == "Discover view").set_value("All Pools").run()
+
+    _button(app, "Signals").click().run()
+    assert app.query_params == {"page": ["Signals"]}
+    _button(app, "Discover").click().run()
+
+    _assert_curve_discover_state(app)
+    assert next(radio for radio in app.radio if radio.label == "Discover view").value == "All Pools"
+    assert next(selectbox for selectbox in app.selectbox if selectbox.label == "Sort by").value == "Largest TVL"
+
+
+def test_fresh_discover_session_still_uses_clean_defaults(monkeypatch) -> None:
+    app = _authenticated_app(
+        monkeypatch,
+        FakeSavedPoolsClient(),
+        page="Discover",
+        market_rows=_curve_market_rows(),
+    )
+
+    assert "chains" not in app.query_params
+    assert "q" not in app.query_params
+    assert next(item for item in app.multiselect if item.label == "Chains").value == []
+    assert next(item for item in app.text_input if item.label.startswith("Search protocol")).value == ""
+    assert next(radio for radio in app.radio if radio.label == "Discover view").value == "Opportunities"
+    assert next(selectbox for selectbox in app.selectbox if selectbox.label == "Sort by").value == "Investigation priority"
 
 
 def test_signal_engine_renders_pool_link_as_first_visible_table_column(monkeypatch) -> None:
