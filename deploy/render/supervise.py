@@ -10,6 +10,7 @@ import time
 from typing import Callable, Mapping
 
 from billing_service import BillingConfig, BillingConfigurationError
+from beta_readiness import beta_config
 
 
 BROKER_ONLY_KEYS = (
@@ -93,6 +94,9 @@ def build_child_environments(source: Mapping[str, str]) -> tuple[dict[str, str],
         BillingConfig.from_mapping(source)
     except BillingConfigurationError as exc:
         raise RuntimeError("Invalid trusted billing configuration.") from exc
+    closed_beta = beta_config(source)
+    if closed_beta.errors:
+        raise RuntimeError("Invalid closed-beta configuration: " + "; ".join(closed_beta.errors))
 
     streamlit = dict(source)
     for key in BROKER_ONLY_KEYS:

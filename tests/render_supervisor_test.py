@@ -146,6 +146,26 @@ def test_supervisor_rejects_live_billing_credentials_in_staging() -> None:
         build_child_environments(environment)
 
 
+def test_supervisor_rejects_enabled_beta_without_an_allowlist() -> None:
+    environment = {**_environment(), "FURUFLOW_BETA_ENABLED": "true"}
+
+    with pytest.raises(RuntimeError, match="closed-beta configuration"):
+        build_child_environments(environment)
+
+
+def test_supervisor_accepts_enabled_beta_with_uuid_allowlist() -> None:
+    environment = {
+        **_environment(),
+        "FURUFLOW_BETA_ENABLED": "true",
+        "FURUFLOW_BETA_ALLOWED_USER_IDS": "9dadb18d-37bd-4b48-b6f0-f5947fab6e85",
+    }
+
+    streamlit, _broker, _nginx = build_child_environments(environment)
+
+    assert streamlit["FURUFLOW_BETA_ENABLED"] == "true"
+    assert streamlit["FURUFLOW_BETA_ALLOWED_USER_IDS"] == "9dadb18d-37bd-4b48-b6f0-f5947fab6e85"
+
+
 def test_blueprint_isolates_free_web_service_from_durable_cron_worker() -> None:
     blueprint = Path("render.yaml").read_text(encoding="utf-8")
 

@@ -20,7 +20,7 @@ import streamlit as st
 
 
 from auth import login_form
-from beta_readiness import beta_diagnostics
+from beta_readiness import FailureKind, beta_access, beta_config, beta_diagnostics, failure_presentation
 from auth_session import render_pending_session_activation
 from automation.store import AutomationStoreError
 from auth_service import can_access_pro, claim_session, get_current_user, is_admin, logout, validate_session
@@ -142,6 +142,7 @@ PRO_SORT_OPTIONS = ["FuruFlow rank", "Lowest risk", "Highest 24h volume", "Large
 TIMEOUT = 18
 SIGNAL_SAMPLE = 16
 BETA_DIAGNOSTICS = beta_diagnostics(os.environ, app_version=APP_VERSION)
+BETA_CONFIG = beta_config(os.environ)
 AFFILIATE_LINKS = {
     "aave": "https://app.aave.com/?ref=furuflow",
     "aave-v3": "https://app.aave.com/?ref=furuflow",
@@ -480,6 +481,9 @@ def inject_css() -> None:
             .arb-pill { display: inline-flex; align-items: center; border-radius: 999px; padding: 0.22rem 0.55rem; font-size: 0.72rem; font-weight: 800; background: rgba(243,193,95,0.14); color: #ffe08f; border: 1px solid rgba(243,193,95,0.2); }
             .tiny { color: var(--muted); font-size: 0.76rem; }
             .divider { height: 1px; background: var(--border); margin: 0.8rem 0; }
+            .ff-beta-label { display:inline-flex; align-items:center; gap:.4rem; margin:0 0 .75rem; padding:.28rem .62rem;
+                border:1px solid rgba(247,207,101,.42); border-radius:999px; background:rgba(247,207,101,.08);
+                color:#ffe49a; font-size:.78rem; font-weight:850; letter-spacing:.02em; }
 
             @media (max-width: 1180px) { .top-band { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
             @media (max-width: 760px) { .top-band { grid-template-columns: repeat(1, minmax(0, 1fr)); } .hero-title { font-size: 2.05rem; } }
@@ -497,9 +501,14 @@ def fetch_pools() -> pd.DataFrame:
         "https://stablecoins.llama.fi/yields/pools",
     ]
     errors: list[str] = []
+    failure_kind = FailureKind.NO_DATA
     for url in urls:
         try:
             response = requests.get(url, timeout=TIMEOUT)
+            if getattr(response, "status_code", None) == 429:
+                failure_kind = FailureKind.RATE_LIMITED
+                errors.append("Provider rate limited the market refresh")
+                break
             response.raise_for_status()
             payload = response.json()
             rows = payload.get("data", payload)
@@ -523,11 +532,23 @@ def fetch_pools() -> pd.DataFrame:
                 if dropped:
                     df.attrs["errors"] = [f"Dropped {dropped} rows without complete pool identity"]
                 return df
-        except Exception as exc:
-            errors.append(f"{url}: {exc}")
+            errors.append("Provider response contained no usable pool rows")
+        except requests.Timeout:
+            failure_kind = FailureKind.PROVIDER_UNAVAILABLE
+            errors.append("Provider request timed out")
+        except requests.RequestException:
+            failure_kind = FailureKind.PROVIDER_UNAVAILABLE
+            errors.append("Provider request failed")
+        except (TypeError, ValueError):
+            failure_kind = FailureKind.PROVIDER_UNAVAILABLE
+            errors.append("Provider returned an invalid response")
+        except Exception:
+            failure_kind = FailureKind.PROVIDER_UNAVAILABLE
+            errors.append("Provider response could not be processed")
     unavailable = pd.DataFrame()
     unavailable.attrs["errors"] = errors
     unavailable.attrs["source_status"] = "unavailable"
+    unavailable.attrs["failure_kind"] = failure_kind.value
     unavailable.attrs["source_label"] = "DeFiLlama Yields"
     unavailable.attrs["retrieved_at"] = None
     unavailable.attrs["cache_seconds"] = 900
@@ -1199,6 +1220,34 @@ def refresh_market_data() -> None:
     fetch_enriched_pools.clear()
     fetch_pool_chart.clear()
     fetch_signal_snapshots.clear()
+
+
+def render_operational_failure(kind: FailureKind | str) -> None:
+    presentation = failure_presentation(kind)
+    render_status(
+        presentation.status_kind,
+        presentation.title,
+        f"{presentation.message} Next: {presentation.action}",
+    )
+
+
+def render_beta_onboarding() -> None:
+    if not BETA_CONFIG.enabled or st.session_state.get("beta_welcome_dismissed"):
+        return
+    with st.container(border=True, key="closed_beta_welcome"):
+        st.markdown("### Welcome to the FuruFlow Closed Beta")
+        st.markdown(
+            "**Find → Understand → Compare → Monitor → Act** — start in Discover, inspect reported APY and pool identity, "
+            "then use evidence, confidence, and risk as separate decision inputs before monitoring or acting externally."
+        )
+        st.caption(
+            "Reported APY can change rapidly. Evidence and confidence describe data sufficiency, not outcomes; risk is an "
+            "analytical aid, not a guarantee. Provider data may be incomplete, delayed, or unavailable. FuruFlow does not "
+            "execute investments—verify protocols, wallets, and every external action independently."
+        )
+        if st.button("Got it — start exploring", key="dismiss_beta_welcome", type="primary"):
+            st.session_state["beta_welcome_dismissed"] = True
+            st.rerun()
 
 
 def start_alert_creation(pool_id: str) -> None:
@@ -2052,6 +2101,22 @@ if page in {"Discover", "Pool Detail"}:
     for sensitive_key in sensitive_query_keys(st.query_params):
         del st.query_params[sensitive_key]
 
+if BETA_CONFIG.enabled:
+    st.markdown(
+        f'<div class="ff-beta-label" role="status">{html.escape(BETA_CONFIG.label)} · '
+        f'{html.escape(BETA_DIAGNOSTICS.environment)}</div>',
+        unsafe_allow_html=True,
+    )
+if BETA_CONFIG.maintenance_message:
+    render_status(
+        "warning",
+        "Temporarily unavailable for maintenance",
+        BETA_CONFIG.maintenance_message + " Public health checks remain available to the operator.",
+    )
+    if BETA_DIAGNOSTICS.support_url:
+        st.link_button("Contact beta support ↗", BETA_DIAGNOSTICS.support_url)
+    st.stop()
+
 with st.sidebar:
     render_brand()
     navigation_slot = st.empty()
@@ -2061,7 +2126,7 @@ with st.sidebar:
             if st.session_state.get("session_expired"):
                 st.caption("Your session ended. Use the recovery controls on this page to sign in again.")
             else:
-                login_form()
+                login_form(allow_registration=not BETA_CONFIG.enabled or BETA_CONFIG.allow_signup)
     with st.expander("Beta help", expanded=False):
         st.caption("Report the page, approximate time, pool, attempted action, and visible error. Never send passwords, magic links, tokens, or session cookies.")
         if BETA_DIAGNOSTICS.support_url:
@@ -2087,9 +2152,14 @@ if signed_in:
         st.session_state.pop("session_recovery_show_login", None)
         session_expired = False
 
+beta_access_decision = beta_access(BETA_CONFIG, account_user)
+beta_participant = beta_access_decision.allowed
+
 if signed_in:
     account_user = get_current_user()
-    is_pro = can_access_pro(account_user)
+    beta_access_decision = beta_access(BETA_CONFIG, account_user)
+    beta_participant = beta_access_decision.allowed
+    is_pro = can_access_pro(account_user) if beta_participant else False
     db_user = account_user or {}
 else:
     is_pro = False
@@ -2134,7 +2204,10 @@ account_model = account_control_model(
 )
 with account_summary_slot.container():
     st.markdown(f"**{account_model['email']}**")
-    st.caption(f"{account_model['plan']} plan · server-authoritative access")
+    if signed_in and not beta_participant:
+        st.caption("Closed-beta account access not approved · public workflows only")
+    else:
+        st.caption(f"{account_model['plan']} plan · server-authoritative access")
     if signed_in:
         if st.button("Log out", key="logout_button", width="stretch"):
             logout()
@@ -2158,7 +2231,27 @@ if session_expired:
             st.rerun()
     if st.session_state.get("session_recovery_show_login"):
         with st.container(border=True, key="session_recovery_login"):
-            login_form()
+            login_form(allow_registration=not BETA_CONFIG.enabled or BETA_CONFIG.allow_signup)
+
+if signed_in and not beta_participant:
+    failure = failure_presentation(
+        FailureKind.CONFIGURATION_UNAVAILABLE
+        if beta_access_decision.reason == "configuration_unavailable"
+        else FailureKind.AUTHORIZATION_REQUIRED
+    )
+    render_status(
+        failure.status_kind,
+        "Closed-beta access unavailable",
+        "This verified account is not approved for account-bearing beta workflows. Public Discover remains available. "
+        "Contact beta support if an invitation should already be active; no account details are disclosed.",
+    )
+    if page == "Account & Billing":
+        if BETA_DIAGNOSTICS.support_url:
+            st.link_button("Contact beta support ↗", BETA_DIAGNOSTICS.support_url)
+        if st.button("Sign out", key="beta_access_denied_signout"):
+            logout()
+            st.rerun()
+        st.stop()
 
 if signed_in and not bool(db_user.get("_account_available", True)):
     render_status(
@@ -2189,6 +2282,9 @@ if not allowed:
     else:
         render_status("unauthorized", "Unauthorized", "This route is restricted to verified administrators.")
     st.stop()
+
+if page == "Home":
+    render_beta_onboarding()
 
 with st.spinner("Refreshing market data…"):
     df = fetch_enriched_pools(resolver_version=LINK_RESOLVER_VERSION)
@@ -2435,11 +2531,7 @@ elif page != "Pool Detail":
     render_page_heading(page)
 
 if market_data_status.availability == "unavailable" and market_filters_apply(page) and page != "Pool Detail":
-    render_status(
-        "error",
-        "Market provider unavailable",
-        f"{market_source_label} did not return usable market data. This is not a zero-results state, and no sample values were substituted.",
-    )
+    render_operational_failure(df.attrs.get("failure_kind", FailureKind.PROVIDER_UNAVAILABLE.value))
     st.button("Retry market data", key=f"market_retry_{page}", type="primary", on_click=refresh_market_data)
 elif market_data_status.availability == "sample" and market_filters_apply(page) and page != "Pool Detail":
     render_status("degraded", "Development sample mode", f"{market_source_label} is not live market data.")
@@ -2636,7 +2728,11 @@ elif content_page == "Research Comparison":
     )
     research_universe = pool_universe(df)
     if research_universe.empty:
-        render_status("empty", "Research data unavailable", "The provider returned no usable canonical pools for comparison.")
+        render_operational_failure(
+            df.attrs.get("failure_kind", FailureKind.NO_DATA.value)
+            if market_data_status.availability == "unavailable"
+            else FailureKind.NO_DATA
+        )
         if st.button("Return to Discover", key="research_unavailable_discover", type="primary"):
             go_to_route("Discover", view="All Pools")
             st.rerun()
@@ -3059,11 +3155,16 @@ elif content_page == "Signals":
                 )
         st.markdown("</div>", unsafe_allow_html=True)
     else:
-        render_status(
-            "empty",
-            "Observed signal evidence unavailable",
-            "Current pools remain inspectable, but no signal-history observations were retrieved, so movement is not shown as zero.",
-        )
+        if market_data_status.availability == "unavailable":
+            render_operational_failure(df.attrs.get("failure_kind", FailureKind.PROVIDER_UNAVAILABLE.value))
+        else:
+            signal_failure = failure_presentation(FailureKind.INSUFFICIENT_EVIDENCE)
+            render_status(
+                signal_failure.status_kind,
+                "Insufficient evidence · Observed signal evidence unavailable",
+                "Current pools remain inspectable, but no signal-history observations were retrieved, so movement is "
+                f"not shown as zero. {signal_failure.message} Next: {signal_failure.action}",
+            )
 
     if not full_signals_enabled:
         preview = top_signal_source[["project", "chain", "symbol", "signal", "signal_strength", "apy_delta_7", "tvl_delta_7_pct"]].copy().head(5)
@@ -3776,7 +3877,8 @@ elif content_page == "Methodology & Data Status":
         "unavailable": "Unavailable",
     }
     if market_data_status.availability == "unavailable":
-        render_status("error", "Provider unavailable", f"{market_source_label} returned no usable rows; no sample opportunities were substituted.")
+        # The centralized taxonomy renders "Provider unavailable" or the more specific 429 state.
+        render_operational_failure(df.attrs.get("failure_kind", FailureKind.PROVIDER_UNAVAILABLE.value))
         st.button("Retry market data", key="data_status_retry", type="primary", on_click=refresh_market_data)
     elif market_data_status.availability == "sample":
         render_status("degraded", "Development sample mode", f"{market_source_label}; values must not be interpreted as live.")
@@ -3966,6 +4068,10 @@ elif content_page == "Account & Billing":
         "Account & Billing",
         str(db_user.get("email") or "Signed-in account"),
         "Your plan and available actions come from verified FuruFlow account state.",
+    )
+    st.caption(
+        "Watchlists and Alerts are private to this verified account. Telegram linkage is account-specific and its routing "
+        "identifier remains hidden. FuruFlow's current analytical workflows never need a wallet seed phrase or private key."
     )
     current_plan = str(plan_presentation["plan"])
     render_status(

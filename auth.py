@@ -155,7 +155,7 @@ def _legacy_free_session() -> None:
                 st.rerun()
 
 
-def login_form() -> None:
+def login_form(*, allow_registration: bool = True) -> None:
     _render_notice()
     _process_callback()
     if _password_recovery_form():
@@ -165,13 +165,21 @@ def login_form() -> None:
         return
 
     st.markdown("#### Verified account")
-    sign_in_tab, signup_tab, reset_tab = st.tabs(["Sign in", "Create", "Reset"])
-    with sign_in_tab:
-        _sign_in_tab()
-    with signup_tab:
-        _signup_tab()
-    with reset_tab:
-        _reset_tab()
+    if allow_registration:
+        sign_in_tab, signup_tab, reset_tab = st.tabs(["Sign in", "Create", "Reset"])
+        with sign_in_tab:
+            _sign_in_tab()
+        with signup_tab:
+            _signup_tab()
+        with reset_tab:
+            _reset_tab()
+    else:
+        sign_in_tab, reset_tab = st.tabs(["Sign in", "Reset"])
+        with sign_in_tab:
+            _sign_in_tab()
+        with reset_tab:
+            _reset_tab()
+        st.caption("Closed-beta account creation is invitation-only. Existing invited accounts can sign in or recover access.")
     st.caption("A valid session is restored after refresh or browser reopen through the secure browser-session boundary.")
     _legacy_free_session()
 
