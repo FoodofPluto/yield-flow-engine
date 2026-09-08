@@ -22,7 +22,7 @@ services:
       - key: FURUFLOW_BETA_ALLOWED_USER_IDS
         sync: false
       - key: FURUFLOW_SUPPORT_URL
-        sync: false
+        value: https://tally.so/r/5B7eZv
       - key: FURUFLOW_MAINTENANCE_MESSAGE
         sync: false
       - key: FURUFLOW_HISTORY_PATH
@@ -32,22 +32,13 @@ services:
       - key: SUPABASE_ANON_KEY
         sync: false
       - key: SUPABASE_REDIRECT_URL_PREVIEW
-        fromService:
-          type: web
-          name: furuflow-staging
-          envVarKey: RENDER_EXTERNAL_URL
+        value: https://beta.furuflow.com
       - key: SUPABASE_REDIRECT_URL_PRODUCTION
-        fromService:
-          type: web
-          name: furuflow-staging
-          envVarKey: RENDER_EXTERNAL_URL
+        value: https://beta.furuflow.com
       - key: FURUFLOW_SESSION_BROKER_INTERNAL_URL
         value: http://127.0.0.1:8510
       - key: FURUFLOW_SESSION_BROKER_PUBLIC_ORIGIN
-        fromService:
-          type: web
-          name: furuflow-staging
-          envVarKey: RENDER_EXTERNAL_URL
+        value: https://beta.furuflow.com
       - key: SUPABASE_SERVICE_ROLE_KEY
         sync: false
       - key: FURUFLOW_SESSION_ENCRYPTION_KEY
