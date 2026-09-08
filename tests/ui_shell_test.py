@@ -131,14 +131,15 @@ def test_pool_detail_context_can_return_to_the_existing_watchlists_route() -> No
 def test_table_pool_link_uses_canonical_contextual_pool_detail_url() -> None:
     url = pool_detail_url(
         "canonical-pool-123",
-        public_origin="https://furuflow-staging.onrender.com/",
         return_route="Signals",
         return_view="Signals",
     )
     parsed = urlparse(url)
     query = parse_qs(parsed.query)
 
-    assert f"{parsed.scheme}://{parsed.netloc}" == "https://furuflow-staging.onrender.com"
+    assert parsed.scheme == ""
+    assert parsed.netloc == ""
+    assert parsed.path == "/"
     assert query == {
         "page": ["Pool Detail"],
         "pool": ["canonical-pool-123"],
@@ -154,14 +155,15 @@ def test_table_pool_link_uses_canonical_contextual_pool_detail_url() -> None:
 def test_internal_pool_anchor_is_same_tab_and_preserves_allowlisted_discover_state() -> None:
     anchor = pool_detail_anchor(
         "canonical-pool-123",
-        public_origin="https://furuflow-staging.onrender.com",
         return_route="Discover",
         return_view="Opportunities",
         discover_state={"min_apy": "8", "sort": "Largest TVL", "access_token": "secret"},
     )
 
     assert 'target="_self"' in anchor
+    assert 'href="/?page=Pool+Detail' in anchor
     assert "_blank" not in anchor
+    assert "onrender.com" not in anchor
     assert "canonical-pool-123" in anchor
     assert "min_apy=8" in anchor
     assert "sort=Largest+TVL" in anchor
@@ -173,10 +175,41 @@ def test_pool_detail_url_rejects_unrecognized_return_context() -> None:
     with pytest.raises(ValueError, match="return context"):
         pool_detail_url(
             "canonical-pool-123",
-            public_origin="https://furuflow-staging.onrender.com",
             return_route="Admin",
             return_view="Secrets",
         )
+
+
+def test_pool_detail_url_cannot_inherit_render_external_origin(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("RENDER_EXTERNAL_URL", "https://furuflow-staging.onrender.com")
+    monkeypatch.setenv("FURUFLOW_SESSION_BROKER_PUBLIC_ORIGIN", "https://beta.furuflow.com")
+
+    url = pool_detail_url("canonical-pool-123", return_route="Home", return_view="Home")
+
+    assert url.startswith("/?")
+    assert "onrender.com" not in url
+    assert "beta.furuflow.com" not in url
+
+
+@pytest.mark.parametrize(
+    ("return_route", "return_view"),
+    [
+        ("Home", "Home"),
+        ("Discover", "Opportunities"),
+        ("Research", "Comparison"),
+        ("Signals", "Signals"),
+        ("Pro Tools", "Yield Spreads"),
+        ("Watchlists", "Opportunities"),
+        ("Alerts", "Alerts"),
+    ],
+)
+def test_participant_pool_routes_share_the_same_origin_contract(return_route: str, return_view: str) -> None:
+    url = pool_detail_url("canonical-pool-123", return_route=return_route, return_view=return_view)
+
+    parsed = urlparse(url)
+    assert parsed.scheme == ""
+    assert parsed.netloc == ""
+    assert parsed.path == "/"
 
 
 def test_pool_detail_alert_action_uses_session_state_without_a_pool_url() -> None:

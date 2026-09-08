@@ -464,7 +464,9 @@ def test_opportunities_table_puts_canonical_contextual_pool_link_first(monkeypat
     assert opportunities.index("<th>Pool</th>") < opportunities.index("<th>Asset</th>")
     assert ">aave-v3 · USDC</a>" in opportunities
     parsed = urlparse(_first_internal_url(opportunities))
-    assert f"{parsed.scheme}://{parsed.netloc}" == "http://localhost:8501"
+    assert parsed.scheme == ""
+    assert parsed.netloc == ""
+    assert parsed.path == "/"
     assert parse_qs(parsed.query) == {
         "page": ["Pool Detail"],
         "pool": ["canonical-pool-1"],

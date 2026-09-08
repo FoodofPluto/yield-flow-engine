@@ -57,6 +57,19 @@ def test_child_environments_preserve_broker_only_credentials() -> None:
     assert not any(key.startswith("SUPABASE_") or key.startswith("FURUFLOW_") for key in nginx)
 
 
+def test_render_external_url_cannot_replace_public_or_internal_origins() -> None:
+    environment = _environment()
+    environment["RENDER_EXTERNAL_URL"] = "https://furuflow-staging.onrender.com"
+    environment["FURUFLOW_SESSION_BROKER_PUBLIC_ORIGIN"] = "https://beta.furuflow.com"
+
+    streamlit, broker, _ = build_child_environments(environment)
+
+    assert streamlit["FURUFLOW_SESSION_BROKER_PUBLIC_ORIGIN"] == "https://beta.furuflow.com"
+    assert broker["FURUFLOW_SESSION_BROKER_PUBLIC_ORIGIN"] == "https://beta.furuflow.com"
+    assert streamlit["FURUFLOW_SESSION_BROKER_INTERNAL_URL"] == INTERNAL_BROKER_URL
+    assert streamlit["FURUFLOW_SESSION_BROKER_INTERNAL_URL"] != "https://beta.furuflow.com"
+
+
 def test_nginx_template_keeps_broker_internal_and_websockets_enabled() -> None:
     with TemporaryDirectory(dir=Path.cwd()) as directory:
         template = Path("deploy/render/nginx.conf.template")

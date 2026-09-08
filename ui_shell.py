@@ -131,19 +131,15 @@ POOL_DETAIL_RETURN_VIEWS = {
 def pool_detail_url(
     pool_id: str,
     *,
-    public_origin: str,
     return_route: str,
     return_view: str,
     discover_state: Mapping[str, str] | None = None,
 ) -> str:
-    """Build a canonical in-app Pool Detail URL with allowlisted return context."""
+    """Build a same-origin Pool Detail URL with allowlisted return context."""
 
     allowed_views = POOL_DETAIL_RETURN_VIEWS.get(return_route)
     if allowed_views is None or return_view not in allowed_views:
         raise ValueError("Invalid Pool Detail return context.")
-    origin = public_origin.strip().rstrip("/")
-    if not origin:
-        raise ValueError("Pool Detail public origin is required.")
     query_values = {
         "page": "Pool Detail",
         "pool": str(pool_id),
@@ -157,13 +153,12 @@ def pool_detail_url(
             (key, str(value)) for key, value in discover_state.items() if key in FILTER_QUERY_KEYS and value not in {None, ""}
         )
     query = urlencode(query_values)
-    return f"{origin}/?{query}"
+    return f"/?{query}"
 
 
 def pool_detail_anchor(
     pool_id: str,
     *,
-    public_origin: str,
     return_route: str,
     return_view: str,
     label: str = "Open Pool",
@@ -173,7 +168,6 @@ def pool_detail_anchor(
 
     url = pool_detail_url(
         pool_id,
-        public_origin=public_origin,
         return_route=return_route,
         return_view=return_view,
         discover_state=discover_state,

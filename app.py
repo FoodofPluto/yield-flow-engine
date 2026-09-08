@@ -1056,7 +1056,6 @@ def render_internal_pool_table(
 
     link_columns = link_columns or {"pool": "Open"}
     formats = formats or {}
-    origin = os.getenv("FURUFLOW_SESSION_BROKER_PUBLIC_ORIGIN", "http://localhost:8501")
     headers = "".join(f"<th>{html.escape(label)}</th>" for _, label in columns)
     body: list[str] = []
     for _, row in source_df.iterrows():
@@ -1070,7 +1069,6 @@ def render_internal_pool_table(
                     if value is None or (not isinstance(value, str) and pd.isna(value))
                     else pool_detail_anchor(
                         str(value),
-                        public_origin=origin,
                         return_route=return_route,
                         return_view=return_view,
                         label=link_label,
