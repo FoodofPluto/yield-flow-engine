@@ -24,14 +24,25 @@ def test_fresh_session_sees_closed_beta_identity_onboarding_and_invitation_only_
     assert not app.exception
     rendered = _rendered(app)
     assert "Closed Beta" in rendered
+    assert any(caption.value == "FIRST-RUN BETA NOTE" for caption in app.caption)
     assert "Find → Understand → Compare → Monitor → Act" in rendered
-    assert any("does not execute investments" in caption.value for caption in app.caption)
+    assert "Welcome to the FuruFlow Closed Beta" not in rendered
+    assert any("Reported APY is not a guaranteed realized return" in caption.value for caption in app.caption)
+    assert any("does not execute transactions" in caption.value for caption in app.caption)
+    assert any("provider data may be incomplete, stale, or unavailable" in caption.value for caption in app.caption)
     assert any("invitation-only" in caption.value for caption in app.caption)
     assert not any(tab.label == "Create" for tab in app.tabs)
 
-    next(button for button in app.button if button.label == "Got it — start exploring").click().run()
+    next(button for button in app.button if button.label == "Dismiss beta note").click().run()
     assert not app.exception
-    assert "Welcome to the FuruFlow Closed Beta" not in _rendered(app)
+    assert not any(caption.value == "FIRST-RUN BETA NOTE" for caption in app.caption)
+
+    app.run()
+    assert not any(caption.value == "FIRST-RUN BETA NOTE" for caption in app.caption)
+
+    fresh_app = AppTest.from_file("app.py", default_timeout=60).run()
+    assert not fresh_app.exception
+    assert any(caption.value == "FIRST-RUN BETA NOTE" for caption in fresh_app.caption)
 
 
 class _RateLimitedResponse:
@@ -77,7 +88,7 @@ def test_maintenance_mode_is_clear_and_stops_before_market_provider_calls(monkey
     rendered = _rendered(app)
     assert "Temporarily unavailable for maintenance" in rendered
     assert "Scheduled beta maintenance" in rendered
-    assert "Welcome to the FuruFlow Closed Beta" not in rendered
+    assert not any(caption.value == "FIRST-RUN BETA NOTE" for caption in app.caption)
 
 
 def test_unapproved_paid_identity_cannot_reach_account_billing_workflow(monkeypatch) -> None:

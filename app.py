@@ -1235,17 +1235,17 @@ def render_beta_onboarding() -> None:
     if not BETA_CONFIG.enabled or st.session_state.get("beta_welcome_dismissed"):
         return
     with st.container(border=True, key="closed_beta_welcome"):
-        st.markdown("### Welcome to the FuruFlow Closed Beta")
+        st.caption("FIRST-RUN BETA NOTE")
         st.markdown(
-            "**Find → Understand → Compare → Monitor → Act** — start in Discover, inspect reported APY and pool identity, "
-            "then use evidence, confidence, and risk as separate decision inputs before monitoring or acting externally."
+            "**Welcome to Closed Beta · Staging.** Use Home as your starting point, and treat evidence, confidence, "
+            "and risk as separate signals."
         )
         st.caption(
-            "Reported APY can change rapidly. Evidence and confidence describe data sufficiency, not outcomes; risk is an "
-            "analytical aid, not a guarantee. Provider data may be incomplete, delayed, or unavailable. FuruFlow does not "
-            "execute investments—verify protocols, wallets, and every external action independently."
+            "Reported APY is not a guaranteed realized return. Evidence and confidence may be limited, risk can be "
+            "significant, and provider data may be incomplete, stale, or unavailable. FuruFlow does not execute "
+            "transactions—independently verify protocols, wallets, and important decisions."
         )
-        if st.button("Got it — start exploring", key="dismiss_beta_welcome", type="primary"):
+        if st.button("Dismiss beta note", key="dismiss_beta_welcome"):
             st.session_state["beta_welcome_dismissed"] = True
             st.rerun()
 
