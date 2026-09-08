@@ -1,0 +1,103 @@
+services:
+  - type: web
+    name: furuflow-staging
+    runtime: docker
+    plan: free
+    region: ohio
+    branch: feat/supabase-auth-demo-access
+    dockerfilePath: ./deploy/render/Dockerfile
+    dockerContext: .
+    healthCheckPath: /_stcore/health
+    envVars:
+      - key: ENVIRONMENT
+        value: staging
+      - key: DEV_MODE
+        value: "false"
+      - key: FURUFLOW_BETA_ENABLED
+        value: "true"
+      - key: FURUFLOW_BETA_ALLOW_SIGNUP
+        value: "false"
+      - key: FURUFLOW_BETA_LABEL
+        value: Closed Beta
+      - key: FURUFLOW_BETA_ALLOWED_USER_IDS
+        sync: false
+      - key: FURUFLOW_SUPPORT_URL
+        value: https://tally.so/r/5B7eZv
+      - key: FURUFLOW_MAINTENANCE_MESSAGE
+        sync: false
+      - key: FURUFLOW_HISTORY_PATH
+        value: /tmp/furuflow/pool_history.json
+      - key: SUPABASE_URL
+        sync: false
+      - key: SUPABASE_ANON_KEY
+        sync: false
+      - key: SUPABASE_REDIRECT_URL_PREVIEW
+        value: https://beta.furuflow.com
+      - key: SUPABASE_REDIRECT_URL_PRODUCTION
+        value: https://beta.furuflow.com
+      - key: FURUFLOW_SESSION_BROKER_INTERNAL_URL
+        value: http://127.0.0.1:8510
+      - key: FURUFLOW_SESSION_BROKER_PUBLIC_ORIGIN
+        value: https://beta.furuflow.com
+      - key: SUPABASE_SERVICE_ROLE_KEY
+        sync: false
+      - key: FURUFLOW_SESSION_ENCRYPTION_KEY
+        sync: false
+      - key: FURUFLOW_SESSION_BRIDGE_KEY
+        generateValue: true
+      - key: STRIPE_SECRET_KEY
+        sync: false
+      - key: STRIPE_WEBHOOK_SECRET
+        sync: false
+      - key: STRIPE_PRICE_ID
+        sync: false
+      - key: STRIPE_PRODUCT_ID
+        sync: false
+
+  - type: cron
+    name: furuflow-telegram-worker-staging
+    runtime: docker
+    plan: starter
+    region: ohio
+    branch: feat/supabase-auth-demo-access
+    schedule: "7,22,37,52 * * * *"
+    dockerfilePath: ./deploy/render/Dockerfile
+    dockerContext: .
+    dockerCommand: python telegram_worker.py run
+    envVars:
+      - key: ENVIRONMENT
+        value: staging
+      - key: SUPABASE_URL
+        sync: false
+      - key: SUPABASE_SERVICE_ROLE_KEY
+        sync: false
+      - key: TELEGRAM_BOT_TOKEN
+        sync: false
+      - key: FURUFLOW_AUTOMATION_ENABLED
+        value: "true"
+      - key: FURUFLOW_SYSTEM_TELEGRAM_RULE_ENABLED
+        value: "false"
+      - key: FURUFLOW_SIGNAL_SOURCE
+        value: defillama
+      - key: FURUFLOW_SIGNAL_MIN_TVL
+        value: "1000000"
+      - key: FURUFLOW_SIGNAL_MIN_APY
+        value: "20"
+      - key: FURUFLOW_SIGNAL_MAX_APY
+        value: "60"
+      - key: FURUFLOW_SIGNAL_MIN_RISK
+        value: "3"
+      - key: FURUFLOW_SIGNAL_MAX_RISK
+        value: "5"
+      - key: FURUFLOW_SIGNAL_MIN_STRENGTH
+        value: "60"
+      - key: FURUFLOW_SIGNAL_MAX_STRENGTH
+        value: "65"
+      - key: FURUFLOW_SIGNAL_TOP_N
+        value: "5"
+      - key: FURUFLOW_SIGNAL_SCAN_DEPTH
+        value: "250"
+      - key: FURUFLOW_SIGNAL_CHAINS
+        value: ethereum,base,arbitrum,optimism,polygon
+      - key: FURUFLOW_TELEGRAM_MAX_ATTEMPTS
+        value: "3"
