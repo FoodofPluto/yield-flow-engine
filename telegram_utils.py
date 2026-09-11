@@ -12,6 +12,8 @@ from requests.exceptions import (
     SSLError,
 )
 
+from utils.external_side_effects import require_external_side_effects_allowed
+
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
 TELEGRAM_CONNECT_TIMEOUT = float(os.getenv("TELEGRAM_CONNECT_TIMEOUT", "10"))
@@ -97,6 +99,7 @@ Invoke-RestMethod -Uri "https://api.telegram.org/bot{token}/sendMessage" -Method
 
 
 def send_telegram_message(text: str) -> dict:
+    require_external_side_effects_allowed("Telegram")
     if not TELEGRAM_BOT_TOKEN:
         raise ValueError("Missing TELEGRAM_BOT_TOKEN environment variable")
     if not TELEGRAM_CHAT_ID:

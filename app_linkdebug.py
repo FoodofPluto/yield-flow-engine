@@ -1,11 +1,12 @@
 from __future__ import annotations
 
 import json
+import html
 import os
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from datetime import datetime
 from pathlib import Path
 from typing import Any
-from urllib.parse import quote
 
 import pandas as pd
 import plotly.express as px
@@ -15,9 +16,9 @@ import streamlit as st
 from streamlit.components.v1 import html as st_html
 
 from auth import login_form
+from auth_session import render_pending_session_activation
 from auth_service import can_access_pro, claim_session, get_current_identity, get_current_user, is_admin, logout, validate_session
-from db import get_user_by_email, init_db, record_admin_audit, search_users, set_admin, set_lifetime_access, set_pro_active, upsert_user
-from stripe_stub import render_checkout_section
+from utils.external_side_effects import set_demo_side_effect_block
 from history_store import load_history, save_snapshot
 from engine.performance import alert_snapshot, latest_signal_history, trend_summary_df
 from engine.recap import build_daily_recap, build_weekly_recap
@@ -64,7 +65,6 @@ PAGE_LABELS = {
 TIMEOUT = 18
 SIGNAL_SAMPLE = 16
 WATCHLIST_FILE = Path(__file__).with_name("watchlist.json")
-FURUFLOW_STRIPE_LINK = os.getenv("FURUFLOW_STRIPE_LINK", "https://buy.stripe.com/bJefZgcgmbYecju4ztd3i00")
 AFFILIATE_LINKS = {
     "aave": "https://app.aave.com/?ref=furuflow",
     "aave-v3": "https://app.aave.com/?ref=furuflow",
@@ -684,20 +684,70 @@ def sample_pool_data(errors: list[str]) -> pd.DataFrame:
     return demo
 
 
-def get_checkout_link(current_user: dict[str, Any] | None = None) -> str:
-    base = FURUFLOW_STRIPE_LINK.strip()
+def render_billing_action(current_user: dict[str, Any] | None, *, label: str) -> None:
     current_user = current_user or get_current_user()
-    if not current_user:
-        return base
-    sep = "&" if "?" in base else "?"
-    params = []
-    current_email = (current_user.get("email") or "").strip().lower()
-    if current_email:
-        params.append(f"prefilled_email={quote(current_email)}")
-    if current_user.get("_identity_verified") and current_user.get("user_id"):
-        client_reference_id = f"furuflow_user:{current_user['user_id']}"
-        params.append(f"client_reference_id={quote(client_reference_id)}")
-    return f"{base}{sep}{'&'.join(params)}" if params else base
+    eligible = bool(
+        current_user
+        and current_user.get("_identity_verified")
+        and current_user.get("_account_authority") == "supabase"
+        and not current_user.get("demo_active")
+    )
+    if not eligible:
+        st.caption("Sign in with a verified non-demo account to use billing.")
+        return
+    st.markdown(
+        '<form method="post" action="/billing/checkout" target="_top">'
+        f'<button type="submit" style="width:100%;min-height:2.6rem;cursor:pointer">{html.escape(label)}</button>'
+        "</form>",
+        unsafe_allow_html=True,
+    )
+
+
+def billing_access_source(user: dict[str, Any] | None) -> str:
+    user = user or {}
+    if user.get("is_admin"):
+        return "Administrator access"
+    if user.get("lifetime_access"):
+        return "Lifetime access"
+    if user.get("pro_active"):
+        return "Account grant"
+    if user.get("subscription_pro_active"):
+        return "Active subscription"
+    if user.get("demo_active"):
+        return "Time-limited demo"
+    return "Free plan"
+
+
+def subscription_summary(user: dict[str, Any] | None) -> str | None:
+    user = user or {}
+    status = user.get("subscription_status")
+    if not isinstance(status, str):
+        return None
+    labels = {
+        "active": "Active",
+        "trialing": "Trialing — access pending",
+        "past_due": "Payment needs attention — Pro access is paused",
+        "unpaid": "Unpaid — Pro access is paused",
+        "canceled": "Ended",
+        "incomplete": "Setup incomplete",
+        "incomplete_expired": "Setup expired",
+        "paused": "Paused",
+        "inactive": "No active subscription",
+    }
+    summary = labels.get(status, "Not active")
+    period_end = user.get("subscription_period_end")
+    if isinstance(period_end, str):
+        try:
+            date_label = datetime.fromisoformat(period_end.replace("Z", "+00:00")).strftime("%b %d, %Y")
+            if status == "active" and user.get("subscription_cancel_at_period_end"):
+                return f"Active until {date_label}; cancellation is scheduled"
+            if status == "active":
+                return f"Active; renews {date_label}"
+            if status in {"canceled", "unpaid", "paused"}:
+                return f"{summary}; access ended {date_label}"
+        except ValueError:
+            pass
+    return summary
 
 
 def render_link_table(source_df: pd.DataFrame, title: str, description: str, *, limit: int = 8, sort_cols: list[str] | None = None) -> None:
@@ -725,7 +775,7 @@ def render_link_table(source_df: pd.DataFrame, title: str, description: str, *, 
         })
         st.dataframe(
             link_view,
-            use_container_width=True,
+            width="stretch",
             hide_index=True,
             height=min(120 + 42 * len(link_view), 420),
             column_config={
@@ -863,7 +913,8 @@ def load_watchlist() -> list[str]:
 def set_watchlist(items: list[str]) -> None:
     deduped = list(dict.fromkeys([str(i) for i in items]))
     st.session_state.watchlist = deduped
-    save_watchlist(deduped)
+    if not st.session_state.get("furuflow_demo_active"):
+        save_watchlist(deduped)
 
 
 def watch_toggle(pool_id: str) -> None:
@@ -910,7 +961,7 @@ def require_pro(feature_name: str, preview_df: pd.DataFrame | None = None, previ
         st.caption(preview_note)
     if preview_df is not None and not preview_df.empty:
         st.markdown("### Preview")
-        st.dataframe(preview_df.head(3), use_container_width=True, hide_index=True, height=180)
+        st.dataframe(preview_df.head(3), width="stretch", hide_index=True, height=180)
     st.markdown(
         """
 **FuruFlow Pro includes:**
@@ -926,8 +977,7 @@ def require_pro(feature_name: str, preview_df: pd.DataFrame | None = None, previ
         st.caption(f"Signed in as {st.session_state.get('auth_email')}")
     else:
         st.info("Keep browsing in free mode, or sign in when you're ready to unlock Pro.")
-    render_checkout_section(current_email=st.session_state.get("auth_email", ""))
-    st.link_button("Upgrade to FuruFlow Pro — $20/month", get_checkout_link())
+    render_billing_action(get_current_user(), label="Upgrade to FuruFlow Pro — $20/month")
     st.markdown("</div>", unsafe_allow_html=True)
     st.stop()
 
@@ -938,84 +988,12 @@ def render_admin_access_panel(current_user: dict) -> None:
     st.markdown("<div class='panel'>", unsafe_allow_html=True)
     section_header(
         "Admin access controls",
-        "Grant or remove account access",
-        "Manage lifetime access, recurring Pro, and admin status for any account.",
+        "Trusted account administration",
+        "Role and entitlement changes run through the audited service-role CLI, outside Streamlit.",
     )
 
-    query = st.text_input(
-        "Find account by email",
-        value="",
-        placeholder="name@example.com",
-        key="admin_user_search",
-    )
-    users = search_users(query=query, limit=50)
-
-    target_emails = [u["email"] for u in users]
-    if current_user["email"] not in target_emails:
-        target_emails.insert(0, current_user["email"])
-
-    selected_email = st.selectbox(
-        "Select account",
-        options=target_emails if target_emails else [current_user["email"]],
-        key="admin_target_email",
-    )
-
-    target_user = get_user_by_email(selected_email)
-    if not target_user:
-        upsert_user(selected_email, is_admin=False)
-        target_user = get_user_by_email(selected_email)
-
-    col1, col2, col3 = st.columns(3)
-    with col1:
-        st.metric("Admin", "Yes" if target_user["is_admin"] else "No")
-    with col2:
-        st.metric("Lifetime", "Yes" if target_user["lifetime_access"] else "No")
-    with col3:
-        st.metric("Pro active", "Yes" if target_user["pro_active"] else "No")
-
-    a1, a2, a3 = st.columns(3)
-    with a1:
-        if target_user["lifetime_access"]:
-            if st.button("Remove lifetime access", key=f"remove_lifetime_{selected_email}"):
-                set_lifetime_access(selected_email, False)
-                record_admin_audit(actor_user_id=current_user["user_id"], target_user_id=target_user["user_id"], action="remove_lifetime_access", reason="admin_panel")
-                st.success(f"Removed lifetime access from {selected_email}.")
-                st.rerun()
-        else:
-            if st.button("Grant lifetime access", key=f"grant_lifetime_{selected_email}"):
-                set_lifetime_access(selected_email, True)
-                record_admin_audit(actor_user_id=current_user["user_id"], target_user_id=target_user["user_id"], action="grant_lifetime_access", reason="admin_panel")
-                st.success(f"Granted lifetime access to {selected_email}.")
-                st.rerun()
-
-    with a2:
-        if target_user["pro_active"]:
-            if st.button("Deactivate Pro", key=f"deactivate_pro_{selected_email}"):
-                set_pro_active(selected_email, False)
-                record_admin_audit(actor_user_id=current_user["user_id"], target_user_id=target_user["user_id"], action="deactivate_pro", reason="admin_panel")
-                st.success(f"Deactivated Pro for {selected_email}.")
-                st.rerun()
-        else:
-            if st.button("Activate Pro", key=f"activate_pro_{selected_email}"):
-                set_pro_active(selected_email, True)
-                record_admin_audit(actor_user_id=current_user["user_id"], target_user_id=target_user["user_id"], action="activate_pro", reason="admin_panel")
-                st.success(f"Activated Pro for {selected_email}.")
-                st.rerun()
-
-    with a3:
-        can_edit_admin = selected_email != current_user["email"]
-        if target_user["is_admin"]:
-            if st.button("Remove admin", key=f"remove_admin_{selected_email}", disabled=not can_edit_admin):
-                set_admin(selected_email, False)
-                record_admin_audit(actor_user_id=current_user["user_id"], target_user_id=target_user["user_id"], action="remove_admin", reason="admin_panel")
-                st.success(f"Removed admin from {selected_email}.")
-                st.rerun()
-        else:
-            if st.button("Make admin", key=f"make_admin_{selected_email}"):
-                set_admin(selected_email, True)
-                record_admin_audit(actor_user_id=current_user["user_id"], target_user_id=target_user["user_id"], action="make_admin", reason="admin_panel")
-                st.success(f"Made {selected_email} an admin.")
-                st.rerun()
+    st.info("Use `python scripts/manage_accounts.py` from a trusted shell. Target accounts by verified Supabase user ID.")
+    st.caption("The service-role credential is intentionally unavailable to this Streamlit process and browser UI.")
 
     st.markdown("</div>", unsafe_allow_html=True)
 
@@ -1071,13 +1049,13 @@ def render_opportunity_card(row: pd.Series, idx: int, watched: bool) -> None:
     with c1:
         st.markdown("<div class='watch-wrap'>", unsafe_allow_html=True)
         label = "Remove" if watched else "Watch"
-        if st.button(label, key=f"watch_{idx}", use_container_width=True):
+        if st.button(label, key=f"watch_{idx}", width="stretch"):
             watch_toggle(str(row["pool"]))
             st.rerun()
         st.markdown("</div>", unsafe_allow_html=True)
     with c2:
         st.markdown("<div class='pool-wrap'>", unsafe_allow_html=True)
-        st.link_button("Open Pool", row["pool_url"], use_container_width=True)
+        st.link_button("Open Pool", row["pool_url"], width="stretch")
         st.markdown("</div>", unsafe_allow_html=True)
 
 
@@ -1092,12 +1070,12 @@ def render_protocol_dashboard(df: pd.DataFrame) -> None:
     top_protocols = top_protocols.rename(columns={"project": "Protocol", "total_tvl": "TVL (USD)", "median_apy": "Median APY", "pools": "Pools", "avg_risk": "Avg Risk"})
     left, right = st.columns([1.15, 1], gap="large")
     with left:
-        st.dataframe(top_protocols, use_container_width=True, hide_index=True, height=420, column_config={"TVL (USD)": st.column_config.NumberColumn(format="$%.0f"), "Median APY": st.column_config.NumberColumn(format="%.2f%%"), "Avg Risk": st.column_config.NumberColumn(format="%.0f")})
+        st.dataframe(top_protocols, width="stretch", hide_index=True, height=420, column_config={"TVL (USD)": st.column_config.NumberColumn(format="$%.0f"), "Median APY": st.column_config.NumberColumn(format="%.2f%%"), "Avg Risk": st.column_config.NumberColumn(format="%.0f")})
     with right:
         bar = px.bar(top_protocols.head(10), x="Protocol", y="TVL (USD)", color="Median APY", hover_data={"Pools": True, "Avg Risk": ':.1f'})
         bar.update_xaxes(title="Protocol")
         bar.update_yaxes(title="TVL")
-        st.plotly_chart(plotly_theme(bar, 420), use_container_width=True)
+        st.plotly_chart(plotly_theme(bar, 420), width="stretch")
     st.markdown("</div>", unsafe_allow_html=True)
 
 
@@ -1128,7 +1106,7 @@ def render_home_page(filtered: pd.DataFrame, full_filtered: pd.DataFrame, watchl
             st.info("No opportunities match the current filters.")
         else:
             top_today.columns = ["Protocol", "Chain", "Asset", "APY", "TVL (USD)", "Risk", "Open"]
-            st.dataframe(top_today, use_container_width=True, hide_index=True, height=320, column_config={"APY": st.column_config.NumberColumn(format="%.2f%%"), "TVL (USD)": st.column_config.NumberColumn(format="$%.0f"), "Open": st.column_config.LinkColumn("Pool link", display_text="Open")})
+            st.dataframe(top_today, width="stretch", hide_index=True, height=320, column_config={"APY": st.column_config.NumberColumn(format="%.2f%%"), "TVL (USD)": st.column_config.NumberColumn(format="$%.0f"), "Open": st.column_config.LinkColumn("Pool link", display_text="Open")})
     with top_right:
         st.markdown("<div class='signal-card'><div class='signal-title'>What to do next</div><div class='signal-copy'>Use Home for a quick market read, Signals for ranked conviction, Watchlist for your shortlist, and Recaps for the memory layer behind alerts and trend persistence.</div></div>", unsafe_allow_html=True)
         st.markdown("<div style='height:0.65rem;'></div>", unsafe_allow_html=True)
@@ -1140,7 +1118,7 @@ def render_home_page(filtered: pd.DataFrame, full_filtered: pd.DataFrame, watchl
             st.markdown("<div class='signal-card'><div class='signal-title'>FuruFlow Pro</div><div class='signal-copy'>Unlock the full signals view, deeper scanner access, advanced ranking, arbitrage, and strategy workflows.</div></div>", unsafe_allow_html=True)
             if len(full_filtered) > len(filtered):
                 st.caption(f"Free mode currently shows the top {len(filtered):,} of {len(full_filtered):,} matching pools.")
-            st.link_button("Upgrade to FuruFlow Pro — $20/month", get_checkout_link())
+            render_billing_action(db_user, label="Upgrade to FuruFlow Pro — $20/month")
     st.markdown("</div>", unsafe_allow_html=True)
 
     bottom_left, bottom_mid, bottom_right = st.columns(3, gap="large")
@@ -1152,7 +1130,7 @@ def render_home_page(filtered: pd.DataFrame, full_filtered: pd.DataFrame, watchl
             st.info("No yield changes available yet.")
         else:
             movers.columns = ["Protocol", "Asset", "7d APY Δ", "7d TVL Δ %", "Signal"]
-            st.dataframe(movers, use_container_width=True, hide_index=True, height=220, column_config={"7d APY Δ": st.column_config.NumberColumn(format="%.2f"), "7d TVL Δ %": st.column_config.NumberColumn(format="%.2f")})
+            st.dataframe(movers, width="stretch", hide_index=True, height=220, column_config={"7d APY Δ": st.column_config.NumberColumn(format="%.2f"), "7d TVL Δ %": st.column_config.NumberColumn(format="%.2f")})
         st.markdown("</div>", unsafe_allow_html=True)
     with bottom_mid:
         st.markdown("<div class='panel'>", unsafe_allow_html=True)
@@ -1162,7 +1140,7 @@ def render_home_page(filtered: pd.DataFrame, full_filtered: pd.DataFrame, watchl
             st.info("No safer high-APY pools match the current filters.")
         else:
             safest.columns = ["Protocol", "Asset", "APY", "TVL (USD)", "Risk"]
-            st.dataframe(safest, use_container_width=True, hide_index=True, height=220, column_config={"APY": st.column_config.NumberColumn(format="%.2f%%"), "TVL (USD)": st.column_config.NumberColumn(format="$%.0f")})
+            st.dataframe(safest, width="stretch", hide_index=True, height=220, column_config={"APY": st.column_config.NumberColumn(format="%.2f%%"), "TVL (USD)": st.column_config.NumberColumn(format="$%.0f")})
         st.markdown("</div>", unsafe_allow_html=True)
     with bottom_right:
         st.markdown("<div class='panel'>", unsafe_allow_html=True)
@@ -1170,7 +1148,7 @@ def render_home_page(filtered: pd.DataFrame, full_filtered: pd.DataFrame, watchl
         if history_trend_df.empty:
             st.info("Trend blocks appear once multiple signals have been logged.")
         else:
-            st.dataframe(history_trend_df.head(5), use_container_width=True, hide_index=True, height=220, column_config={"APY": st.column_config.NumberColumn(format="%.2f%%"), "TVL (USD)": st.column_config.NumberColumn(format="$%.0f"), "APY Δ": st.column_config.NumberColumn(format="%.2f")})
+            st.dataframe(history_trend_df.head(5), width="stretch", hide_index=True, height=220, column_config={"APY": st.column_config.NumberColumn(format="%.2f%%"), "TVL (USD)": st.column_config.NumberColumn(format="$%.0f"), "APY Δ": st.column_config.NumberColumn(format="%.2f")})
         st.markdown("</div>", unsafe_allow_html=True)
 
 
@@ -1207,7 +1185,7 @@ def render_recaps_page(alert_stats: dict[str, Any], history_latest_df: pd.DataFr
         else:
             latest_view = history_latest_df[["name", "chain", "apy", "tvl", "strength_score", "tier"]].copy()
             latest_view.columns = ["Pool", "Chain", "APY", "TVL (USD)", "Score", "Tier"]
-            st.dataframe(latest_view, use_container_width=True, hide_index=True, height=320, column_config={"APY": st.column_config.NumberColumn(format="%.2f%%"), "TVL (USD)": st.column_config.NumberColumn(format="$%.0f")})
+            st.dataframe(latest_view, width="stretch", hide_index=True, height=320, column_config={"APY": st.column_config.NumberColumn(format="%.2f%%"), "TVL (USD)": st.column_config.NumberColumn(format="$%.0f")})
         st.markdown("</div>", unsafe_allow_html=True)
     with history_right:
         st.markdown("<div class='panel'>", unsafe_allow_html=True)
@@ -1215,16 +1193,15 @@ def render_recaps_page(alert_stats: dict[str, Any], history_latest_df: pd.DataFr
         if history_trend_df.empty:
             st.info("Trend blocks appear once multiple signals have been logged.")
         else:
-            st.dataframe(history_trend_df, use_container_width=True, hide_index=True, height=320, column_config={"APY": st.column_config.NumberColumn(format="%.2f%%"), "TVL (USD)": st.column_config.NumberColumn(format="$%.0f"), "APY Δ": st.column_config.NumberColumn(format="%.2f")})
+            st.dataframe(history_trend_df, width="stretch", hide_index=True, height=320, column_config={"APY": st.column_config.NumberColumn(format="%.2f%%"), "TVL (USD)": st.column_config.NumberColumn(format="$%.0f"), "APY Δ": st.column_config.NumberColumn(format="%.2f")})
         if not is_pro:
             st.markdown("<div class='note'>Free mode can see the recap layer. Pro is where you get the full signal engine, stronger alerts, and faster decision workflows.</div>", unsafe_allow_html=True)
-            st.link_button("Upgrade to FuruFlow Pro — $20/month", get_checkout_link())
+            render_billing_action(db_user, label="Upgrade to FuruFlow Pro — $20/month")
         st.markdown("</div>", unsafe_allow_html=True)
 
 
 inject_css()
-init_db()
-
+render_pending_session_activation()
 with st.sidebar:
     st.markdown("## Account")
     if st.session_state.get("auth_email"):
@@ -1255,6 +1232,8 @@ else:
     is_pro = can_access_pro(db_user)
 
 st.session_state["access_granted"] = is_pro
+st.session_state["furuflow_demo_active"] = bool(db_user.get("demo_active"))
+set_demo_side_effect_block(st.session_state["furuflow_demo_active"])
 
 with st.sidebar:
     st.write(f"Session: **{db_user['email']}**")
@@ -1263,7 +1242,7 @@ with st.sidebar:
         st.write(f"Admin: **{'Yes' if is_admin(db_user) else 'No'}**")
         st.write(f"Lifetime access: **{'Yes' if db_user['lifetime_access'] else 'No'}**")
         st.write(f"Pro active: **{'Yes' if db_user['pro_active'] else 'No'}**")
-        st.caption("Single-active-session lock is on for email-only sign-in.")
+        st.caption("Server-managed single-session enforcement is active.")
         if st.button("Log out", key="logout_button"):
             logout()
             st.rerun()
@@ -1281,10 +1260,10 @@ pendle_debug = df[
 ][["pool", "project", "chain", "symbol", "pool_url"]].head(10)
 
 with st.expander("Debug: Pendle link resolver", expanded=False):
-    st.dataframe(pendle_debug, use_container_width=True, hide_index=True)
+    st.dataframe(pendle_debug, width="stretch", hide_index=True)
 
 if "watchlist" not in st.session_state:
-    st.session_state.watchlist = load_watchlist()
+    st.session_state.watchlist = [] if st.session_state.get("furuflow_demo_active") else load_watchlist()
 
 signal_source = tuple(df.head(SIGNAL_SAMPLE)["pool"].tolist())
 signal_df = fetch_signal_snapshots(signal_source)
@@ -1387,7 +1366,7 @@ with st.sidebar:
 - Advanced ranking, arbitrage, and strategy builder
 - Stronger recap workflows and future alerts
 """)
-        st.link_button("Upgrade to FuruFlow Pro — $20/month", get_checkout_link())
+        render_billing_action(db_user, label="Upgrade to FuruFlow Pro — $20/month")
     st.markdown("<div class='sidebar-mini-note'>Use Home for the fastest read on the market, Signals for ranked conviction, and Recaps for the memory layer.</div>", unsafe_allow_html=True)
     st.markdown("</div>", unsafe_allow_html=True)
 
@@ -1443,7 +1422,7 @@ elif page == "Scanner":
         table_df = compact_table(filtered)
         st.dataframe(
             table_df,
-            use_container_width=True,
+            width="stretch",
             hide_index=True,
             height=540,
             column_config={
@@ -1460,7 +1439,7 @@ elif page == "Scanner":
             st.download_button("Download current table as CSV", csv, file_name="furuflow_scanner.csv", mime="text/csv")
         else:
             st.markdown("<div class='signal-card'><div class='signal-title'>CSV export is Pro</div><div class='signal-copy'>Keep the scanner open to everyone, then charge for export workflows and deeper decision tools.</div></div>", unsafe_allow_html=True)
-            st.link_button("Unlock CSV export", get_checkout_link(), use_container_width=True)
+            render_billing_action(db_user, label="Unlock CSV export")
         st.markdown("</div>", unsafe_allow_html=True)
     with right:
         st.markdown("<div class='panel'>", unsafe_allow_html=True)
@@ -1475,7 +1454,7 @@ elif page == "Scanner":
         mini = filtered.head(12).groupby("risk_band", as_index=False).agg(pools=("pool", "count")) if not filtered.empty else pd.DataFrame()
         if not mini.empty:
             pie = px.pie(mini, values="pools", names="risk_band", hole=0.45)
-            st.plotly_chart(plotly_theme(pie, 260), use_container_width=True)
+            st.plotly_chart(plotly_theme(pie, 260), width="stretch")
         st.markdown("</div>", unsafe_allow_html=True)
 
 elif page == "Signals":
@@ -1526,7 +1505,7 @@ elif page == "Signals":
         section_header("Signal engine", "Yield trend AI layer", "Rules-based labels surface APY spikes, farm rotations, emerging pools, and whale inflows from recent pool chart movement.")
         sig_view = filtered[["project", "chain", "symbol", "signal", "signal_strength", "apy_delta_7", "tvl_delta_7_pct", "apy_volatility", "pool_url"]].copy().head(20)
         sig_view.columns = ["Protocol", "Chain", "Asset", "Signal", "Strength", "7d APY Δ", "7d TVL Δ %", "APY volatility", "Open"]
-        st.dataframe(sig_view, use_container_width=True, hide_index=True, height=560, column_config={"Strength": st.column_config.NumberColumn(format="%.1f"), "7d APY Δ": st.column_config.NumberColumn(format="%.2f"), "7d TVL Δ %": st.column_config.NumberColumn(format="%.2f"), "APY volatility": st.column_config.NumberColumn(format="%.2f"), "Open": st.column_config.LinkColumn("Pool link", display_text="Open")})
+        st.dataframe(sig_view, width="stretch", hide_index=True, height=560, column_config={"Strength": st.column_config.NumberColumn(format="%.1f"), "7d APY Δ": st.column_config.NumberColumn(format="%.2f"), "7d TVL Δ %": st.column_config.NumberColumn(format="%.2f"), "APY volatility": st.column_config.NumberColumn(format="%.2f"), "Open": st.column_config.LinkColumn("Pool link", display_text="Open")})
         st.markdown("</div>", unsafe_allow_html=True)
     with right:
         st.markdown("<div class='panel'>", unsafe_allow_html=True)
@@ -1544,7 +1523,7 @@ elif page == "Signals":
             fig = px.scatter(sig_plot_df, x="avg_tvl", y="avg_apy", size="avg_strength", color="signal", hover_name="signal", size_max=42, log_x=True)
             fig.update_xaxes(title="Average TVL")
             fig.update_yaxes(title="Average APY %")
-            st.plotly_chart(plotly_theme(fig, 320), use_container_width=True)
+            st.plotly_chart(plotly_theme(fig, 320), width="stretch")
         st.markdown("</div>", unsafe_allow_html=True)
     render_link_table(filtered.sort_values(["signal_strength", "apy_delta_7", "tvl_delta_7_pct"], ascending=[False, False, False]), "Signals", "Open the strongest recent signal movers directly from the signal view.", limit=10)
 
@@ -1558,7 +1537,7 @@ elif page == "Arbitrage":
         if arb_df.empty:
             st.info("No meaningful cross-chain APY gaps are visible for the current filters.")
         else:
-            st.dataframe(arb_df, use_container_width=True, hide_index=True, height=560, column_config={"Best APY": st.column_config.NumberColumn(format="%.2f%%"), "Lower APY": st.column_config.NumberColumn(format="%.2f%%"), "APY difference": st.column_config.NumberColumn(format="%.2f"), "Best link": st.column_config.LinkColumn("Best pool", display_text="Open"), "Lower link": st.column_config.LinkColumn("Lower pool", display_text="Open")})
+            st.dataframe(arb_df, width="stretch", hide_index=True, height=560, column_config={"Best APY": st.column_config.NumberColumn(format="%.2f%%"), "Lower APY": st.column_config.NumberColumn(format="%.2f%%"), "APY difference": st.column_config.NumberColumn(format="%.2f"), "Best link": st.column_config.LinkColumn("Best pool", display_text="Open"), "Lower link": st.column_config.LinkColumn("Lower pool", display_text="Open")})
         st.markdown("</div>", unsafe_allow_html=True)
     with right:
         st.markdown("<div class='panel'>", unsafe_allow_html=True)
@@ -1573,7 +1552,7 @@ elif page == "Arbitrage":
         if not arb_df.empty:
             fig = px.bar(arb_df.head(12), x="Asset", y="APY difference", color="Best chain", hover_data={"Best protocol": True, "Lower chain": True, "Lower protocol": True})
             fig.update_yaxes(title="APY difference")
-            st.plotly_chart(plotly_theme(fig, 330), use_container_width=True)
+            st.plotly_chart(plotly_theme(fig, 330), width="stretch")
         st.markdown("</div>", unsafe_allow_html=True)
     if not filtered.empty:
         arb_focus = filtered.sort_values(["apy", "tvlUsd"], ascending=[False, False]).head(10)
@@ -1589,7 +1568,7 @@ elif page == "Market Map":
             bubble.update_traces(marker=dict(line=dict(width=1, color="rgba(255,255,255,0.22)"), opacity=0.8))
             bubble.update_xaxes(title="Risk score")
             bubble.update_yaxes(title="APY %")
-            st.plotly_chart(plotly_theme(bubble, 420), use_container_width=True)
+            st.plotly_chart(plotly_theme(bubble, 420), width="stretch")
         st.markdown("</div>", unsafe_allow_html=True)
     with right:
         st.markdown("<div class='panel'>", unsafe_allow_html=True)
@@ -1597,7 +1576,7 @@ elif page == "Market Map":
         if not filtered.empty:
             chain_df = filtered.groupby("chain", as_index=False).agg(total_tvl=("tvlUsd", "sum"), median_apy=("apy", "median"), pools=("pool", "count"))
             sun = px.treemap(chain_df, path=[px.Constant("Chains"), "chain"], values="total_tvl", color="median_apy", hover_data={"pools": True, "median_apy": ':.2f'})
-            st.plotly_chart(plotly_theme(sun, 420), use_container_width=True)
+            st.plotly_chart(plotly_theme(sun, 420), width="stretch")
         st.markdown("</div>", unsafe_allow_html=True)
     render_link_table(filtered, "Market map", "Open the pools you are seeing in the current market field view.", limit=10, sort_cols=["rank_score", "apy", "tvlUsd"])
 
@@ -1621,7 +1600,7 @@ elif page == "Pool Explorer":
                 fig.update_layout(yaxis2=dict(overlaying="y", side="right", showgrid=False, title="TVL"))
             fig.update_xaxes(title="Time")
             fig.update_yaxes(title="APY %")
-            st.plotly_chart(plotly_theme(fig, 430), use_container_width=True)
+            st.plotly_chart(plotly_theme(fig, 430), width="stretch")
             if chart_mode == "fallback":
                 st.caption("Live history was unavailable, so FuruFlow generated a preview trend from the current pool snapshot to avoid an empty chart state.")
             elif chart_mode == "stored":
@@ -1641,18 +1620,18 @@ elif page == "Pool Explorer":
                 ["7d APY change", f"{float(row['apy_delta_7']):.2f}"],
                 ["7d TVL change", f"{float(row['tvl_delta_7_pct']):.2f}%"],
             ], columns=["Metric", "Value"])
-            st.dataframe(stats, use_container_width=True, hide_index=True, height=360)
+            st.dataframe(stats, width="stretch", hide_index=True, height=360)
             c1, c2 = st.columns(2)
             with c1:
                 watched = row["pool"] in st.session_state.watchlist
                 st.markdown("<div class='watch-wrap'>", unsafe_allow_html=True)
-                if st.button("Remove from watchlist" if watched else "Add to watchlist", key="drill_watch", use_container_width=True):
+                if st.button("Remove from watchlist" if watched else "Add to watchlist", key="drill_watch", width="stretch"):
                     watch_toggle(str(row["pool"]))
                     st.rerun()
                 st.markdown("</div>", unsafe_allow_html=True)
             with c2:
                 st.markdown("<div class='pool-wrap'>", unsafe_allow_html=True)
-                st.link_button("Open Pool", row["pool_url"], use_container_width=True)
+                st.link_button("Open Pool", row["pool_url"], width="stretch")
                 st.markdown("</div>", unsafe_allow_html=True)
     st.markdown("</div>", unsafe_allow_html=True)
 
@@ -1687,7 +1666,7 @@ elif page == "Strategy Builder":
         else:
             view = strategy_df[["project", "chain", "symbol", "apy", "tvlUsd", "risk_score", "signal", "pool_url"]].copy()
             view.columns = ["Protocol", "Chain", "Asset", "APY", "TVL (USD)", "Risk", "Signal", "Open"]
-            st.dataframe(view, use_container_width=True, hide_index=True, height=520, column_config={"APY": st.column_config.NumberColumn(format="%.2f%%"), "TVL (USD)": st.column_config.NumberColumn(format="$%.0f"), "Open": st.column_config.LinkColumn("Pool link", display_text="Open")})
+            st.dataframe(view, width="stretch", hide_index=True, height=520, column_config={"APY": st.column_config.NumberColumn(format="%.2f%%"), "TVL (USD)": st.column_config.NumberColumn(format="$%.0f"), "Open": st.column_config.LinkColumn("Pool link", display_text="Open")})
         st.markdown("</div>", unsafe_allow_html=True)
 
 elif page == "Recaps":
@@ -1703,9 +1682,9 @@ elif page == "Watchlist":
         else:
             view = watchlist_df[["project", "chain", "symbol", "apy", "tvlUsd", "risk_score", "signal", "pool_url"]].copy()
             view.columns = ["Protocol", "Chain", "Asset", "APY", "TVL (USD)", "Risk", "Signal", "Open"]
-            st.dataframe(view, use_container_width=True, hide_index=True, height=440, column_config={"APY": st.column_config.NumberColumn(format="%.2f%%"), "TVL (USD)": st.column_config.NumberColumn(format="$%.0f"), "Open": st.column_config.LinkColumn("Pool link", display_text="Open")})
+            st.dataframe(view, width="stretch", hide_index=True, height=440, column_config={"APY": st.column_config.NumberColumn(format="%.2f%%"), "TVL (USD)": st.column_config.NumberColumn(format="$%.0f"), "Open": st.column_config.LinkColumn("Pool link", display_text="Open")})
             st.markdown("<div class='danger-wrap'>", unsafe_allow_html=True)
-            if st.button("Clear watchlist", use_container_width=True):
+            if st.button("Clear watchlist", width="stretch"):
                 set_watchlist([])
                 st.rerun()
             st.markdown("</div>", unsafe_allow_html=True)
@@ -1717,10 +1696,10 @@ elif page == "Watchlist":
             fig = px.bar(watchlist_df.sort_values("apy", ascending=False), x="project", y="apy", color="risk_band", hover_data={"chain": True, "symbol": True, "tvlUsd": ':$,.0f'})
             fig.update_xaxes(title="Protocol")
             fig.update_yaxes(title="APY %")
-            st.plotly_chart(plotly_theme(fig, 300), use_container_width=True)
+            st.plotly_chart(plotly_theme(fig, 300), width="stretch")
             sig_counts = watchlist_df["signal"].value_counts().reset_index()
             sig_counts.columns = ["Signal", "Count"]
-            st.dataframe(sig_counts, use_container_width=True, hide_index=True, height=180)
+            st.dataframe(sig_counts, width="stretch", hide_index=True, height=180)
         else:
             st.info("Add a few pools to see watchlist comparisons.")
         st.markdown("</div>", unsafe_allow_html=True)

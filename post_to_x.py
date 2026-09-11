@@ -19,6 +19,7 @@ load_dotenv()
 from engine.recap import _read_rows, build_daily_recap, build_weekly_recap
 from engine.x_format import format_x_recap_post, format_x_signal_post
 from post_real_signals import get_real_furuflow_signals
+from utils.external_side_effects import require_external_side_effects_allowed
 
 X_POST_LOG = Path(os.getenv("FURUFLOW_X_POST_LOG", "x_posts_log.json"))
 X_OUTBOX = Path(os.getenv("FURUFLOW_X_OUTBOX", "x_post_outbox.txt"))
@@ -82,6 +83,7 @@ def _oauth_header(method: str, url: str) -> str:
 
 
 def post_tweet(text: str) -> dict:
+    require_external_side_effects_allowed("X")
     url = "https://api.twitter.com/2/tweets"
     payload = json.dumps({"text": text}, ensure_ascii=False)
     headers = {

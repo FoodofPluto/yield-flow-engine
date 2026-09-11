@@ -1,17 +1,23 @@
-[tool.poetry]
+[project]
 name = "yield-flow-engine"
 version = "0.1.0"
-description = "Phase 1 yield scanner CLI"
+description = "FuruFlow Streamlit application, CLI, and scheduled automation"
 readme = "README.md"
+requires-python = ">=3.10,<3.13"
+dynamic = ["dependencies"]
+
+[project.scripts]
+engine = "engine.cli:cli"
+
+[tool.poetry]
 packages = [{ include = "engine" }]
 
 [tool.poetry.dependencies]
-python = ">=3.10,<3.13"            # avoid 3.13 for now
 rich = "^13.7.0"
 httpx = "^0.27.0"
 pydantic = "^2.8.0"
 requests = "^2.32.5"
-typer = ">=0.9"                    # brings a compatible click
+typer = ">=0.9,<1.0"
 web3 = "^6.20.0"
 python-dotenv = "^1.0.1"
 tzdata = "^2025.2"
@@ -21,6 +27,40 @@ streamlit = ">=1.55.0,<2.0.0"
 altair = ">=5.0.0,<6.0.0"
 supabase = ">=2.10.0,<3.0.0"
 pyjwt = { version = ">=2.10.1,<3.0.0", extras = ["crypto"] }
+flask = ">=3.0.0,<4.0.0"
+gunicorn = ">=23.0.0,<24.0.0"
+pillow = ">=10.4.0,<13.0.0"
+plotly = ">=5.24.0,<7.0.0"
+stripe = ">=11.0.0,<15.0.0"
 
-[tool.poetry.scripts]
-engine = "engine.cli:cli"
+[tool.poetry.group.dev.dependencies]
+mypy = ">=1.15.0,<2.0.0"
+pip-audit = ">=2.9.0,<3.0.0"
+pytest = ">=8.3.0,<10.0.0"
+ruff = ">=0.11.0,<1.0.0"
+types-requests = ">=2.32.0,<3.0.0"
+
+[tool.pytest.ini_options]
+addopts = "-ra"
+python_files = ["*_test.py"]
+testpaths = ["tests"]
+
+[tool.ruff]
+line-length = 120
+target-version = "py310"
+
+[tool.ruff.lint]
+# Begin with correctness checks that are safe for the characterized legacy code.
+select = ["E9", "F63", "F7", "F82"]
+
+[tool.mypy]
+python_version = "3.10"
+check_untyped_defs = true
+ignore_missing_imports = true
+no_implicit_optional = true
+show_error_codes = true
+warn_unused_ignores = true
+
+[build-system]
+requires = ["poetry-core==2.2.1"]
+build-backend = "poetry.core.masonry.api"

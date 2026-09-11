@@ -11,12 +11,19 @@ import pandas as pd
 from engine.history import SIGNAL_HISTORY_FILE
 
 
+class SignalHistoryReadError(RuntimeError):
+    """Raised when signal history storage cannot be read safely."""
+
+
 def load_signal_history(path: Path | str = SIGNAL_HISTORY_FILE) -> pd.DataFrame:
     path = Path(path)
-    if not path.exists():
-        return pd.DataFrame()
-    with path.open('r', encoding='utf-8', newline='') as fh:
-        rows = list(csv.DictReader(fh))
+    try:
+        if not path.exists():
+            return pd.DataFrame()
+        with path.open('r', encoding='utf-8', newline='') as fh:
+            rows = list(csv.DictReader(fh))
+    except (OSError, UnicodeError, csv.Error) as exc:
+        raise SignalHistoryReadError("Signal history is temporarily unavailable.") from exc
     if not rows:
         return pd.DataFrame()
     df = pd.DataFrame(rows)
@@ -28,8 +35,8 @@ def load_signal_history(path: Path | str = SIGNAL_HISTORY_FILE) -> pd.DataFrame:
     return df
 
 
-def latest_signal_history(limit: int = 12) -> pd.DataFrame:
-    df = load_signal_history()
+def latest_signal_history(limit: int = 12, *, path: Path | str = SIGNAL_HISTORY_FILE) -> pd.DataFrame:
+    df = load_signal_history(path)
     if df.empty:
         return df
     return df.sort_values(['timestamp', 'strength_score', 'apy'], ascending=[False, False, False]).head(limit).copy()
