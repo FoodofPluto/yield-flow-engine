@@ -167,6 +167,8 @@ def _user_facing_provider_error(exc: Exception, operation: str) -> AuthSessionEr
         return AuthSessionError("This account is unavailable. Contact support if this is unexpected.", "account_unavailable")
     if code in {"rate_limit", "over_request_rate_limit", "over_email_send_rate_limit"}:
         return AuthSessionError("Too many authentication attempts. Wait a few minutes and try again.", "rate_limited")
+    if code == "flow_state_expired":
+        return AuthSessionError("This authentication link has expired. Request a new link and open it promptly.", "expired")
     if code in {"otp_expired", "bad_jwt", "session_not_found", "refresh_token_not_found"}:
         return AuthSessionError("This authentication session or link has expired. Request a new one.", "expired")
     if code == "same_password":

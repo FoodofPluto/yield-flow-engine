@@ -292,6 +292,52 @@ def test_callback_rejects_query_tokens_and_removes_them(auth_context) -> None:
     assert query == {}
 
 
+@pytest.mark.parametrize("action", ["recovery", "signin", "verify"])
+def test_provider_expired_pkce_flow_is_terminal_safe_and_does_not_establish_session(auth_context, caplog, action) -> None:
+    module = auth_context.module
+    with patch.object(module.time, "time", return_value=1000):
+        query = _callback_query(auth_context, action, "SENTINEL-CALLBACK-CODE")
+    callback_state = query["auth_state"]
+    verifier = module._PKCE_FLOWS[callback_state].verifier
+    query["page"] = "home"
+    provider_error = RuntimeError("SENTINEL-PROVIDER-SECRET user@example.com " + verifier)
+    provider_error.code = "flow_state_expired"
+
+    # The live flow was locally valid after ~349 seconds but rejected by the
+    # provider. Its expiry must not become a transient/retry-the-same-link error.
+    with (
+        patch.object(module.time, "time", return_value=1349),
+        patch.object(auth_context.auth, "exchange_code_for_session", side_effect=provider_error) as exchange,
+        patch.object(module, "persist_current_session") as persist,
+        caplog.at_level("INFO", logger=module.__name__),
+        pytest.raises(module.AuthSessionError) as error,
+    ):
+        module.handle_auth_callback(query)
+
+    exchange.assert_called_once()
+    assert exchange.call_args.args[0]["code_verifier"] == verifier
+    assert error.value.code == "expired"
+    assert str(error.value) == "This authentication link has expired. Request a new link and open it promptly."
+    assert query == {"page": "home"}
+    assert module.get_auth_session_store().load() is None
+    assert not auth_context.state.get(module.PASSWORD_RECOVERY_KEY)
+    assert not auth_context.state.get(module.IDENTITY_KEY)
+    assert "furuflow_session_activation" not in auth_context.state
+    persist.assert_not_called()
+    assert "auth_event=callback_exchange outcome=failed reason=expired" in caplog.text
+    for secret in ("SENTINEL-CALLBACK-CODE", "SENTINEL-PROVIDER-SECRET", "user@example.com", callback_state, verifier):
+        assert secret not in caplog.text
+        assert secret not in str(error.value)
+    assert all(record.exc_info is None for record in caplog.records)
+
+    with pytest.raises(module.AuthSessionError) as replay:
+        module.handle_auth_callback({"code": "replayed-code", "auth_action": action, "auth_state": callback_state})
+    assert replay.value.code == "invalid_callback_state"
+    result = module.handle_auth_callback(_callback_query(auth_context, action, "fresh-code"))
+    assert result["status"] == ("password_recovery" if action == "recovery" else "signed_in")
+    assert auth_context.state[module.PASSWORD_RECOVERY_KEY] is (action == "recovery")
+
+
 def test_callback_requires_single_use_pkce_state(auth_context) -> None:
     with pytest.raises(auth_context.module.AuthSessionError) as missing_state:
         auth_context.module.handle_auth_callback({"code": "code", "auth_action": "signin"})
