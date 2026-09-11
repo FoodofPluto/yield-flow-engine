@@ -178,6 +178,12 @@ def beta_config(source: Mapping[str, str]) -> BetaConfig:
 def beta_access(config: BetaConfig, user: Mapping[str, object] | None) -> BetaAccessDecision:
     """Keep beta participation separate from subscription capability grants."""
 
+    # Real Supabase accounts always carry the current caller-scoped RPC result.
+    # Account reconstruction fails closed if it cannot obtain that result. The
+    # environment-only branch remains for pre-account and isolated UI fixtures.
+    if user and user.get("_account_authority") == "supabase" and "_beta_admission" in user:
+        admitted = user.get("_identity_verified") is True and user.get("_beta_admission") is True
+        return BetaAccessDecision(admitted, "database_admitted" if admitted else "beta_access_required")
     if not config.enabled:
         return BetaAccessDecision(True, "beta_disabled")
     if config.errors:

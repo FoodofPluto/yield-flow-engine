@@ -11,6 +11,7 @@ from typing import Callable, Mapping
 
 from billing_service import BillingConfig, BillingConfigurationError
 from beta_readiness import beta_config
+from automation.admission import synchronize_beta_admission
 
 
 BROKER_ONLY_KEYS = (
@@ -237,6 +238,10 @@ def main() -> int:
     port = source.get("PORT", "10000")
     try:
         streamlit_environment, broker_environment, nginx_environment = build_child_environments(source)
+        # This process already holds the authoritative Render configuration and
+        # service key. Synchronize before any public listener or worker starts;
+        # failed synchronization aborts startup without exposing either value.
+        synchronize_beta_admission(source)
         render_nginx_config(NGINX_TEMPLATE, NGINX_CONFIG, port)
     except (OSError, RuntimeError) as exc:
         print(f"supervisor configuration error: {exc}", file=sys.stderr, flush=True)

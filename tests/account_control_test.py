@@ -55,6 +55,14 @@ def _transport(
         bearer = request.headers.get("Authorization", "").removeprefix("Bearer ")
         path = request.url.path
         query = str(request.url.query)
+        if path.endswith("/rpc/get_my_alert_authorization") and bearer == "token-a":
+            row = entitlement or default
+            paid = any(row.get(key) for key in ("is_admin", "pro_active", "lifetime_access")) or bool(
+                row.get("subscription_pro_active") and subscription and subscription.get("status") == "active"
+            )
+            return httpx.Response(200, json={
+                "beta_approved": True, "paid_entitled": paid, "external_alerts_allowed": paid,
+            })
         if path.endswith("/profiles"):
             allowed = bearer == "token-a" and USER_A in query
             return httpx.Response(200, json=[{"id": USER_A, "timezone": "UTC"}] if allowed else [])
@@ -107,7 +115,9 @@ def test_authoritative_pro_admin_lifetime_roles(field: str, value: bool) -> None
         field: value,
     }
     with patch.dict(os.environ, _environment(), clear=False):
-        account = SupabaseAccountClient(transport=_transport(entitlement=row)).get_account(USER_A, "token-a", environment="test")
+        account = SupabaseAccountClient(transport=_transport(
+            entitlement=row, subscription={"status": "active"} if field == "subscription_pro_active" else None
+        )).get_account(USER_A, "token-a", environment="test")
     account.update({"email_verified": True, "_identity_verified": True})
     assert auth_service.can_access_pro(account)
     assert auth_service.is_admin(account) is (field == "is_admin")

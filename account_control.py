@@ -114,6 +114,12 @@ class SupabaseAccountClient:
             and row.get("demo_environment") == environment
         )
         subscription = subscriptions[0] if isinstance(subscriptions, list) and subscriptions else {}
+        authorization = self._request("POST", "rpc/get_my_alert_authorization", bearer=access_token, json_body={})
+        if not isinstance(authorization, dict) or any(
+            type(authorization.get(key)) is not bool
+            for key in ("beta_approved", "paid_entitled", "external_alerts_allowed")
+        ):
+            raise AccountStateUnavailable("Authoritative Alert access is unavailable; access is denied.")
         return {
             "user_id": user_id,
             "provider_user_id": user_id,
@@ -129,6 +135,9 @@ class SupabaseAccountClient:
             "subscription_period_end": subscription.get("current_period_end"),
             "subscription_cancel_at_period_end": bool(subscription.get("cancel_at_period_end")),
             "_account_authority": "supabase",
+            "_beta_admission": authorization["beta_approved"],
+            "_paid_authorized": authorization["paid_entitled"],
+            "_external_alerts_allowed": authorization["external_alerts_allowed"],
         }
 
     def claim_session(self, access_token: str, raw_session_id: str, ttl_seconds: int = 86400) -> str:

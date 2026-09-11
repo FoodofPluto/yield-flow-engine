@@ -14,6 +14,10 @@ values
 
 set local role service_role;
 set local request.jwt.claims = '{"sub":"00000000-0000-0000-0000-000000000000","role":"service_role"}';
+-- Prompt 18F: these lifecycle fixtures are admitted paid participants.
+select public.service_sync_beta_admission(true,array['55555555-5555-4555-8555-555555555555'::uuid,'66666666-6666-4666-8666-666666666666'::uuid,'77777777-7777-4777-8777-777777777777'::uuid,'88888888-8888-4888-8888-888888888888'::uuid,'99999999-9999-4999-8999-999999999999'::uuid,'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa'::uuid]);
+update public.entitlements set pro_active=true where user_id in ('55555555-5555-4555-8555-555555555555'::uuid,'66666666-6666-4666-8666-666666666666'::uuid);
+
 select ok(public.service_set_user_telegram_connection(
   '55555555-5555-4555-8555-555555555555', 'linked-chat-a', true
 ) is not null, 'trusted service links verified Telegram destination');

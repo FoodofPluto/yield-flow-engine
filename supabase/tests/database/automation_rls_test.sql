@@ -10,6 +10,10 @@ values
 
 set local role service_role;
 set local request.jwt.claims = '{"sub":"00000000-0000-0000-0000-000000000000","role":"service_role"}';
+-- Prompt 18F: these lifecycle fixtures are admitted paid participants.
+select public.service_sync_beta_admission(true,array['33333333-3333-4333-8333-333333333333'::uuid,'44444444-4444-4444-8444-444444444444'::uuid]);
+update public.entitlements set pro_active=true where user_id in ('33333333-3333-4333-8333-333333333333'::uuid,'44444444-4444-4444-8444-444444444444'::uuid);
+
 select public.service_set_user_telegram_connection('33333333-3333-4333-8333-333333333333', 'chat-a', true);
 select public.service_set_user_telegram_connection('44444444-4444-4444-8444-444444444444', 'chat-b', true);
 

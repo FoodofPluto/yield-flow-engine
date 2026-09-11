@@ -162,6 +162,9 @@ def can_access_pro(user: dict[str, Any] | None) -> bool:
         logger.warning("auth_event=pro_access outcome=blocked reason=account_state_unavailable")
         return False
 
+    if "_paid_authorized" in user:
+        return user.get("_paid_authorized") is True or bool(user.get("demo_active"))
+
     return (
         is_admin(user)
         or bool(user.get("lifetime_access"))
