@@ -72,6 +72,8 @@ jobs:
           auth_service.py
           auth.py
           session_broker.py
+          beta_invitations.py
+          scripts/manage_beta_invites.py
           stripe_webhook_example.py
           scripts/manage_accounts.py
           scripts/migrate_legacy_accounts.py

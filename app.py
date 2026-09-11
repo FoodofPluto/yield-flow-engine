@@ -2115,6 +2115,30 @@ if BETA_CONFIG.maintenance_message:
         st.link_button("Contact beta support ↗", BETA_DIAGNOSTICS.support_url)
     st.stop()
 
+if st.query_params.get("beta_invite") in {"1", "unavailable", "signin"}:
+    # Invitation landing is a focused main-page form, including on mobile.
+    # UI markers do not grant access; the broker validates the HttpOnly cookie.
+    render_brand()
+    st.markdown("""<style>
+    .st-key-beta_invitation_landing [data-testid="stFormSubmitButton"] button,
+    .st-key-beta_invitation_landing [data-testid="stLinkButton"] a {
+        background: #8ee8ff !important; color: #06101d !important;
+        border: 1px solid #8ee8ff !important; min-height: 44px;
+    }
+    .st-key-beta_invitation_landing [data-testid="stFormSubmitButton"] button p,
+    .st-key-beta_invitation_landing [data-testid="stLinkButton"] a p {
+        color: #06101d !important;
+    }
+    .st-key-beta_invitation_landing { max-width: 640px; margin-inline: auto; }
+    </style>""", unsafe_allow_html=True)
+    with st.container(border=True, key="beta_invitation_landing"):
+        login_form(allow_registration=False)
+    if get_current_user():
+        del st.query_params["beta_invite"]
+        go_to_route("Discover")
+        st.rerun()
+    st.stop()
+
 with st.sidebar:
     render_brand()
     navigation_slot = st.empty()

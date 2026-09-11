@@ -5,6 +5,8 @@ import uuid
 import streamlit as st
 
 from auth_session import get_auth_session_store
+from beta_invitations import INVITATION_COOKIE, SAFE_ERROR, invitation_bridge
+from streamlit.components.v1 import html as component_html
 from furuflow_auth import (
     PASSWORD_RECOVERY_KEY,
     AuthSessionError,
@@ -89,6 +91,9 @@ def _sign_in_tab() -> None:
         except AuthSessionError as exc:
             _render_error(exc)
 
+    with st.expander("Verify an existing account"):
+        _verification_form()
+
 
 def _signup_tab() -> None:
     with st.form("supabase_signup"):
@@ -133,6 +138,65 @@ def _reset_tab() -> None:
             _render_error(exc)
 
 
+def _invitation_token() -> str:
+    try:
+        return st.context.cookies.get(INVITATION_COOKIE, "")
+    except Exception:
+        return ""
+
+
+def _invitation_form() -> bool:
+    """Presentation only: broker + database make every admission decision."""
+    if st.query_params.get("beta_invite") not in {"1", "unavailable"}:
+        return False
+    if st.session_state.get("beta_invitation_created"):
+        st.success("Account created. Check your email to verify and sign in.")
+        st.caption("If the message has not arrived, request a new verification email below.")
+        _verification_form()
+        return True
+    token = _invitation_token()
+    if not token or not invitation_bridge("validate", token):
+        st.warning(SAFE_ERROR)
+        st.link_button("Return to sign in", "/?page=Account&beta_invite=signin")
+        return True
+    st.markdown("#### Create your FuruFlow account")
+    st.caption("Your invitation includes Free closed-beta access. Enter your email privately here; you do not need to send it to the operator.")
+    with st.form("beta_invitation_signup", clear_on_submit=True):
+        email = st.text_input("Email", placeholder="name@example.com", max_chars=254)
+        password = st.text_input("Password (12+ characters)", type="password", max_chars=128)
+        confirmation = st.text_input("Confirm password", type="password", max_chars=128)
+        submitted = st.form_submit_button("Create account", type="primary", use_container_width=True)
+    if submitted:
+        if password != confirmation or len(password) < 12:
+            st.error("Use matching passwords with at least 12 characters.")
+        elif not invitation_bridge("register", token, email=email.strip(), password=password):
+            st.warning("We could not complete account creation. If you already have an account, sign in. Otherwise ask for a new invitation.")
+        else:
+            st.session_state["beta_invitation_created"] = True
+            # Delete the spent HttpOnly cookie through the same-origin broker.
+            component_html('<iframe src="/create-account/complete" title="Complete invitation" style="display:none"></iframe>', height=0)
+            try:
+                resend_verification(email.strip())
+                st.success("Account created. Check your email to verify and sign in.")
+            except AuthSessionError:
+                st.warning("Account created, but the verification email could not be requested. Request a new verification email below.")
+            _verification_form()
+    st.link_button("Beta support", "https://tally.so/r/5B7eZv")
+    return True
+
+
+def _verification_form() -> None:
+    with st.form("beta_invitation_resend", clear_on_submit=True):
+        email = st.text_input("Email to verify", placeholder="name@example.com")
+        submitted = st.form_submit_button("Resend verification")
+    if submitted:
+        try:
+            resend_verification(email)
+            st.info("If verification is pending, a new message is on its way.")
+        except AuthSessionError as exc:
+            _render_error(exc)
+
+
 def _legacy_free_session() -> None:
     with st.expander("Legacy free session"):
         st.caption("This unverified compatibility session cannot access Pro or admin features.")
@@ -162,6 +226,9 @@ def login_form(*, allow_registration: bool = True) -> None:
         return
     if get_auth_session_store().load():
         st.caption("Verified Supabase session active.")
+        return
+
+    if _invitation_form():
         return
 
     st.markdown("#### Verified account")

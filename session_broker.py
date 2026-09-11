@@ -15,10 +15,11 @@ from cryptography.fernet import Fernet, InvalidToken
 from flask import Flask, jsonify, make_response, request
 
 from billing_service import BillingConfigurationError, BillingOperationError, BillingService, BillingWebhookInvalid
+from beta_invitations import InvitationService, register_invitation_routes
 
 
 COOKIE_NAME = "__Host-furuflow_session"
-_ACTIVATION_TICKET_PATTERN = re.compile(r"(ticket(?:=|%3D))[A-Za-z0-9_-]+", re.IGNORECASE)
+_ACTIVATION_TICKET_PATTERN = re.compile(r"((?:ticket|invite)(?:=|%3D))[A-Za-z0-9_-]+", re.IGNORECASE)
 _ACTIVATION_QUERY_PATTERN = re.compile(rb"^ticket=([A-Za-z0-9_-]+)$")
 
 
@@ -30,6 +31,10 @@ def _redact_activation_ticket(value: Any) -> Any:
 
 class _RedactActivationTicket(logging.Filter):
     def filter(self, record: logging.LogRecord) -> bool:
+        # Redact after interpolation too, so invite=%s cannot evade the filter.
+        if "invite" in str(record.msg).lower():
+            record.msg = _redact_activation_ticket(record.getMessage())
+            record.args = ()
         record.msg = _redact_activation_ticket(record.msg)
         if isinstance(record.args, dict):
             record.args = {key: _redact_activation_ticket(value) for key, value in record.args.items()}
@@ -239,6 +244,8 @@ def create_app(store: BrokerStore | None = None, billing_service: BillingService
 
     def trusted() -> bool:
         return secrets.compare_digest(request.headers.get("X-FuruFlow-Bridge-Key", ""), bridge_key)
+
+    register_invitation_routes(app, InvitationService(broker_store), trusted)
 
     def billing() -> BillingService:
         nonlocal billing_service
