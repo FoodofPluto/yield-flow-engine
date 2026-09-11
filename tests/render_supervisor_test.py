@@ -179,13 +179,13 @@ def test_supervisor_accepts_enabled_beta_with_uuid_allowlist() -> None:
     assert streamlit["FURUFLOW_BETA_ALLOWED_USER_IDS"] == "9dadb18d-37bd-4b48-b6f0-f5947fab6e85"
 
 
-def test_blueprint_isolates_free_web_service_from_durable_cron_worker() -> None:
+def test_blueprint_isolates_web_service_from_durable_cron_worker() -> None:
     blueprint = Path("render.yaml").read_text(encoding="utf-8")
 
     assert blueprint.count("- type: web") == 1
     assert blueprint.count("- type: cron") == 1
     assert "type: pserv" not in blueprint
-    assert "plan: free" in blueprint
+    assert "name: furuflow-staging\n    runtime: docker\n    plan: 1c-2g" in blueprint
     assert "name: furuflow-telegram-worker-staging" in blueprint
     assert "plan: starter" in blueprint
     assert "dockerCommand: python telegram_worker.py run" in blueprint

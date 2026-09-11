@@ -2,7 +2,7 @@ services:
   - type: web
     name: furuflow-staging
     runtime: docker
-    plan: free
+    plan: 1c-2g
     region: ohio
     branch: feat/supabase-auth-demo-access
     dockerfilePath: ./deploy/render/Dockerfile
