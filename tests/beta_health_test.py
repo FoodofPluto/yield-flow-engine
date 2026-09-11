@@ -88,3 +88,21 @@ def test_scheduled_signup_drift_fails_even_when_worker_and_web_are_healthy(monke
     result = health.scheduled_report()
     assert result["state"] == "blocked"
     assert result["operator_alerts"] == ["provider_signup"]
+
+
+@pytest.mark.parametrize("worker_exit,health_exit,expected,calls", [(0, 0, 0, 2), (0, 2, 2, 2), (1, 0, 1, 1)])
+def test_worker_entrypoint_preserves_failure_and_avoids_shell(monkeypatch, worker_exit, health_exit, expected, calls):
+    from scripts import run_beta_worker
+    from types import SimpleNamespace
+    commands = []
+
+    def run(command, **kwargs):
+        commands.append(command)
+        assert isinstance(command, list)
+        assert "shell" not in kwargs
+        return SimpleNamespace(returncode=worker_exit if len(commands) == 1 else health_exit)
+
+    monkeypatch.setattr(run_beta_worker.subprocess, "run", run)
+    assert run_beta_worker.main() == expected
+    assert len(commands) == calls
+    assert commands[0][-1] == "run"

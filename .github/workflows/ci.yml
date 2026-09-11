@@ -78,6 +78,7 @@ jobs:
           scripts/check_supabase_auth_health.py
           scripts/reconcile_billing.py
           scripts/beta_health.py
+          scripts/run_beta_worker.py
 
       - name: Smoke-test CLI with local demo data
         run: poetry run engine --source demo --top 1

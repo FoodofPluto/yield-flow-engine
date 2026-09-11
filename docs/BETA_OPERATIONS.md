@@ -83,8 +83,9 @@ not fetch data to conceal stale state, and this web-instance view is not fleet-w
 
 ## Minimum alerts and review cadence
 
-The existing Render worker cron command now runs `beta_health.py --scheduled`
-after a successful worker invocation. Worker execution failure already fails the
+The existing Render worker cron uses `python scripts/run_beta_worker.py`, which
+runs `beta_health.py --scheduled` after a successful worker invocation without
+depending on shell command parsing. Worker execution failure already fails the
 job. The narrower scheduled report probes hosted signup, canonical web health and
 the existing aggregate worker RPC; it exits nonzero for unsafe or unknown state.
 It uses the existing worker service credential only against its configured hosted
