@@ -188,7 +188,7 @@ def test_blueprint_isolates_web_service_from_durable_cron_worker() -> None:
     assert "name: furuflow-staging\n    runtime: docker\n    plan: 1c-2g" in blueprint
     assert "name: furuflow-telegram-worker-staging" in blueprint
     assert "plan: starter" in blueprint
-    assert "dockerCommand: python telegram_worker.py run" in blueprint
+    assert "dockerCommand: sh -c 'python telegram_worker.py run && python scripts/beta_health.py --scheduled'" in blueprint
     assert 'FURUFLOW_SYSTEM_TELEGRAM_RULE_ENABLED\n        value: "false"' in blueprint
     assert "FURUFLOW_HISTORY_PATH\n        value: /tmp/furuflow/pool_history.json" in blueprint
     assert "dockerfilePath: ./deploy/render/Dockerfile" in blueprint

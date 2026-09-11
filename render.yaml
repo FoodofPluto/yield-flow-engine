@@ -63,7 +63,7 @@ services:
     schedule: "7,22,37,52 * * * *"
     dockerfilePath: ./deploy/render/Dockerfile
     dockerContext: .
-    dockerCommand: python telegram_worker.py run
+    dockerCommand: sh -c 'python telegram_worker.py run && python scripts/beta_health.py --scheduled'
     envVars:
       - key: ENVIRONMENT
         value: staging
